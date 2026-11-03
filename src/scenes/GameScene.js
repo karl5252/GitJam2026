@@ -6,6 +6,7 @@ import {BuildingPlacement} from '../core/buildingPlacement.js';
 import {Economy} from '../core/economy.js';
 import {SimulationClock} from '../core/simulationClock.js';
 import {SeededRandom, DEFAULT_SEED, parseSeed} from '../core/seededRandom.js';
+import {ShiftCycle, Shift} from '../core/shiftCycle.js';
 import {TEST_MODE} from '../testMode.js';
 import {addProxy, markScene, setBodyState} from '../testShadow/TestProxy.js';
 import {QASurface} from '../testShadow/QASurface.js';
@@ -73,6 +74,11 @@ export class GameScene extends Phaser.Scene {
         this.buildButtons = {};
         this.cancelButton = null;
         this.cancelProxy = null;
+        this.endDayButton = null;
+        this.endDayProxy = null;
+        this.cycle = null;
+        this.shiftHud = null;
+        this.renderedShiftKey = null; // last `${day}:${shift}` the UI was synced to
 
         // Fixed 60 Hz simulation. Stopped until Start; stepped from update().
         // The seed is fixed outside TEST_MODE; tests may override it with ?seed=N.
@@ -108,7 +114,9 @@ export class GameScene extends Phaser.Scene {
         this.qa = new QASurface(this, () => this.qaState());
 
         // Game-specific, TEST_MODE-only simulation controls. They call the
-        // real clock methods; stepTicks uses the same callback as update().
+        // real clock / shift-cycle methods; stepTicks uses the same callback
+        // as update() and drives real shift transitions. resume and stepTicks
+        // never tick during Day Shift. They cannot place or spend anything.
         // window.__qa (and these controls) are removed with the QASurface on
         // shutdown and never exist in production builds.
         if (TEST_MODE && window.__qa) {
@@ -118,10 +126,17 @@ export class GameScene extends Phaser.Scene {
                     return this.clock.snapshot();
                 },
                 resume: () => {
-                    this.clock.resume();
+                    this.cycle?.resume();
                     return this.clock.snapshot();
                 },
-                stepTicks: (count) => this.clock.stepTicks(count, (tick) => this.stepSimulation(tick)),
+                stepTicks: (count) => {
+                    const onTick = (tick) => this.stepSimulation(tick);
+                    const done = this.cycle
+                        ? this.cycle.stepTicks(count, onTick)
+                        : this.clock.stepTicks(count, onTick); // before Start: validates, returns 0
+                    this.syncShiftUi();
+                    return done;
+                },
             };
         }
 
@@ -143,7 +158,8 @@ export class GameScene extends Phaser.Scene {
             this.createGrid();
             this.createHud();
             this.createBuildMenu();
-            this.clock.start();
+            this.cycle.begin(); // Day 1; the clock starts paused for Day Shift
+            this.syncShiftUi();
         }
         setBodyState({phase: this.phase});
     }
@@ -158,7 +174,10 @@ export class GameScene extends Phaser.Scene {
             originY: (height - GRID_ROWS * TILE_SIZE) / 2,
         });
         this.economy = new Economy();
-        this.placement = new BuildingPlacement(this.grid, this.economy);
+        this.cycle = new ShiftCycle({clock: this.clock, economy: this.economy});
+        this.placement = new BuildingPlacement(this.grid, this.economy, {
+            isConstructionAllowed: () => this.cycle.isConstructionAllowed,
+        });
 
         const bounds = this.grid.footprintRect({col: 0, row: 0, width: GRID_COLS, height: GRID_ROWS});
         const lines = this.add.graphics();
@@ -191,8 +210,13 @@ export class GameScene extends Phaser.Scene {
     // ---- HUD ---------------------------------------------------------------
 
     createHud() {
-        // Top band, where the (now hidden) title was.
-        this.hud = this.add.text(this.scale.width / 2, 52, '', {
+        // Top band, where the (now hidden) title was: shift line, then resources.
+        this.shiftHud = this.add.text(this.scale.width / 2, 30, '', {
+            fontFamily: 'monospace',
+            fontSize: '24px',
+            color: '#c8e6c9',
+        }).setOrigin(0.5);
+        this.hud = this.add.text(this.scale.width / 2, 70, '', {
             fontFamily: 'monospace',
             fontSize: '28px',
             color: '#ffffff',
@@ -203,6 +227,41 @@ export class GameScene extends Phaser.Scene {
     updateHud() {
         const {credits, ap} = this.economy.snapshot();
         this.hud.setText(`Credits: ${credits}   AP: ${ap}`);
+    }
+
+    /** Shift line; the night countdown is derived from remaining simulation ticks. */
+    updateShiftHud() {
+        const {day, shift, remainingNightTicks} = this.cycle.snapshot();
+        const text = shift === Shift.NIGHT
+            ? `Day ${day} · Night Shift · ${(remainingNightTicks / this.clock.tickRate).toFixed(1)} s left`
+                + (this.clock.paused ? ' (paused)' : '')
+            : `Day ${day} · Day Shift`;
+        if (this.shiftHud.text !== text) this.shiftHud.setText(text);
+    }
+
+    /**
+     * Bring shift-dependent UI in line with the domain cycle. Called after
+     * every clock advance / manual step and after END DAY; the expensive
+     * part only runs when day or shift actually changed.
+     */
+    syncShiftUi() {
+        if (!this.cycle?.started) return;
+        const key = `${this.cycle.day}:${this.cycle.shift}`;
+        if (key !== this.renderedShiftKey) {
+            this.renderedShiftKey = key;
+            const isDay = this.cycle.shift === Shift.DAY;
+            if (!isDay) this.exitPlacementMode();
+            this.setBuildMenuVisible(isDay);
+            this.setEndDayVisible(isDay);
+            this.updateHud(); // AP is restored at the start of each Day
+        }
+        this.updateShiftHud();
+    }
+
+    handleEndDay() {
+        this.exitPlacementMode();
+        this.cycle.endDay();
+        this.syncShiftUi();
     }
 
     // ---- Build menu --------------------------------------------------------
@@ -227,10 +286,8 @@ export class GameScene extends Phaser.Scene {
             const label = `${type.name} ${type.width}x${type.height}\n${type.cost.credits}c · ${type.cost.ap} AP`;
             const button = this.createButton(y, label, 0x37474f);
             button.rect.on('pointerdown', () => this.enterPlacementMode(type.id));
-            button.proxy = addProxy(this, button.rect, `build-${type.id}`, {
-                label: type.name,
-                state: {selected: false},
-            });
+            button.type = type;
+            button.proxy = null;
             this.buildButtons[type.id] = button;
             y += 88;
         }
@@ -238,6 +295,44 @@ export class GameScene extends Phaser.Scene {
         this.cancelButton = this.createButton(y + 40, 'Cancel', 0x8e2b2b);
         this.cancelButton.rect.on('pointerdown', () => this.exitPlacementMode());
         this.setCancelVisible(false);
+
+        // Bottom of the left band, clear of the grid (grid x starts at 256).
+        this.endDayButton = this.createButton(620, 'END DAY', 0x6d4c41);
+        this.endDayButton.rect.on('pointerdown', () => this.handleEndDay());
+    }
+
+    /** Show/enable the building buttons (Day) or hide/disable them (Night). */
+    setBuildMenuVisible(visible) {
+        for (const button of Object.values(this.buildButtons)) {
+            button.rect.setVisible(visible).setStrokeStyle(3, BUTTON_IDLE_STROKE);
+            button.text.setVisible(visible);
+            if (visible) {
+                button.rect.setInteractive({useHandCursor: true});
+                button.proxy ??= addProxy(this, button.rect, `build-${button.type.id}`, {
+                    label: button.type.name,
+                    state: {selected: false},
+                });
+                button.proxy.set({selected: false});
+            } else {
+                button.rect.disableInteractive();
+                button.proxy?.destroy();
+                button.proxy = null;
+            }
+        }
+    }
+
+    setEndDayVisible(visible) {
+        const {rect, text} = this.endDayButton;
+        rect.setVisible(visible);
+        text.setVisible(visible);
+        if (visible) {
+            rect.setInteractive({useHandCursor: true});
+            this.endDayProxy ??= addProxy(this, rect, 'end-day', {label: 'End Day'});
+        } else {
+            rect.disableInteractive();
+            this.endDayProxy?.destroy();
+            this.endDayProxy = null;
+        }
     }
 
     setCancelVisible(visible) {
@@ -270,7 +365,7 @@ export class GameScene extends Phaser.Scene {
         for (const [id, button] of Object.entries(this.buildButtons)) {
             const selected = id === typeId;
             button.rect.setStrokeStyle(3, selected ? BUTTON_SELECTED_STROKE : BUTTON_IDLE_STROKE);
-            button.proxy.set({selected});
+            button.proxy?.set({selected});
         }
         this.setCancelVisible(true);
         this.updatePreview(null);
@@ -281,7 +376,7 @@ export class GameScene extends Phaser.Scene {
         this.placement.cancel();
         for (const button of Object.values(this.buildButtons)) {
             button.rect.setStrokeStyle(3, BUTTON_IDLE_STROKE);
-            button.proxy.set({selected: false});
+            button.proxy?.set({selected: false});
         }
         this.setCancelVisible(false);
         this.updatePreview(null);
@@ -358,15 +453,18 @@ export class GameScene extends Phaser.Scene {
     /** Phaser's frame delta drives the fixed-step clock; Phaser's `time` is ignored. */
     update(_time, delta) {
         this.clock.advance(delta, (tick) => this.stepSimulation(tick));
+        this.syncShiftUi();
     }
 
     /**
      * One fixed 1/60 s simulation step. Called by both update() and manual
-     * QA stepping. Intentionally empty of gameplay until simulated systems
-     * exist; the counter only lets QA verify that every tick ran this path.
+     * QA stepping. Drives the shift cycle (night countdown and the automatic
+     * Night -> Day transition). No other gameplay is simulated yet; the
+     * counter lets QA verify that every tick ran this path.
      */
-    stepSimulation(_tick) {
+    stepSimulation(tick) {
         this.simulationSteps++;
+        this.cycle?.onTick(tick);
     }
 
     // ---- QA ----------------------------------------------------------------
@@ -385,7 +483,12 @@ export class GameScene extends Phaser.Scene {
                 titleVisible: this.title.visible,
                 startVisible: this.startButton.visible,
                 cancelVisible: this.cancelButton ? this.cancelButton.rect.visible : false,
+                endDayVisible: this.endDayButton ? this.endDayButton.rect.visible : false,
+                buildMenuVisible: Object.values(this.buildButtons).some((b) => b.rect.visible),
             },
+            shiftCycle: this.cycle?.started ? this.cycle.snapshot() : null,
+            // Actual shift HUD text, read off the game object.
+            shiftView: this.shiftHud ? {visible: this.shiftHud.visible, text: this.shiftHud.text} : null,
             placement: this.placement
                 ? {
                     selectedType: this.placement.selectedType,

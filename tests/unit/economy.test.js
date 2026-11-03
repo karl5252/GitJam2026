@@ -80,6 +80,22 @@ test('invalid costs are rejected with invalid-cost and change nothing', () => {
     assert.deepEqual(e.snapshot(), {credits: 1000, ap: 5});
 });
 
+test('restoreAp sets AP and leaves credits untouched', () => {
+    const e = new Economy({credits: 321, ap: 0});
+    e.restoreAp(5);
+    assert.deepEqual(e.snapshot(), {credits: 321, ap: 5});
+    e.restoreAp(0);
+    assert.deepEqual(e.snapshot(), {credits: 321, ap: 0});
+});
+
+test('restoreAp rejects invalid values without changing state', () => {
+    const e = new Economy();
+    for (const bad of [-1, 1.5, NaN, '5', undefined]) {
+        assert.throws(() => e.restoreAp(bad), RangeError, String(bad));
+    }
+    assert.deepEqual(e.snapshot(), {credits: 1000, ap: 5});
+});
+
 test('snapshot is detached', () => {
     const e = new Economy();
     const snap = e.snapshot();

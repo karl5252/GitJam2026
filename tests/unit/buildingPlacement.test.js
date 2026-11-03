@@ -272,6 +272,29 @@ test('preview never charges', () => {
     assert.deepEqual(economy.snapshot(), {credits: 1000, ap: 5});
 });
 
+test('construction gate: rejected first, select refused, nothing mutates', () => {
+    let allowed = true;
+    const grid = new Grid({cols: 24, rows: 16, tileSize: 32});
+    const economy = new Economy({credits: 0, ap: 0});
+    const placement = new BuildingPlacement(grid, economy, {isConstructionAllowed: () => allowed});
+    assert.equal(placement.select('factory'), true);
+    allowed = false;
+    const before = JSON.stringify({g: grid.snapshot(), e: economy.snapshot(), b: placement.buildings()});
+    // Gate precedes spatial (out-of-bounds) and economy (no credits) reasons.
+    assert.equal(placement.placeAt({col: 0, row: 0}).reason, 'construction-disabled');
+    assert.equal(placement.placeAt({col: 5, row: 5}).reason, 'construction-disabled');
+    assert.equal(placement.preview({col: 5, row: 5}).reason, 'construction-disabled');
+    assert.equal(placement.select('outpost'), false);
+    assert.equal(JSON.stringify({g: grid.snapshot(), e: economy.snapshot(), b: placement.buildings()}), before);
+    allowed = true;
+    assert.equal(placement.placeAt({col: 5, row: 5}).reason, EconomyFailure.INSUFFICIENT_CREDITS);
+});
+
+test('no-selection still precedes the construction gate', () => {
+    const placement = new BuildingPlacement(new Grid({cols: 4, rows: 4, tileSize: 32}), new Economy(), {isConstructionAllowed: () => false});
+    assert.deepEqual(placement.placeAt({col: 1, row: 1}), {ok: false, reason: NO_SELECTION});
+});
+
 test('a failing economy commit rolls back the grid (all-or-nothing)', () => {
     const grid = new Grid({cols: 24, rows: 16, tileSize: 32});
     // A disagreeing economy: validation passes, the commit fails.

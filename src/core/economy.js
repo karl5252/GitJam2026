@@ -59,6 +59,12 @@ export class Economy {
         return {ok: true};
     }
 
+    /** Set AP to `ap` (e.g. at the start of a Day Shift). Credits are untouched. */
+    restoreAp(ap) {
+        if (!isNonNegativeInt(ap)) throw new RangeError(`AP must be a non-negative integer, got ${ap}`);
+        this.#ap = ap;
+    }
+
     /** Detached plain data. */
     snapshot() {
         return {credits: this.#credits, ap: this.#ap};

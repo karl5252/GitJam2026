@@ -25,6 +25,13 @@ function simulationSuite(pressAction) {
         await expect(body(page)).toHaveAttribute('data-phase', 'started');
     }
 
+    /** Start, then press the real END DAY button: the clock only runs during Night Shift. */
+    async function startNight(page) {
+        await start(page);
+        await pressAction(page, 'end-day');
+        await expect.poll(async () => (await sample(page)).shiftCycle?.shift).toBe('night');
+    }
+
     test('no ticks occur before Start, even when stepped manually', async ({page}) => {
         await boot(page, {scene: 'game', waitForQA: true});
         await page.waitForTimeout(600);
@@ -33,8 +40,12 @@ function simulationSuite(pressAction) {
         expect(await sim(page)).toMatchObject({running: false, paused: false, tick: 0, timeSeconds: 0, stepsExecuted: 0});
     });
 
-    test('simulation advances after Start', async ({page}) => {
+    test('simulation stays at tick 0 during Day Shift and advances once Night Shift begins', async ({page}) => {
         await start(page);
+        await page.waitForTimeout(400);
+        expect(await sim(page)).toMatchObject({running: true, paused: true, tick: 0, stepsExecuted: 0});
+
+        await pressAction(page, 'end-day');
         await expect.poll(async () => (await sim(page)).tick).toBeGreaterThan(30);
         const s = await sim(page);
         expect(s).toMatchObject({running: true, paused: false});
@@ -42,7 +53,7 @@ function simulationSuite(pressAction) {
     });
 
     test('pause freezes the simulation; resume continues it', async ({page}) => {
-        await start(page);
+        await startNight(page);
         await expect.poll(async () => (await sim(page)).tick).toBeGreaterThan(5);
 
         const paused = await qaSim(page, 'pause');
@@ -59,7 +70,7 @@ function simulationSuite(pressAction) {
     });
 
     test('stepTicks while paused advances exactly N ticks and stays paused', async ({page}) => {
-        await start(page);
+        await startNight(page);
         const {tick: t0} = await qaSim(page, 'pause');
 
         expect(await qaSim(page, 'stepTicks', 25)).toBe(25);
@@ -77,7 +88,7 @@ function simulationSuite(pressAction) {
     });
 
     test('stepTicks rejects out-of-range counts', async ({page}) => {
-        await start(page);
+        await startNight(page);
         await qaSim(page, 'pause');
         const before = await sim(page);
         for (const bad of [0, 241, 1.5]) {
@@ -87,7 +98,7 @@ function simulationSuite(pressAction) {
     });
 
     test('ticking does not change placement or economy state', async ({page}) => {
-        await start(page);
+        await startNight(page);
         const before = await sample(page);
         await qaSim(page, 'stepTicks', 240);
         const after = await sample(page);

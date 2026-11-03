@@ -10,6 +10,7 @@ import {getBuildingType} from './buildingTypes.js';
  */
 
 export const NO_SELECTION = 'no-selection';
+export const CONSTRUCTION_DISABLED = 'construction-disabled';
 
 /**
  * Footprint for a building centred on a pointer cell.
@@ -34,20 +35,23 @@ export class BuildingPlacement {
     #nextId = 1;
 
     #economy;
+    #isConstructionAllowed;
 
     /**
      * @param {import('./grid.js').Grid} grid
      * @param {import('./economy.js').Economy} economy
+     * @param {{isConstructionAllowed?: () => boolean}} [options] - e.g. false during Night Shift
      */
-    constructor(grid, economy) {
+    constructor(grid, economy, {isConstructionAllowed = () => true} = {}) {
         this.#grid = grid;
         this.#economy = economy;
+        this.#isConstructionAllowed = isConstructionAllowed;
         this.selectedType = null; // building type id, or null when not in placement mode
     }
 
-    /** Enter placement mode for a type. Returns false for an unknown type. */
+    /** Enter placement mode for a type. False for an unknown type or while construction is disabled. */
     select(typeId) {
-        if (!getBuildingType(typeId)) return false;
+        if (!getBuildingType(typeId) || !this.#isConstructionAllowed()) return false;
         this.selectedType = typeId;
         return true;
     }
@@ -103,8 +107,9 @@ export class BuildingPlacement {
         return {ok: true, building: {...building}};
     }
 
-    /** Spatial rules first (grid), then resources (economy). Never mutates. */
+    /** Construction gate, then spatial rules (grid), then resources (economy). Never mutates. */
     #validate(type, footprint) {
+        if (!this.#isConstructionAllowed()) return {ok: false, reason: CONSTRUCTION_DISABLED};
         const spatial = this.#grid.canPlace(footprint);
         if (!spatial.ok) return spatial;
         return this.#economy.canAfford(type.cost);
