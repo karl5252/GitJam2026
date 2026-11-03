@@ -1,0 +1,21 @@
+{
+  "name": "papi-industries-green-shift",
+  "version": "0.1.0",
+  "description": "PAPI Industries: The Green Shift — a Phaser 4 industrial survival tower defense game.",
+  "type": "module",
+  "private": true,
+  "scripts": {
+    "dev": "vite",
+    "build": "vite build",
+    "preview": "vite preview",
+    "test": "cd tests/unit && node --test",
+    "test:e2e": "playwright test"
+  },
+  "dependencies": {
+    "phaser": "^4.0.0"
+  },
+  "devDependencies": {
+    "vite": "^5.4.0",
+    "@playwright/test": "^1.47.0"
+  }
+}

@@ -1,0 +1,25 @@
+<!doctype html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+    <title>PAPI Industries: The Green Shift</title>
+    <style>
+        html, body { height: 100%; margin: 0; overflow: hidden; background: #111; }
+        #game-root { width: 100vw; height: 100vh; }
+    </style>
+</head>
+<body>
+    <!--
+      Test Shadow proxies (src/testShadow/) attach directly to Phaser's own
+      DOM container, created inside #game-root when TEST_MODE is true (see
+      the `dom: {createContainer}` option in main.js). The proxy <div>s carry
+      no visual styling, so they're invisible; only pointer-events:none (set
+      on each one) matters for click-passthrough. Scene-level state lives
+      directly on <body data-*> via markScene()/setBodyState() — inspect this
+      element in devtools with ?testMode on the URL to see it update live.
+    -->
+    <div id="game-root"></div>
+    <script type="module" src="/src/main.js"></script>
+</body>
+</html>
