@@ -154,16 +154,34 @@ Avoid implementing gameplay rules directly inside Phaser scenes.
 
 - `src/core/gamePhase.js`: Bootstrap game phase logic.
 - `src/core/grid.js`: `Grid` class (Phaser-free). Configurable `cols`/`rows`/`tileSize` with an origin offset (`originX`/`originY`). World↔cell conversion (`worldToCell`, `cellToWorld`, `cellCenter`, `footprintRect`). NxM footprints `{col, row, width, height}`, anchored at the top-left cell. `canPlace`/`place` are atomic and return `{ok}` or `{ok: false, reason}`, where reason is one of `PlacementFailure`: `invalid-footprint`, `out-of-bounds`, `occupied` (plus `blockers`), `duplicate-id`. Also `remove`, `occupantAt` and `snapshot()`, which returns detached JSON data. The grid is the source of truth for occupancy and validity.
-- `src/core/buildingTypes.js`: frozen plain data. `outpost` is 1×1 and costs `{credits: 100, ap: 1}`. `factory` is 3×3 and costs `{credits: 400, ap: 1}`. These are temporary graybox values. `getBuildingType(id)` returns the type or `null`.
+- `src/core/buildingTypes.js`: frozen plain data, with temporary graybox values. `getBuildingType(id)` returns the type or `null`.
+  - `outpost`: 1×1, costs `{credits: 100, ap: 1}`, operations `{income: 0, upkeep: 20}` per completed night, power `{supply: 0, demand: 10}`.
+  - `factory`: 3×3, costs `{credits: 400, ap: 1}`, operations `{income: 150, upkeep: 0}` per completed night, power `{supply: 0, demand: 40}`.
+  - `powerPlant`: 3×3, costs `{credits: 500, ap: 1}`, operations `{income: 0, upkeep: 0}`, power `{supply: 100, demand: 0}`.
+- `src/core/power.js`: `calculatePower(buildings)` → `{generation, demand, status, buildings: [{id, type, enabled, powered}]}`.
+  - One global pool, derived on demand from the building records and never stored. It is pure and does not mutate its input.
+  - Generation and demand count **enabled** buildings only.
+  - `PowerStatus`:
+    - `normal`: generation ≥ demand, including 0/0.
+    - `low-power`: 0 < generation < demand.
+    - `blackout`: generation is 0 and demand > 0.
+  - A consumer is `powered` only when it is enabled and the status is `normal`. Low power and blackout stop **all** consumers; there is no priority or partial allocation. A generator is powered when enabled.
+- `src/core/settlement.js`:
+  - `calculateSettlement(buildings)` is pure and integer-only, and uses `calculatePower`. Income counts only from **powered** buildings. Upkeep is always charged in full, whether a building is enabled or powered. It returns `{gross, upkeep, net, counts, power: {generation, demand, status}}` and throws `TypeError` on an unknown type.
+  - `settleNight({day, buildings, economy})` calculates first, which may throw before any change, then makes a single `economy.adjustCredits(net)` call. It returns a frozen report `{day, gross, upkeep, net, creditsBefore, creditsAfter, counts, power}`, where `day` is the day whose night completed. The power state used is the one at the end of the night.
+  - It never touches AP, buildings, enabled flags or the grid.
 - `src/core/economy.js`:
   - `Economy({credits, ap})` defaults to `STARTING_RESOURCES` (1000 / 5). Balances are private, read through getters.
   - `canAfford(cost)` never changes anything. It checks in a fixed order: `invalid-cost` → `insufficient-credits` → `insufficient-ap` (`EconomyFailure`).
   - `spend(cost)` deducts both resources together, or neither.
   - `restoreAp(ap)` sets AP (used at the start of each Day) and leaves Credits untouched.
+  - `adjustCredits(delta)` takes a safe integer only. It may take Credits **negative**, which is debt from nightly upkeep. Affordability is unchanged (`cost.credits <= credits`), so every purchase is rejected while in debt. Starting balances stay non-negative, and there is no bankruptcy rule yet.
   - `snapshot()` returns detached data.
 - `src/core/buildingPlacement.js`:
   - `footprintAt(type, cell)` centers a footprint on the pointer cell: anchor = cell − floor((size − 1) / 2). For even sizes, the pointer cell is the left/top cell of the central pair.
   - `BuildingPlacement(grid, economy, {isConstructionAllowed})` provides `select`/`cancel`/`selectedType`/`isPlacing`. `select` returns false while construction is disabled.
+  - Building records `{id, type, col, row, width, height, enabled}` are the **single owner** of player power intent. `enabled` starts as `true`.
+  - `setEnabled(id, enabled)` is allowed in **both Day and Night**. It is deliberately not behind the construction gate. It is free (no Credits or AP), touches neither the grid nor the economy, and is rejected with `unknown-building` or `invalid-state`.
   - `preview(cell)` and `placeAt(cell)` share one validation, in this order: the construction gate (`construction-disabled`, e.g. during Night Shift), then `grid.canPlace`, then `economy.canAfford`. Space reasons therefore win over resource reasons. `preview` never changes anything.
   - **`placeAt` is one atomic transaction:**
     1. Validate everything.
@@ -180,11 +198,17 @@ Avoid implementing gameplay rules directly inside Phaser scenes.
 - `src/core/seededRandom.js`:
   - `SeededRandom(seed)` is the Refit/BarrelStorm LCG with a uint32 seed (`DEFAULT_SEED` = 731). It provides `next()` in [0, 1), inclusive `nextInt(min, max)`, `reset()` (back to the seed) and `snapshot()` → `{seed, state}`.
   - `parseSeed(raw)` validates seed overrides.
-- `src/core/shiftCycle.js`: `ShiftCycle({clock, economy})`, the Day/Night state machine.
+- `src/core/shiftCycle.js`: `ShiftCycle({clock, economy, settleNight?})`, the Day/Night state machine.
   - Transitions: not-started → `begin()` → Day 1 → `endDay()` → Night → (the `NIGHT_TICKS` = 3600th executed tick) → Day N+1 → …
   - **Day:** the clock is running but paused, so Day never ticks. `isConstructionAllowed` is true.
   - **Night:** `endDay()` resumes the clock. `onTick()` (the fixed-step callback) counts `elapsedNightTicks`.
-  - **Last night tick:** `onTick()` starts the next Day, calls `economy.restoreAp(DAY_AP = 5)` (Credits unchanged), and pauses the clock inside the tick. That ends `advance()`'s loop with no extra ticks.
+  - **Last night tick:** `onTick()` does the following, in order:
+    1. Call `settleNight(completedDay)`. Its frozen report becomes `lastSettlement`.
+    2. Start the next Day.
+    3. Call `economy.restoreAp(DAY_AP = 5)`. This sets AP to exactly 5; it does not add 5.
+    4. Pause the clock inside the tick. That ends `advance()`'s loop with no extra ticks.
+  - **Exactly once:** this is the only place settlement is called, and Day never ticks.
+  - **If the hook throws:** nothing changes. It is still Night with 1 tick left, the clock tick is not counted, and AP is not restored. The error propagates, and the final tick is retried on the next step.
   - `stepTicks(n, onTick)` is the QA path: Night only, clamped to the remaining night ticks. `resume()` is Night only.
   - The global `clock.tick` is never reset.
 - `src/scenes/BootScene.js`: Starts the game scene.
@@ -193,25 +217,32 @@ Avoid implementing gameplay rules directly inside Phaser scenes.
   - The HUD in the top band has two lines:
     - The shift line: `Day N · Day Shift`, or at night `Day N · Night Shift · 59.8 s left`, with `(paused)` added when the QA clock is paused. The countdown is `remainingNightTicks / 60`.
     - The resource line: `Credits: N   AP: N`.
-  - Both lines are created at Start, together with the `Economy` and `ShiftCycle`.
+  - Both lines are created at Start, together with the `Economy` and `ShiftCycle`. The scene wires `settleNight` to `core/settlement.js` and contains no formulas.
+  - The right band (x 1040) holds:
+    - The power summary: `Power G / D` and the status label (NORMAL / LOW POWER / BLACKOUT).
+    - The settlement panel with the latest report: `Night N settlement`, then Income, Upkeep, Net, Credits and Power. It is hidden until the first completed night.
+    - The **power toggle** (proxy `toggle-power` with `data-target` and `data-enabled`). It is visible whenever an existing building is selected, in Day **and** Night, and calls `placement.setEnabled`.
+  - `refreshPower()` re-derives power and restyles buildings after every placement, toggle and Start; it never runs per frame. Disabled buildings are drawn at alpha 0.35; enabled but unpowered ones get a red outline.
   - END DAY (proxy `end-day`) sits at the bottom of the left band and is visible during Day only.
   - **Keeping the UI in step:** `syncShiftUi()` runs after every clock advance, every QA step and END DAY. On each Day/Night change:
     - At Night it exits placement mode and hides the building buttons and END DAY, removing their proxies.
     - At Day it restores them and refreshes the resource line.
-  - The build menu has Outpost and Factory buttons (proxies `build-outpost`/`build-factory`, with `data-selected`). Their labels show the size and cost. There is also a Cancel button, visible with proxy `cancel-placement` only while placing.
-  - **Normal mode:** `pointerdown` selects or highlights the cell from `pointer.worldX/worldY` via `grid.worldToCell`. A pointer outside the grid clears the selection.
+  - The build menu has Outpost, Factory and Power Plant buttons (proxies `build-outpost`/`build-factory`/`build-powerPlant`, with `data-selected`). Their labels show the size and cost. There is also a Cancel button, visible with proxy `cancel-placement` only while placing.
+  - **Normal mode:** `pointerdown` selects or highlights the cell from `pointer.worldX/worldY` via `grid.worldToCell`. If the cell is occupied, its building is selected too and the highlight covers the footprint. Normal mode never places. A pointer outside the grid clears the selection.
   - **Placement mode:** `pointermove` previews the footprint, and `pointerdown` attempts placement. Selection is cleared and disabled. Placement mode stays active after a successful placement. Escape or Cancel exits.
   - The preview color comes from the domain result: green when ok, red otherwise. An unaffordable footprint is red even when its cells are free.
   - Scene-level pointer handlers ignore events whose hit list (`currentlyOver`) contains a UI object, so a press on a button never counts as grid input.
   - QASurface exposes:
     - `grid`, `selectedCell`, `highlight`
-    - `ui` (title, Start, Cancel, END DAY and build menu visibility)
+    - `ui` (title, Start, Cancel, END DAY, build menu and power toggle visibility)
+    - `power` (the domain `calculatePower` result, including per-building `enabled` and `powered`), `powerView` (the actual summary text) and `selectedBuilding`
     - `placement` (`selectedType`, the domain `preview` result, and `lastResult` from the last placement attempt)
     - `resources` (`economy.snapshot()`), `hudView` (the actual HUD text), `menuLabels` (the actual button labels)
     - `shiftCycle` (`{day, shift, elapsedNightTicks, remainingNightTicks}`, `null` before Start) and `shiftView` (the actual shift-line text)
+    - `settlement` (the latest report, or `null`) and `settlementView` (the actual panel text and visibility)
     - `simulation`: `{running, paused, tick, timeSeconds, stepsExecuted, rng: {seed, state}}`
     - `previewView` (the rendered preview: visibility, rect, colors)
-    - `buildings` (domain) and `buildingViews` (the rendered rectangles)
+    - `buildings` (domain records, including `enabled`) and `buildingViews` (the rendered rectangles, including `alpha` and `strokeColor`)
   - **Simulation:**
     - The clock is created stopped. Start calls `cycle.begin()`, which starts it paused for Day 1.
     - `update(time, delta)` calls `clock.advance(delta, stepSimulation)` then `syncShiftUi()`, and ignores Phaser's `time`.
@@ -257,7 +288,7 @@ Gameplay-critical simulation must use a **fixed timestep of 60 Hz**.
 - Avoid `Date.now()` or wall-clock timing for gameplay outcomes.
 - Support deterministic state inspection and controlled tick advancement for testing.
 
-The simulation clock (`src/core/simulationClock.js`) and seeded RNG (`src/core/seededRandom.js`) are integrated in `GameScene`. They follow the Steel Abyss: Refit / BarrelStorm contracts: the 1/60 s accumulator, the 100 ms frame cap and the same LCG. The Day/Night `ShiftCycle` (`src/core/shiftCycle.js`) is the only system that consumes ticks so far. The clock is paused for all of Day Shift and runs for exactly 3600 ticks per Night. Nothing consumes random numbers yet. New simulated systems must run inside `GameScene.stepSimulation()` and draw randomness from `this.rng`.
+The simulation clock (`src/core/simulationClock.js`) and seeded RNG (`src/core/seededRandom.js`) are integrated in `GameScene`. They follow the Steel Abyss: Refit / BarrelStorm contracts: the 1/60 s accumulator, the 100 ms frame cap and the same LCG. The Day/Night `ShiftCycle` (`src/core/shiftCycle.js`) is the only system that consumes ticks so far. The clock is paused for all of Day Shift and runs for exactly 3600 ticks per Night. Nightly settlement (`src/core/settlement.js`) runs once, at the end of the final night tick. There is no per-tick revenue. Nothing consumes random numbers yet. New simulated systems must run inside `GameScene.stepSimulation()` and draw randomness from `this.rng`.
 
 ### Day Shift
 

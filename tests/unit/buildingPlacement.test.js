@@ -98,7 +98,7 @@ test('valid factory placement occupies all nine cells', () => {
     const {grid, placement} = setup();
     placement.select('factory');
     const result = placement.placeAt({col: 10, row: 8});
-    assert.deepEqual(result, {ok: true, building: {id: 'factory-1', type: 'factory', col: 9, row: 7, width: 3, height: 3}});
+    assert.deepEqual(result, {ok: true, building: {id: 'factory-1', type: 'factory', col: 9, row: 7, width: 3, height: 3, enabled: true}});
     for (let row = 7; row <= 9; row++) {
         for (let col = 9; col <= 11; col++) assert.equal(grid.occupantAt(col, row), 'factory-1');
     }
@@ -179,7 +179,7 @@ test('buildings() returns detached data', () => {
     const list = placement.buildings();
     list[0].col = 9;
     list.push({id: 'fake'});
-    assert.deepEqual(placement.buildings(), [{id: 'outpost-1', type: 'outpost', col: 2, row: 2, width: 1, height: 1}]);
+    assert.deepEqual(placement.buildings(), [{id: 'outpost-1', type: 'outpost', col: 2, row: 2, width: 1, height: 1, enabled: true}]);
     assert.equal(grid.occupantAt(2, 2), 'outpost-1');
     assert.deepEqual(JSON.parse(JSON.stringify(placement.buildings())), placement.buildings());
 });

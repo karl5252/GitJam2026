@@ -122,6 +122,8 @@ function shiftSuite({pressWorld, pressAction}) {
         expect(await qaSim(page, 'stepTicks', 1)).toBe(1);
         s = await expectDayUi(page, 2);
         expect(s.simulation).toMatchObject({tick: 3600, stepsExecuted: 3600, paused: true});
+        // Credits carry over. Since TASK 009 a Factory needs power: without a
+        // Power Plant it is in blackout and earns nothing, so Credits stay 600.
         expect(s.resources).toEqual({credits: 600, ap: 5});
         expect(s.hudView.text).toBe('Credits: 600   AP: 5');
         expect(s.buildings).toEqual(day1.buildings);

@@ -3,6 +3,8 @@
  *
  * Balances are private; read them via the getters or snapshot(). spend() is
  * all-or-nothing: both resources are deducted together, or neither is.
+ * Starting balances are non-negative; only adjustCredits() (nightly upkeep)
+ * can take Credits below zero (debt).
  */
 
 export const STARTING_RESOURCES = Object.freeze({credits: 1000, ap: 5});
@@ -57,6 +59,16 @@ export class Economy {
         this.#credits -= cost.credits;
         this.#ap -= cost.ap;
         return {ok: true};
+    }
+
+    /**
+     * Add (or subtract) Credits, e.g. a nightly settlement. The balance may
+     * become negative — that is debt. Affordability rules are unchanged, so
+     * any purchase is rejected while in debt. AP is untouched.
+     */
+    adjustCredits(delta) {
+        if (!Number.isSafeInteger(delta)) throw new RangeError(`Credit adjustment must be a safe integer, got ${delta}`);
+        this.#credits += delta;
     }
 
     /** Set AP to `ap` (e.g. at the start of a Day Shift). Credits are untouched. */

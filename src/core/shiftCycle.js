@@ -7,7 +7,8 @@
  * Day Shift is untimed: the SimulationClock is running but paused, so no
  * ticks execute. endDay() resumes it; onTick() — the fixed-step callback used
  * by both real frames and manual QA stepping — counts night ticks and, on
- * the last one, switches to the next Day and pauses the clock again.
+ * the last one, settles the night (optional settleNight hook), switches to
+ * the next Day (AP restored to exactly dayAp) and pauses the clock again.
  *
  * Exact night length: pausing inside onTick zeroes the clock's accumulator,
  * which ends SimulationClock.advance()'s step loop right after the final
@@ -39,20 +40,30 @@ export class ShiftCycle {
     #day = 0;
     #shift = null; // null until begin()
     #elapsedNightTicks = 0;
+    #settleNight;
+    #lastSettlement = null;
 
     /**
      * @param {{clock: import('./simulationClock.js').SimulationClock,
      *          economy: import('./economy.js').Economy,
-     *          nightTicks?: number, dayAp?: number}} deps
+     *          nightTicks?: number, dayAp?: number,
+     *          settleNight?: ((completedDay: number) => object) | null}} deps
+     *   settleNight - called exactly once per completed night, with the day
+     *   number whose night completed, before the next Day begins. Its return
+     *   value (a frozen report) becomes `lastSettlement`.
      */
-    constructor({clock, economy, nightTicks = NIGHT_TICKS, dayAp = DAY_AP}) {
+    constructor({clock, economy, nightTicks = NIGHT_TICKS, dayAp = DAY_AP, settleNight = null}) {
         if (!isPositiveInt(nightTicks)) throw new RangeError(`nightTicks must be a positive integer, got ${nightTicks}`);
         if (!Number.isInteger(dayAp) || dayAp < 0) throw new RangeError(`dayAp must be a non-negative integer, got ${dayAp}`);
         this.#clock = clock;
         this.#economy = economy;
         this.#nightTicks = nightTicks;
         this.#dayAp = dayAp;
+        this.#settleNight = settleNight;
     }
+
+    /** Report from the most recent completed night (frozen), or null. */
+    get lastSettlement() { return this.#lastSettlement; }
 
     get day() { return this.#day; }
     get shift() { return this.#shift; }
@@ -88,8 +99,11 @@ export class ShiftCycle {
      */
     onTick(_tick) {
         if (this.#shift !== Shift.NIGHT) return;
+        if (this.#elapsedNightTicks + 1 >= this.#nightTicks) {
+            this.#completeNight();
+            return;
+        }
         this.#elapsedNightTicks++;
-        if (this.#elapsedNightTicks >= this.#nightTicks) this.#startNextDay();
     }
 
     /**
@@ -119,7 +133,21 @@ export class ShiftCycle {
         };
     }
 
-    #startNextDay() {
+    /**
+     * The final night tick: settle, then start the next Day.
+     *
+     * Exactly once: this is reached only from onTick during Night on its
+     * last tick, and it switches to Day (which never ticks) in the same call.
+     *
+     * Failure behaviour: settlement runs first, before any cycle state
+     * changes. If it throws, nothing is modified — still Night with one tick
+     * remaining, AP and the clock untouched (SimulationClock only counts a
+     * tick after onTick returns) — and the error propagates. The final tick
+     * is simply retried on the next step.
+     */
+    #completeNight() {
+        const report = this.#settleNight ? this.#settleNight(this.#day) : null;
+        this.#lastSettlement = report;
         this.#day++;
         this.#shift = Shift.DAY;
         this.#elapsedNightTicks = 0;

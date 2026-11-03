@@ -2,10 +2,20 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import {BUILDING_TYPES, getBuildingType} from '../../src/core/buildingTypes.js';
 
-test('defines outpost (1x1) and factory (3x3)', () => {
-    assert.deepEqual(Object.keys(BUILDING_TYPES), ['outpost', 'factory']);
-    assert.deepEqual(BUILDING_TYPES.outpost, {id: 'outpost', name: 'Outpost', width: 1, height: 1, cost: {credits: 100, ap: 1}});
-    assert.deepEqual(BUILDING_TYPES.factory, {id: 'factory', name: 'Factory', width: 3, height: 3, cost: {credits: 400, ap: 1}});
+test('defines outpost (1x1), factory (3x3) and power plant (3x3)', () => {
+    assert.deepEqual(Object.keys(BUILDING_TYPES), ['outpost', 'factory', 'powerPlant']);
+    assert.deepEqual(BUILDING_TYPES.outpost, {
+        id: 'outpost', name: 'Outpost', width: 1, height: 1,
+        cost: {credits: 100, ap: 1}, operations: {income: 0, upkeep: 20}, power: {supply: 0, demand: 10},
+    });
+    assert.deepEqual(BUILDING_TYPES.factory, {
+        id: 'factory', name: 'Factory', width: 3, height: 3,
+        cost: {credits: 400, ap: 1}, operations: {income: 150, upkeep: 0}, power: {supply: 0, demand: 40},
+    });
+    assert.deepEqual(BUILDING_TYPES.powerPlant, {
+        id: 'powerPlant', name: 'Power Plant', width: 3, height: 3,
+        cost: {credits: 500, ap: 1}, operations: {income: 0, upkeep: 0}, power: {supply: 100, demand: 0},
+    });
 });
 
 test('definitions and costs are frozen', () => {
@@ -13,6 +23,8 @@ test('definitions and costs are frozen', () => {
     for (const type of Object.values(BUILDING_TYPES)) {
         assert.ok(Object.isFrozen(type));
         assert.ok(Object.isFrozen(type.cost));
+        assert.ok(Object.isFrozen(type.operations));
+        assert.ok(Object.isFrozen(type.power));
     }
     assert.throws(() => { BUILDING_TYPES.outpost.width = 5; }, TypeError);
     assert.throws(() => { BUILDING_TYPES.factory.cost.credits = 0; }, TypeError);

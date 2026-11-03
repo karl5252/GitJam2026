@@ -11,6 +11,8 @@ import {getBuildingType} from './buildingTypes.js';
 
 export const NO_SELECTION = 'no-selection';
 export const CONSTRUCTION_DISABLED = 'construction-disabled';
+export const UNKNOWN_BUILDING = 'unknown-building';
+export const INVALID_STATE = 'invalid-state';
 
 /**
  * Footprint for a building centred on a pointer cell.
@@ -102,8 +104,24 @@ export class BuildingPlacement {
         }
 
         this.#nextId++;
-        const building = {id, type: type.id, ...footprint};
+        const building = {id, type: type.id, ...footprint, enabled: true};
         this.#buildings.push(building);
+        return {ok: true, building: {...building}};
+    }
+
+    /**
+     * Switch a placed building ON/OFF (player intent; see core/power.js for
+     * the derived powered state). Allowed in BOTH Day and Night Shift — it is
+     * deliberately not behind the construction gate — and costs no Credits or
+     * AP. Never touches the grid or the economy. Setting the current value
+     * again succeeds without change.
+     * @returns {{ok: true, building} | {ok: false, reason: 'unknown-building' | 'invalid-state'}}
+     */
+    setEnabled(id, enabled) {
+        if (typeof enabled !== 'boolean') return {ok: false, reason: INVALID_STATE};
+        const building = this.#buildings.find((b) => b.id === id);
+        if (!building) return {ok: false, reason: UNKNOWN_BUILDING};
+        building.enabled = enabled;
         return {ok: true, building: {...building}};
     }
 

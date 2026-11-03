@@ -7,6 +7,8 @@ import {Economy} from '../core/economy.js';
 import {SimulationClock} from '../core/simulationClock.js';
 import {SeededRandom, DEFAULT_SEED, parseSeed} from '../core/seededRandom.js';
 import {ShiftCycle, Shift} from '../core/shiftCycle.js';
+import {settleNight} from '../core/settlement.js';
+import {calculatePower, PowerStatus} from '../core/power.js';
 import {TEST_MODE} from '../testMode.js';
 import {addProxy, markScene, setBodyState} from '../testShadow/TestProxy.js';
 import {QASurface} from '../testShadow/QASurface.js';
@@ -19,8 +21,16 @@ const GRID_LINE_COLOR = 0x78909c;
 const HIGHLIGHT_COLOR = 0xffeb3b;
 export const PREVIEW_VALID_COLOR = 0x4caf50;
 export const PREVIEW_INVALID_COLOR = 0xe53935;
-const BUILDING_COLORS = {outpost: 0x9e9e9e, factory: 0x616161};
+const BUILDING_COLORS = {outpost: 0x9e9e9e, factory: 0x616161, powerPlant: 0x5c6bc0};
 const BUILDING_STROKE = 0x212121;
+export const UNPOWERED_STROKE = 0xe53935; // enabled but not operating (low power / blackout)
+export const DISABLED_ALPHA = 0.35; // switched OFF by the player
+
+const POWER_STATUS_LABELS = {
+    [PowerStatus.NORMAL]: 'NORMAL',
+    [PowerStatus.LOW_POWER]: 'LOW POWER',
+    [PowerStatus.BLACKOUT]: 'BLACKOUT',
+};
 
 const BUTTON_IDLE_STROKE = 0x90a4ae;
 const BUTTON_SELECTED_STROKE = 0xffeb3b;
@@ -78,6 +88,11 @@ export class GameScene extends Phaser.Scene {
         this.endDayProxy = null;
         this.cycle = null;
         this.shiftHud = null;
+        this.settlementPanel = null;
+        this.powerHud = null;
+        this.selectedBuildingId = null;
+        this.toggleButton = null;
+        this.toggleProxy = null;
         this.renderedShiftKey = null; // last `${day}:${shift}` the UI was synced to
 
         // Fixed 60 Hz simulation. Stopped until Start; stepped from update().
@@ -160,6 +175,7 @@ export class GameScene extends Phaser.Scene {
             this.createBuildMenu();
             this.cycle.begin(); // Day 1; the clock starts paused for Day Shift
             this.syncShiftUi();
+            this.refreshPower();
         }
         setBodyState({phase: this.phase});
     }
@@ -174,7 +190,12 @@ export class GameScene extends Phaser.Scene {
             originY: (height - GRID_ROWS * TILE_SIZE) / 2,
         });
         this.economy = new Economy();
-        this.cycle = new ShiftCycle({clock: this.clock, economy: this.economy});
+        // Orchestration only: the settlement formula lives in core/settlement.js.
+        this.cycle = new ShiftCycle({
+            clock: this.clock,
+            economy: this.economy,
+            settleNight: (day) => settleNight({day, buildings: this.placement.buildings(), economy: this.economy}),
+        });
         this.placement = new BuildingPlacement(this.grid, this.economy, {
             isConstructionAllowed: () => this.cycle.isConstructionAllowed,
         });
@@ -221,7 +242,54 @@ export class GameScene extends Phaser.Scene {
             fontSize: '28px',
             color: '#ffffff',
         }).setOrigin(0.5);
+        // Right band beside the grid (grid ends at x 1024): global power
+        // summary, then the latest nightly settlement (hidden until the first
+        // night completes).
+        this.powerHud = this.add.text(1040, 112, '', {
+            fontFamily: 'monospace',
+            fontSize: '20px',
+            color: '#ffffff',
+            lineSpacing: 4,
+        }).setOrigin(0, 0);
+        this.settlementPanel = this.add.text(1040, 190, '', {
+            fontFamily: 'monospace',
+            fontSize: '20px',
+            color: '#ffffff',
+            backgroundColor: '#263238',
+            padding: {x: 8, y: 6},
+            lineSpacing: 4,
+        }).setOrigin(0, 0).setVisible(false);
         this.updateHud();
+    }
+
+    /** Render a settlement report (already calculated in core). */
+    showSettlement(report) {
+        const signed = (n) => (n > 0 ? `+${n}` : `${n}`);
+        this.settlementPanel.setText([
+            `Night ${report.day} settlement`,
+            `Income  ${signed(report.gross)}`,
+            `Upkeep  ${signed(-report.upkeep)}`,
+            `Net     ${signed(report.net)}`,
+            `Credits ${report.creditsAfter}`,
+            `Power   ${POWER_STATUS_LABELS[report.power.status]}`,
+        ].join('\n')).setVisible(true);
+    }
+
+    /**
+     * Re-derive power from the building records and render it: the summary
+     * text and each building's look. Called right after placement, toggling
+     * and shift changes — never per frame, and nothing is cached.
+     */
+    refreshPower() {
+        const power = calculatePower(this.placement.buildings());
+        this.powerHud.setText(`Power ${power.generation} / ${power.demand}\n${POWER_STATUS_LABELS[power.status]}`);
+        for (const {id, enabled, powered} of power.buildings) {
+            const view = this.buildingViews.get(id);
+            view.setAlpha(enabled ? 1 : DISABLED_ALPHA);
+            if (enabled && !powered) view.setStrokeStyle(3, UNPOWERED_STROKE);
+            else view.setStrokeStyle(2, BUILDING_STROKE);
+        }
+        this.updateToggleButton();
     }
 
     updateHud() {
@@ -253,7 +321,8 @@ export class GameScene extends Phaser.Scene {
             if (!isDay) this.exitPlacementMode();
             this.setBuildMenuVisible(isDay);
             this.setEndDayVisible(isDay);
-            this.updateHud(); // AP is restored at the start of each Day
+            this.updateHud(); // AP is restored and the night settled at the start of each Day
+            if (isDay && this.cycle.lastSettlement) this.showSettlement(this.cycle.lastSettlement);
         }
         this.updateShiftHud();
     }
@@ -266,12 +335,12 @@ export class GameScene extends Phaser.Scene {
 
     // ---- Build menu --------------------------------------------------------
 
-    createButton(y, label, fill) {
-        const rect = this.add.rectangle(MENU_X, y, MENU_BUTTON.width, MENU_BUTTON.height, fill)
+    createButton(y, label, fill, x = MENU_X) {
+        const rect = this.add.rectangle(x, y, MENU_BUTTON.width, MENU_BUTTON.height, fill)
             .setStrokeStyle(3, BUTTON_IDLE_STROKE)
             .setInteractive({useHandCursor: true})
             .setDepth(4);
-        const text = this.add.text(MENU_X, y, label, {
+        const text = this.add.text(x, y, label, {
             fontFamily: 'monospace',
             fontSize: '20px',
             color: '#ffffff',
@@ -299,6 +368,42 @@ export class GameScene extends Phaser.Scene {
         // Bottom of the left band, clear of the grid (grid x starts at 256).
         this.endDayButton = this.createButton(620, 'END DAY', 0x6d4c41);
         this.endDayButton.rect.on('pointerdown', () => this.handleEndDay());
+
+        // Power switch for the selected building, right band. Day AND Night.
+        this.toggleButton = this.createButton(560, '', 0x37474f, 1152);
+        this.toggleButton.rect.on('pointerdown', () => this.handleTogglePower());
+        this.updateToggleButton();
+    }
+
+    // ---- Building selection / power switch ---------------------------------
+
+    /** Visible whenever an existing building is selected (both shifts). */
+    updateToggleButton() {
+        const building = this.selectedBuildingId
+            ? this.placement.buildings().find((b) => b.id === this.selectedBuildingId)
+            : null;
+        const {rect, text} = this.toggleButton;
+        const visible = Boolean(building);
+        rect.setVisible(visible);
+        text.setVisible(visible);
+        if (!visible) {
+            rect.disableInteractive();
+            this.toggleProxy?.destroy();
+            this.toggleProxy = null;
+            return;
+        }
+        text.setText(`${building.id}\n${building.enabled ? 'Switch OFF' : 'Switch ON'}`);
+        rect.setInteractive({useHandCursor: true});
+        this.toggleProxy ??= addProxy(this, rect, 'toggle-power', {label: 'Toggle power'});
+        this.toggleProxy.set({target: building.id, enabled: building.enabled});
+    }
+
+    /** Flip the selected building through the real domain method. */
+    handleTogglePower() {
+        const building = this.placement.buildings().find((b) => b.id === this.selectedBuildingId);
+        if (!building) return;
+        this.placement.setEnabled(building.id, !building.enabled);
+        this.refreshPower();
     }
 
     /** Show/enable the building buttons (Day) or hide/disable them (Night). */
@@ -358,9 +463,11 @@ export class GameScene extends Phaser.Scene {
     enterPlacementMode(typeId) {
         if (!this.placement.select(typeId)) return;
 
-        // Selection is disabled while placing; it resumes after cancel.
+        // Selection (cell or building) is disabled while placing; it resumes after cancel.
         this.selectedCell = null;
+        this.selectedBuildingId = null;
         this.selectionHighlight.setVisible(false);
+        this.updateToggleButton();
 
         for (const [id, button] of Object.entries(this.buildButtons)) {
             const selected = id === typeId;
@@ -423,11 +530,13 @@ export class GameScene extends Phaser.Scene {
             if (result.ok) {
                 this.addBuildingView(building);
                 this.updateHud();
+                this.refreshPower(); // new supply/demand takes effect immediately
                 this.updatePreview(cell); // re-validate: cell now occupied, balances lower
             }
             return;
         }
 
+        // Normal mode: never places. An occupied cell selects its building.
         this.selectAt(cell);
     }
 
@@ -437,15 +546,24 @@ export class GameScene extends Phaser.Scene {
         this.updatePreview(cell);
     }
 
-    /** Select a cell, or clear selection when `cell` is null (outside the grid). */
+    /**
+     * Select a cell, or clear selection when `cell` is null (outside the
+     * grid). If the cell is occupied, its building is selected too and the
+     * highlight covers the building's footprint.
+     */
     selectAt(cell) {
         this.selectedCell = cell;
+        this.selectedBuildingId = cell ? this.grid.occupantAt(cell.col, cell.row) : null;
         if (cell) {
-            const {x, y} = this.grid.cellToWorld(cell.col, cell.row);
-            this.selectionHighlight.setPosition(x, y).setVisible(true);
+            const building = this.selectedBuildingId
+                ? this.placement.buildings().find((b) => b.id === this.selectedBuildingId)
+                : null;
+            const rect = this.grid.footprintRect(building ?? {col: cell.col, row: cell.row});
+            this.selectionHighlight.setPosition(rect.x, rect.y).setSize(rect.width, rect.height).setVisible(true);
         } else {
             this.selectionHighlight.setVisible(false);
         }
+        this.updateToggleButton();
     }
 
     // ---- Simulation --------------------------------------------------------
@@ -485,8 +603,19 @@ export class GameScene extends Phaser.Scene {
                 cancelVisible: this.cancelButton ? this.cancelButton.rect.visible : false,
                 endDayVisible: this.endDayButton ? this.endDayButton.rect.visible : false,
                 buildMenuVisible: Object.values(this.buildButtons).some((b) => b.rect.visible),
+                toggleVisible: this.toggleButton ? this.toggleButton.rect.visible : false,
             },
+            // Domain power state, derived on demand from the building records.
+            power: this.placement ? calculatePower(this.placement.buildings()) : null,
+            // Actual power summary text, read off the game object.
+            powerView: this.powerHud ? {visible: this.powerHud.visible, text: this.powerHud.text} : null,
+            selectedBuilding: this.selectedBuildingId,
             shiftCycle: this.cycle?.started ? this.cycle.snapshot() : null,
+            // Latest nightly settlement report (domain) and the actual panel text.
+            settlement: this.cycle?.lastSettlement ? structuredClone(this.cycle.lastSettlement) : null,
+            settlementView: this.settlementPanel
+                ? {visible: this.settlementPanel.visible, text: this.settlementPanel.text}
+                : null,
             // Actual shift HUD text, read off the game object.
             shiftView: this.shiftHud ? {visible: this.shiftHud.visible, text: this.shiftHud.text} : null,
             placement: this.placement
@@ -515,7 +644,10 @@ export class GameScene extends Phaser.Scene {
                 ? {...rectView(this.previewRect), fillColor: this.previewRect.fillColor, strokeColor: this.previewRect.strokeColor}
                 : null,
             buildings: this.placement ? this.placement.buildings() : [],
-            buildingViews: [...this.buildingViews].map(([id, view]) => ({id, ...rectView(view), fillColor: view.fillColor})),
+            // Rendered building rectangles: alpha < 1 = disabled, red stroke = unpowered.
+            buildingViews: [...this.buildingViews].map(([id, view]) => ({
+                id, ...rectView(view), fillColor: view.fillColor, strokeColor: view.strokeColor, alpha: view.alpha,
+            })),
         };
     }
 }

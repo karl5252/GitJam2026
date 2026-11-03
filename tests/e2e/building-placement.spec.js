@@ -95,13 +95,14 @@ function placementSuite({pressWorld, pressAction}) {
         const after = await sample(page);
         expect(after.placement.selectedType).toBe('factory');
         expect(after.buildings).toEqual([
-            {id: 'outpost-1', type: 'outpost', col: 2, row: 2, width: 1, height: 1},
-            {id: 'outpost-2', type: 'outpost', col: 4, row: 2, width: 1, height: 1},
-            {id: 'factory-3', type: 'factory', col: 9, row: 7, width: 3, height: 3},
+            {id: 'outpost-1', type: 'outpost', col: 2, row: 2, width: 1, height: 1, enabled: true},
+            {id: 'outpost-2', type: 'outpost', col: 4, row: 2, width: 1, height: 1, enabled: true},
+            {id: 'factory-3', type: 'factory', col: 9, row: 7, width: 3, height: 3, enabled: true},
         ]);
         expect(after.grid.occupants).toEqual(occupantsFrom(after.buildings));
         expect(after.buildingViews).toEqual(after.buildings.map((b) => ({
             id: b.id, visible: true, ...footprintRect(after.grid, b), fillColor: expect.any(Number),
+            strokeColor: expect.any(Number), alpha: 1,
         })));
         // Selection is disabled while placing.
         expect(after.selectedCell).toBeNull();

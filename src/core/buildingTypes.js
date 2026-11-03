@@ -1,15 +1,32 @@
 /**
  * Building definitions — plain frozen data, no Phaser.
- * Footprint sizes are in grid cells. Costs are temporary graybox values.
+ * Footprint sizes are in grid cells. Costs, operations and power are
+ * temporary graybox values.
+ *
+ *   cost:       one-off purchase price
+ *   operations: Credits per completed Night Shift (settled at the start of
+ *               the next Day): income is added, upkeep is subtracted
+ *   power:      supply added to / demand drawn from the single global pool
+ *               while the building is enabled (see core/power.js)
  */
 export const BUILDING_TYPES = Object.freeze({
     outpost: Object.freeze({
         id: 'outpost', name: 'Outpost', width: 1, height: 1,
         cost: Object.freeze({credits: 100, ap: 1}),
+        operations: Object.freeze({income: 0, upkeep: 20}),
+        power: Object.freeze({supply: 0, demand: 10}),
     }),
     factory: Object.freeze({
         id: 'factory', name: 'Factory', width: 3, height: 3,
         cost: Object.freeze({credits: 400, ap: 1}),
+        operations: Object.freeze({income: 150, upkeep: 0}),
+        power: Object.freeze({supply: 0, demand: 40}),
+    }),
+    powerPlant: Object.freeze({
+        id: 'powerPlant', name: 'Power Plant', width: 3, height: 3,
+        cost: Object.freeze({credits: 500, ap: 1}),
+        operations: Object.freeze({income: 0, upkeep: 0}),
+        power: Object.freeze({supply: 100, demand: 0}),
     }),
 });
 

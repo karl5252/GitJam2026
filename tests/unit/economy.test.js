@@ -96,6 +96,32 @@ test('restoreAp rejects invalid values without changing state', () => {
     assert.deepEqual(e.snapshot(), {credits: 1000, ap: 5});
 });
 
+test('adjustCredits adds and subtracts integers, may go negative, leaves AP alone', () => {
+    const e = new Economy({credits: 100, ap: 3});
+    e.adjustCredits(150);
+    assert.deepEqual(e.snapshot(), {credits: 250, ap: 3});
+    e.adjustCredits(-300);
+    assert.deepEqual(e.snapshot(), {credits: -50, ap: 3});
+    e.adjustCredits(0);
+    assert.equal(e.credits, -50);
+});
+
+test('adjustCredits rejects non-integers without changing state', () => {
+    const e = new Economy();
+    for (const bad of [1.5, NaN, Infinity, '10', undefined, 2 ** 60]) {
+        assert.throws(() => e.adjustCredits(bad), RangeError, String(bad));
+    }
+    assert.deepEqual(e.snapshot(), {credits: 1000, ap: 5});
+});
+
+test('with a negative balance nothing is affordable (rule unchanged)', () => {
+    const e = new Economy({credits: 0, ap: 5});
+    e.adjustCredits(-1);
+    assert.deepEqual(e.canAfford({credits: 100, ap: 1}), {ok: false, reason: EconomyFailure.INSUFFICIENT_CREDITS});
+    assert.deepEqual(e.spend({credits: 100, ap: 1}), {ok: false, reason: EconomyFailure.INSUFFICIENT_CREDITS});
+    assert.deepEqual(e.snapshot(), {credits: -1, ap: 5});
+});
+
 test('snapshot is detached', () => {
     const e = new Economy();
     const snap = e.snapshot();

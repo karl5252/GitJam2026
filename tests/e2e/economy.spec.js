@@ -62,6 +62,7 @@ function economySuite({pressWorld, pressAction}) {
         expect(state.menuLabels).toEqual({
             outpost: 'Outpost 1x1\n100c · 1 AP',
             factory: 'Factory 3x3\n400c · 1 AP',
+            powerPlant: 'Power Plant 3x3\n500c · 1 AP',
         });
     });
 
