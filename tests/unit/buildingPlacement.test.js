@@ -3,11 +3,18 @@ import assert from 'node:assert/strict';
 import {Grid, PlacementFailure} from '../../src/core/grid.js';
 import {BUILDING_TYPES} from '../../src/core/buildingTypes.js';
 import {BuildingPlacement, footprintAt, NO_SELECTION} from '../../src/core/buildingPlacement.js';
+import {Economy, EconomyFailure} from '../../src/core/economy.js';
 
-const setup = () => {
+const setup = (resources) => {
     const grid = new Grid({cols: 24, rows: 16, tileSize: 32, originX: 256, originY: 104});
-    return {grid, placement: new BuildingPlacement(grid)};
+    const economy = new Economy(resources);
+    return {grid, economy, placement: new BuildingPlacement(grid, economy)};
 };
+
+/** Everything a failed attempt must leave untouched. */
+const fullState = ({grid, economy, placement}) => JSON.stringify({
+    grid: grid.snapshot(), economy: economy.snapshot(), buildings: placement.buildings(),
+});
 
 const occupantsOf = (grid) => grid.snapshot().occupants;
 const asOccupants = (buildings) => buildings.map(({id, col, row, width, height}) => ({id, col, row, width, height}));
@@ -175,4 +182,111 @@ test('buildings() returns detached data', () => {
     assert.deepEqual(placement.buildings(), [{id: 'outpost-1', type: 'outpost', col: 2, row: 2, width: 1, height: 1}]);
     assert.equal(grid.occupantAt(2, 2), 'outpost-1');
     assert.deepEqual(JSON.parse(JSON.stringify(placement.buildings())), placement.buildings());
+});
+
+// ---- Economy integration -------------------------------------------------------
+
+test('successful placement deducts the type cost exactly once', () => {
+    const {economy, placement} = setup();
+    placement.select('outpost');
+    placement.placeAt({col: 2, row: 2});
+    assert.deepEqual(economy.snapshot(), {credits: 900, ap: 4});
+    placement.select('factory');
+    placement.placeAt({col: 10, row: 8});
+    assert.deepEqual(economy.snapshot(), {credits: 500, ap: 3});
+});
+
+test('insufficient credits on free cells: rejected, preview invalid, nothing changes', () => {
+    const ctx = setup();
+    const {grid, economy, placement} = ctx;
+    placement.select('factory');
+    placement.placeAt({col: 2, row: 2});
+    placement.placeAt({col: 6, row: 2});
+    assert.deepEqual(economy.snapshot(), {credits: 200, ap: 3});
+
+    const cell = {col: 12, row: 10};
+    const preview = placement.preview(cell);
+    assert.deepEqual(preview, {
+        footprint: {col: 11, row: 9, width: 3, height: 3}, ok: false, reason: EconomyFailure.INSUFFICIENT_CREDITS,
+    });
+    assert.deepEqual(grid.canPlace(preview.footprint), {ok: true}); // the cells themselves are free
+
+    const before = fullState(ctx);
+    assert.deepEqual(placement.placeAt(cell), {ok: false, reason: EconomyFailure.INSUFFICIENT_CREDITS});
+    assert.equal(fullState(ctx), before);
+
+    // An affordable type still works and receives the next id.
+    placement.select('outpost');
+    assert.equal(placement.placeAt(cell).building.id, 'outpost-3');
+});
+
+test('insufficient AP: a sixth outpost is rejected without changes', () => {
+    const ctx = setup();
+    const {economy, placement} = ctx;
+    placement.select('outpost');
+    for (let i = 0; i < 5; i++) assert.equal(placement.placeAt({col: i * 2, row: 0}).ok, true);
+    assert.deepEqual(economy.snapshot(), {credits: 500, ap: 0});
+
+    const before = fullState(ctx);
+    assert.deepEqual(placement.preview({col: 20, row: 10}), {
+        footprint: {col: 20, row: 10, width: 1, height: 1}, ok: false, reason: EconomyFailure.INSUFFICIENT_AP,
+    });
+    assert.deepEqual(placement.placeAt({col: 20, row: 10}), {ok: false, reason: EconomyFailure.INSUFFICIENT_AP});
+    assert.equal(fullState(ctx), before);
+});
+
+test('spatial failures take precedence over resource failures', () => {
+    const {placement} = setup({credits: 0, ap: 0});
+    placement.select('factory');
+    assert.equal(placement.preview({col: 0, row: 0}).reason, PlacementFailure.OUT_OF_BOUNDS);
+    assert.equal(placement.placeAt({col: 0, row: 0}).reason, PlacementFailure.OUT_OF_BOUNDS);
+    assert.equal(placement.placeAt({col: 5, row: 5}).reason, EconomyFailure.INSUFFICIENT_CREDITS);
+});
+
+test('no rejection of any kind mutates grid, balances, buildings or next id', () => {
+    const ctx = setup({credits: 450, ap: 2});
+    const {placement} = ctx;
+    assert.equal(placement.placeAt({col: 5, row: 5}).reason, NO_SELECTION);
+    placement.select('factory');
+    placement.placeAt({col: 5, row: 5}); // factory-1 -> 50 credits, 1 AP left
+    const before = fullState(ctx);
+
+    const attempts = [
+        ['factory', {col: 0, row: 0}, PlacementFailure.OUT_OF_BOUNDS],
+        ['factory', {col: 6, row: 6}, PlacementFailure.OCCUPIED],
+        ['factory', {col: 15, row: 10}, EconomyFailure.INSUFFICIENT_CREDITS],
+        ['outpost', {col: 5, row: 5}, PlacementFailure.OCCUPIED],
+        ['outpost', {col: 15, row: 10}, EconomyFailure.INSUFFICIENT_CREDITS],
+    ];
+    for (const [type, cell, reason] of attempts) {
+        placement.select(type);
+        assert.equal(placement.placeAt(cell).reason, reason, `${type} at ${JSON.stringify(cell)}`);
+        assert.equal(fullState(ctx), before);
+    }
+});
+
+test('preview never charges', () => {
+    const {economy, placement} = setup();
+    placement.select('factory');
+    for (let i = 0; i < 10; i++) placement.preview({col: 5, row: 5});
+    assert.deepEqual(economy.snapshot(), {credits: 1000, ap: 5});
+});
+
+test('a failing economy commit rolls back the grid (all-or-nothing)', () => {
+    const grid = new Grid({cols: 24, rows: 16, tileSize: 32});
+    // A disagreeing economy: validation passes, the commit fails.
+    const economy = {
+        canAfford: () => ({ok: true}),
+        spend: () => ({ok: false, reason: EconomyFailure.INSUFFICIENT_CREDITS}),
+    };
+    const placement = new BuildingPlacement(grid, economy);
+    placement.select('factory');
+
+    assert.deepEqual(placement.placeAt({col: 5, row: 5}), {ok: false, reason: EconomyFailure.INSUFFICIENT_CREDITS});
+    assert.deepEqual(grid.snapshot().occupants, []);
+    assert.equal(grid.occupantAt(5, 5), null);
+    assert.deepEqual(placement.buildings(), []);
+
+    economy.spend = () => ({ok: true});
+    assert.equal(placement.placeAt({col: 5, row: 5}).building.id, 'factory-1'); // id was not consumed
 });

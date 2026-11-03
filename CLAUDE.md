@@ -154,25 +154,52 @@ Avoid implementing gameplay rules directly inside Phaser scenes.
 
 - `src/core/gamePhase.js`: Bootstrap game phase logic.
 - `src/core/grid.js`: `Grid` class (Phaser-free). Configurable `cols`/`rows`/`tileSize` with an origin offset (`originX`/`originY`). World↔cell conversion (`worldToCell`, `cellToWorld`, `cellCenter`, `footprintRect`). NxM footprints `{col, row, width, height}`, anchored at the top-left cell. `canPlace`/`place` are atomic and return `{ok}` or `{ok: false, reason}`, where reason is one of `PlacementFailure`: `invalid-footprint`, `out-of-bounds`, `occupied` (plus `blockers`), `duplicate-id`. Also `remove`, `occupantAt` and `snapshot()`, which returns detached JSON data. The grid is the source of truth for occupancy and validity.
-- `src/core/buildingTypes.js`: frozen plain data. `outpost` is 1×1 and `factory` is 3×3. `getBuildingType(id)` returns the type or `null`.
+- `src/core/buildingTypes.js`: frozen plain data. `outpost` is 1×1 and costs `{credits: 100, ap: 1}`. `factory` is 3×3 and costs `{credits: 400, ap: 1}`. These are temporary graybox values. `getBuildingType(id)` returns the type or `null`.
+- `src/core/economy.js`:
+  - `Economy({credits, ap})` defaults to `STARTING_RESOURCES` (1000 / 5). Balances are private, read through getters.
+  - `canAfford(cost)` never changes anything. It checks in a fixed order: `invalid-cost` → `insufficient-credits` → `insufficient-ap` (`EconomyFailure`).
+  - `spend(cost)` deducts both resources together, or neither.
+  - `snapshot()` returns detached data.
 - `src/core/buildingPlacement.js`:
   - `footprintAt(type, cell)` centers a footprint on the pointer cell: anchor = cell − floor((size − 1) / 2). For even sizes, the pointer cell is the left/top cell of the central pair.
-  - `BuildingPlacement(grid)` provides `select`/`cancel`/`selectedType`/`isPlacing`.
-  - `preview(cell)` returns `{footprint, ...grid.canPlace()}` and never changes anything.
-  - `placeAt(cell)` delegates to `grid.place`. A rejected attempt changes nothing, and `no-selection` is returned when not placing.
+  - `BuildingPlacement(grid, economy)` provides `select`/`cancel`/`selectedType`/`isPlacing`.
+  - `preview(cell)` and `placeAt(cell)` share one validation: `grid.canPlace` first, then `economy.canAfford`. Space reasons therefore win over resource reasons. `preview` never changes anything.
+  - **`placeAt` is one atomic transaction:**
+    1. Validate everything.
+    2. Commit with `grid.place`, then `economy.spend`. If the spend fails, `grid.remove` undoes the grid change.
+    3. Record the building and advance the id.
+
+    A rejection leaves the grid, balances, buildings and next id unchanged. `no-selection` is returned when not placing.
   - Ids are deterministic (`outpost-1`, `factory-2`, …). `buildings()` returns a detached list.
+- `src/core/simulationClock.js`: `SimulationClock`, a fixed 60 Hz clock (`TICK_RATE`).
+  - Lifecycle: stopped → `start()` → running, with `pause()`/`resume()`. `reset()` returns to stopped with tick 0.
+  - `advance(deltaMs, onTick)`: the accumulator. Each frame is capped at `MAX_FRAME_MS` = 100 ms (6 ticks) before it is added. Excess time is deliberately dropped, so there is no catch-up spiral. Does nothing while stopped or paused.
+  - `stepTicks(count, onTick)`: exactly 1..240 ticks through the same callback. Allowed while paused, without unpausing. Does nothing before `start()` or after `reset()`.
+  - `timeSeconds = tick / tickRate`. There is no wall clock and no timers.
+- `src/core/seededRandom.js`:
+  - `SeededRandom(seed)` is the Refit/BarrelStorm LCG with a uint32 seed (`DEFAULT_SEED` = 731). It provides `next()` in [0, 1), inclusive `nextInt(min, max)`, `reset()` (back to the seed) and `snapshot()` → `{seed, state}`.
+  - `parseSeed(raw)` validates seed overrides.
 - `src/scenes/BootScene.js`: Starts the game scene.
 - `src/scenes/GameScene.js`:
   - Start hides the title and Start button and removes the `start` proxy. It then creates a 24×16 `Grid` with 32px cells at origin (256, 104), drawn with Phaser Graphics, and shows the build menu in the band left of the grid.
-  - The build menu has Outpost and Factory buttons (proxies `build-outpost`/`build-factory`, with `data-selected`) and a Cancel button. Cancel is visible, with proxy `cancel-placement`, only while placing.
+  - The HUD in the top band shows `Credits: N   AP: N`. It is created at Start, together with the `Economy`, and refreshed after each successful placement.
+  - The build menu has Outpost and Factory buttons (proxies `build-outpost`/`build-factory`, with `data-selected`). Their labels show the size and cost. There is also a Cancel button, visible with proxy `cancel-placement` only while placing.
   - **Normal mode:** `pointerdown` selects or highlights the cell from `pointer.worldX/worldY` via `grid.worldToCell`. A pointer outside the grid clears the selection.
   - **Placement mode:** `pointermove` previews the footprint, and `pointerdown` attempts placement. Selection is cleared and disabled. Placement mode stays active after a successful placement. Escape or Cancel exits.
-  - The preview color comes from the domain result: green when ok, red otherwise.
+  - The preview color comes from the domain result: green when ok, red otherwise. An unaffordable footprint is red even when its cells are free.
   - Scene-level pointer handlers ignore events whose hit list (`currentlyOver`) contains a UI object, so a press on a button never counts as grid input.
   - QASurface exposes:
     - `grid`, `selectedCell`, `highlight`
     - `ui` (title, Start and Cancel visibility)
-    - `placement` (`selectedType` and the domain `preview` result)
+    - `placement` (`selectedType`, the domain `preview` result, and `lastResult` from the last placement attempt)
+    - `resources` (`economy.snapshot()`), `hudView` (the actual HUD text), `menuLabels` (the actual button labels)
+    - `simulation`: `{running, paused, tick, timeSeconds, stepsExecuted, rng: {seed, state}}`
+  - **Simulation:**
+    - The clock is created stopped and started by Start.
+    - `update(time, delta)` calls `clock.advance(delta, stepSimulation)` and ignores Phaser's `time`.
+    - `stepSimulation(tick)` has no gameplay yet. It only counts `stepsExecuted`.
+    - The RNG seed is `DEFAULT_SEED`. In TEST_MODE only, `?seed=N` overrides it.
+  - **TEST_MODE-only controls:** `window.__qa.sim.pause()`, `resume()` and `stepTicks(n)` call the real clock methods. `stepTicks` uses the same `stepSimulation` callback as `update`. The controls are added by `GameScene`; Test Shadow internals are unchanged.
     - `previewView` (the rendered preview: visibility, rect, colors)
     - `buildings` (domain) and `buildingViews` (the rendered rectangles)
   - Grid cells have no DOM proxies. E2E tests press real canvas points with `clickWorld`/`tapWorld`, and press buttons through their proxies with `clickAction`/`tapAction` (`tests/helpers/canvas.js`).
@@ -209,9 +236,7 @@ Gameplay-critical simulation must use a **fixed timestep of 60 Hz**.
 - Avoid `Date.now()` or wall-clock timing for gameplay outcomes.
 - Support deterministic state inspection and controlled tick advancement for testing.
 
-The simulation clock and seeded RNG have not yet been integrated.
-
-When assigned, inspect the existing implementations from Steel Abyss: Refit or BarrelStorm before introducing replacements.
+The simulation clock (`src/core/simulationClock.js`) and seeded RNG (`src/core/seededRandom.js`) are integrated in `GameScene`. They follow the Steel Abyss: Refit / BarrelStorm contracts: the 1/60 s accumulator, the 100 ms frame cap and the same LCG. No gameplay system consumes ticks or random numbers yet. New simulated systems must run inside `GameScene.stepSimulation()` and draw randomness from `this.rng`.
 
 ### Day Shift
 

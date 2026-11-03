@@ -56,7 +56,7 @@ function placementSuite({pressWorld, pressAction}) {
         await expect(byAction(page, 'build-factory')).toHaveCount(1);
         await expect(byAction(page, 'cancel-placement')).toHaveCount(0);
         expect(state.ui.cancelVisible).toBe(false);
-        expect(state.placement).toEqual({selectedType: null, preview: null});
+        expect(state.placement).toEqual({selectedType: null, preview: null, lastResult: null});
 
         await choose(page, 'factory');
         await expect(byAction(page, 'cancel-placement')).toHaveCount(1);

@@ -3,9 +3,10 @@ import {getBuildingType} from './buildingTypes.js';
 /**
  * Placement mode + placed-building state. Pure — no Phaser.
  *
- * The Grid is the source of truth for occupancy and validity: preview()
- * and placeAt() both defer to grid.canPlace()/grid.place(); a building is
- * recorded only after the grid accepts it.
+ * The Grid is the source of truth for occupancy and spatial validity; the
+ * Economy for affordability. preview() and placeAt() share one validation
+ * (grid first, then economy); a building is recorded only after both the
+ * grid placement and the resource spend succeed.
  */
 
 export const NO_SELECTION = 'no-selection';
@@ -32,8 +33,15 @@ export class BuildingPlacement {
     #buildings = [];
     #nextId = 1;
 
-    constructor(grid) {
+    #economy;
+
+    /**
+     * @param {import('./grid.js').Grid} grid
+     * @param {import('./economy.js').Economy} economy
+     */
+    constructor(grid, economy) {
         this.#grid = grid;
+        this.#economy = economy;
         this.selectedType = null; // building type id, or null when not in placement mode
     }
 
@@ -59,27 +67,47 @@ export class BuildingPlacement {
      */
     preview(cell) {
         if (!this.isPlacing || !cell) return null;
-        const footprint = footprintAt(getBuildingType(this.selectedType), cell);
-        return {footprint, ...this.#grid.canPlace(footprint)};
+        const type = getBuildingType(this.selectedType);
+        const footprint = footprintAt(type, cell);
+        return {footprint, ...this.#validate(type, footprint)};
     }
 
     /**
-     * Attempt to place the selected type centred on `cell`. Atomic: on any
-     * failure neither the grid nor the building list changes.
+     * Attempt to place the selected type centred on `cell` as one atomic
+     * transaction: validate everything first, then commit grid + economy.
+     * On any failure the grid, balances, building list and next id are
+     * unchanged.
      */
     placeAt(cell) {
         if (!this.isPlacing) return {ok: false, reason: NO_SELECTION};
         const type = getBuildingType(this.selectedType); // always valid: select() checks
-
         const footprint = footprintAt(type, cell);
+
+        const check = this.#validate(type, footprint);
+        if (!check.ok) return check;
+
+        // Commit. Both steps were just validated; the guards below only make
+        // the transaction all-or-nothing should a commit ever disagree.
         const id = `${type.id}-${this.#nextId}`;
-        const result = this.#grid.place(id, footprint);
-        if (!result.ok) return result;
+        const placed = this.#grid.place(id, footprint);
+        if (!placed.ok) return placed;
+        const spent = this.#economy.spend(type.cost);
+        if (!spent.ok) {
+            this.#grid.remove(id);
+            return spent;
+        }
 
         this.#nextId++;
         const building = {id, type: type.id, ...footprint};
         this.#buildings.push(building);
         return {ok: true, building: {...building}};
+    }
+
+    /** Spatial rules first (grid), then resources (economy). Never mutates. */
+    #validate(type, footprint) {
+        const spatial = this.#grid.canPlace(footprint);
+        if (!spatial.ok) return spatial;
+        return this.#economy.canAfford(type.cost);
     }
 
     /** Detached, JSON-serializable list of placed buildings. */

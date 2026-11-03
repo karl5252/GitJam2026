@@ -3,6 +3,10 @@ import {GamePhase, startGame} from '../core/gamePhase.js';
 import {Grid} from '../core/grid.js';
 import {BUILDING_TYPES} from '../core/buildingTypes.js';
 import {BuildingPlacement} from '../core/buildingPlacement.js';
+import {Economy} from '../core/economy.js';
+import {SimulationClock} from '../core/simulationClock.js';
+import {SeededRandom, DEFAULT_SEED, parseSeed} from '../core/seededRandom.js';
+import {TEST_MODE} from '../testMode.js';
 import {addProxy, markScene, setBodyState} from '../testShadow/TestProxy.js';
 import {QASurface} from '../testShadow/QASurface.js';
 
@@ -22,7 +26,7 @@ const BUTTON_SELECTED_STROKE = 0xffeb3b;
 
 // Build menu lives in the band left of the grid (grid x starts at 256).
 const MENU_X = 128;
-const MENU_BUTTON = {width: 192, height: 56};
+const MENU_BUTTON = {width: 192, height: 64};
 
 /**
  * Title + Start button. Start (READY -> STARTED) hides both, creates a 24x16
@@ -58,6 +62,9 @@ export class GameScene extends Phaser.Scene {
         this.phase = GamePhase.READY;
         this.grid = null;
         this.placement = null;
+        this.economy = null;
+        this.hud = null;
+        this.lastResult = null;
         this.selectedCell = null;
         this.selectionHighlight = null;
         this.previewRect = null;
@@ -66,6 +73,13 @@ export class GameScene extends Phaser.Scene {
         this.buildButtons = {};
         this.cancelButton = null;
         this.cancelProxy = null;
+
+        // Fixed 60 Hz simulation. Stopped until Start; stepped from update().
+        // The seed is fixed outside TEST_MODE; tests may override it with ?seed=N.
+        this.clock = new SimulationClock();
+        const seedOverride = TEST_MODE ? parseSeed(new URLSearchParams(window.location.search).get('seed')) : null;
+        this.rng = new SeededRandom(seedOverride ?? DEFAULT_SEED);
+        this.simulationSteps = 0;
 
         this.title = this.add.text(width / 2, 52, 'PAPI Industries: The Green Shift', {
             fontFamily: 'monospace',
@@ -93,6 +107,24 @@ export class GameScene extends Phaser.Scene {
         // time a test sees data-scene appear.
         this.qa = new QASurface(this, () => this.qaState());
 
+        // Game-specific, TEST_MODE-only simulation controls. They call the
+        // real clock methods; stepTicks uses the same callback as update().
+        // window.__qa (and these controls) are removed with the QASurface on
+        // shutdown and never exist in production builds.
+        if (TEST_MODE && window.__qa) {
+            window.__qa.sim = {
+                pause: () => {
+                    this.clock.pause();
+                    return this.clock.snapshot();
+                },
+                resume: () => {
+                    this.clock.resume();
+                    return this.clock.snapshot();
+                },
+                stepTicks: (count) => this.clock.stepTicks(count, (tick) => this.stepSimulation(tick)),
+            };
+        }
+
         markScene(this, {phase: this.phase});
     }
 
@@ -109,7 +141,9 @@ export class GameScene extends Phaser.Scene {
             this.startProxy = null;
 
             this.createGrid();
+            this.createHud();
             this.createBuildMenu();
+            this.clock.start();
         }
         setBodyState({phase: this.phase});
     }
@@ -123,7 +157,8 @@ export class GameScene extends Phaser.Scene {
             originX: (width - GRID_COLS * TILE_SIZE) / 2,
             originY: (height - GRID_ROWS * TILE_SIZE) / 2,
         });
-        this.placement = new BuildingPlacement(this.grid);
+        this.economy = new Economy();
+        this.placement = new BuildingPlacement(this.grid, this.economy);
 
         const bounds = this.grid.footprintRect({col: 0, row: 0, width: GRID_COLS, height: GRID_ROWS});
         const lines = this.add.graphics();
@@ -153,6 +188,23 @@ export class GameScene extends Phaser.Scene {
             .setDepth(3);
     }
 
+    // ---- HUD ---------------------------------------------------------------
+
+    createHud() {
+        // Top band, where the (now hidden) title was.
+        this.hud = this.add.text(this.scale.width / 2, 52, '', {
+            fontFamily: 'monospace',
+            fontSize: '28px',
+            color: '#ffffff',
+        }).setOrigin(0.5);
+        this.updateHud();
+    }
+
+    updateHud() {
+        const {credits, ap} = this.economy.snapshot();
+        this.hud.setText(`Credits: ${credits}   AP: ${ap}`);
+    }
+
     // ---- Build menu --------------------------------------------------------
 
     createButton(y, label, fill) {
@@ -162,8 +214,9 @@ export class GameScene extends Phaser.Scene {
             .setDepth(4);
         const text = this.add.text(MENU_X, y, label, {
             fontFamily: 'monospace',
-            fontSize: '24px',
+            fontSize: '20px',
             color: '#ffffff',
+            align: 'center',
         }).setOrigin(0.5).setDepth(5);
         return {rect, text};
     }
@@ -171,14 +224,15 @@ export class GameScene extends Phaser.Scene {
     createBuildMenu() {
         let y = 180;
         for (const type of Object.values(BUILDING_TYPES)) {
-            const button = this.createButton(y, `${type.name} ${type.width}x${type.height}`, 0x37474f);
+            const label = `${type.name} ${type.width}x${type.height}\n${type.cost.credits}c · ${type.cost.ap} AP`;
+            const button = this.createButton(y, label, 0x37474f);
             button.rect.on('pointerdown', () => this.enterPlacementMode(type.id));
             button.proxy = addProxy(this, button.rect, `build-${type.id}`, {
                 label: type.name,
                 state: {selected: false},
             });
             this.buildButtons[type.id] = button;
-            y += 80;
+            y += 88;
         }
 
         this.cancelButton = this.createButton(y + 40, 'Cancel', 0x8e2b2b);
@@ -269,10 +323,12 @@ export class GameScene extends Phaser.Scene {
         if (this.placement.isPlacing) {
             this.updatePreview(cell); // touch has no hover: show where the tap landed
             if (!cell) return;
-            const result = this.placement.placeAt(cell);
+            const {building, ...result} = this.placement.placeAt(cell);
+            this.lastResult = result;
             if (result.ok) {
-                this.addBuildingView(result.building);
-                this.updatePreview(cell); // re-validate: the cell is now occupied
+                this.addBuildingView(building);
+                this.updateHud();
+                this.updatePreview(cell); // re-validate: cell now occupied, balances lower
             }
             return;
         }
@@ -297,6 +353,22 @@ export class GameScene extends Phaser.Scene {
         }
     }
 
+    // ---- Simulation --------------------------------------------------------
+
+    /** Phaser's frame delta drives the fixed-step clock; Phaser's `time` is ignored. */
+    update(_time, delta) {
+        this.clock.advance(delta, (tick) => this.stepSimulation(tick));
+    }
+
+    /**
+     * One fixed 1/60 s simulation step. Called by both update() and manual
+     * QA stepping. Intentionally empty of gameplay until simulated systems
+     * exist; the counter only lets QA verify that every tick ran this path.
+     */
+    stepSimulation(_tick) {
+        this.simulationSteps++;
+    }
+
     // ---- QA ----------------------------------------------------------------
 
     qaState() {
@@ -319,7 +391,21 @@ export class GameScene extends Phaser.Scene {
                     selectedType: this.placement.selectedType,
                     // Domain validation result (source of truth).
                     preview: this.previewResult ? structuredClone(this.previewResult) : null,
+                    // Outcome of the most recent placement attempt.
+                    lastResult: this.lastResult ? structuredClone(this.lastResult) : null,
                 }
+                : null,
+            resources: this.economy ? this.economy.snapshot() : null,
+            simulation: {
+                ...this.clock.snapshot(),
+                stepsExecuted: this.simulationSteps,
+                rng: this.rng.snapshot(),
+            },
+            // Actual HUD text, read off the game object.
+            hudView: this.hud ? {visible: this.hud.visible, text: this.hud.text} : null,
+            // Actual build-button label text, keyed by building type.
+            menuLabels: this.hud
+                ? Object.fromEntries(Object.entries(this.buildButtons).map(([id, b]) => [id, b.text.text]))
                 : null,
             // Actual rendered preview properties, read off the game object.
             previewView: this.previewRect
