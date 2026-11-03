@@ -155,7 +155,12 @@ Avoid implementing gameplay rules directly inside Phaser scenes.
 - `src/core/gamePhase.js`: Bootstrap game phase logic.
 - `src/core/grid.js`: `Grid` class (Phaser-free). Configurable `cols`/`rows`/`tileSize` with an origin offset (`originX`/`originY`). World↔cell conversion (`worldToCell`, `cellToWorld`, `cellCenter`, `footprintRect`). NxM footprints `{col, row, width, height}`, anchored at the top-left cell. `canPlace`/`place` are atomic and return `{ok}` or `{ok: false, reason}`, where reason is one of `PlacementFailure`: `invalid-footprint`, `out-of-bounds`, `occupied` (plus `blockers`), `duplicate-id`. Also `remove`, `occupantAt` and `snapshot()`, which returns detached JSON data for QASurface. Not yet rendered or connected to pointer input.
 - `src/scenes/BootScene.js`: Starts the game scene.
-- `src/scenes/GameScene.js`: Placeholder scene with Start button.
+- `src/scenes/GameScene.js`:
+  - The title sits at the top and the Start button at the bottom, outside the grid area.
+  - Clicking Start creates a 24×16 `Grid` with 32px cells, centered at origin (256, 104). The grid lines are drawn with Phaser Graphics.
+  - A scene-level `pointerdown` (mouse or touch) selects the cell from `pointer.worldX/worldY` via `grid.worldToCell` and highlights it. A pointer outside the grid clears the selection.
+  - QASurface exposes `grid` (the snapshot), `selectedCell` and `highlight`. All three are `null` before Start.
+  - Grid cells have no DOM proxies. E2E tests click real canvas points with `clickWorld`/`tapWorld` from `tests/helpers/canvas.js`.
 
 Do not assume that planned gameplay systems already exist.
 

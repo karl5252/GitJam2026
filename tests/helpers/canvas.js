@@ -29,6 +29,35 @@ export const byAction = (page, action) => page.locator(`[data-action="${action}"
 
 export const clickAction = (page, action) => clickCanvasElement(byAction(page, action), page);
 
+/**
+ * Map a point in the game's logical (world) space to page coordinates, using
+ * the canvas's on-screen box. Test-side only: it lets specs aim real pointer
+ * events at canvas positions that have no DOM proxy (e.g. grid cells). The
+ * game itself never does this — it reads pointer.worldX/worldY.
+ *
+ * @param {{width: number, height: number}} gameSize - logical size, e.g. from sample(page)
+ */
+export async function worldToScreen(page, {x, y}, gameSize) {
+    const box = await page.locator('canvas').boundingBox();
+    if (!box) throw new Error('Canvas is not measurable');
+    return {
+        x: box.x + (x / gameSize.width) * box.width,
+        y: box.y + (y / gameSize.height) * box.height,
+    };
+}
+
+/** Real mouse click at a world-space point on the canvas. */
+export async function clickWorld(page, point, gameSize) {
+    const s = await worldToScreen(page, point, gameSize);
+    await page.mouse.click(s.x, s.y);
+}
+
+/** Real touch tap at a world-space point on the canvas (requires hasTouch). */
+export async function tapWorld(page, point, gameSize) {
+    const s = await worldToScreen(page, point, gameSize);
+    await page.touchscreen.tap(s.x, s.y);
+}
+
 /** The scene-state mirror lives directly on <body data-*> — see markScene()/setBodyState(). */
 export const body = (page) => page.locator('body');
 

@@ -7,5 +7,13 @@ test('game boots into the game scene in the ready phase with a live QA surface',
 
     await expect(body(page)).toHaveAttribute('data-phase', 'ready');
 
-    expect(await sample(page)).toEqual({scene: 'game', phase: 'ready', width: 1280, height: 720});
+    expect(await sample(page)).toEqual({
+        scene: 'game',
+        phase: 'ready',
+        width: 1280,
+        height: 720,
+        grid: null,
+        selectedCell: null,
+        highlight: null,
+    });
 });
