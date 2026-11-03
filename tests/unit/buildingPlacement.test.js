@@ -1,0 +1,178 @@
+import test from 'node:test';
+import assert from 'node:assert/strict';
+import {Grid, PlacementFailure} from '../../src/core/grid.js';
+import {BUILDING_TYPES} from '../../src/core/buildingTypes.js';
+import {BuildingPlacement, footprintAt, NO_SELECTION} from '../../src/core/buildingPlacement.js';
+
+const setup = () => {
+    const grid = new Grid({cols: 24, rows: 16, tileSize: 32, originX: 256, originY: 104});
+    return {grid, placement: new BuildingPlacement(grid)};
+};
+
+const occupantsOf = (grid) => grid.snapshot().occupants;
+const asOccupants = (buildings) => buildings.map(({id, col, row, width, height}) => ({id, col, row, width, height}));
+
+// ---- footprintAt ------------------------------------------------------------
+
+test('odd footprints are centred on the pointer cell', () => {
+    assert.deepEqual(footprintAt(BUILDING_TYPES.outpost, {col: 5, row: 7}), {col: 5, row: 7, width: 1, height: 1});
+    assert.deepEqual(footprintAt(BUILDING_TYPES.factory, {col: 5, row: 7}), {col: 4, row: 6, width: 3, height: 3});
+});
+
+test('even footprints put the pointer cell at the top-left of the central block', () => {
+    assert.deepEqual(footprintAt({width: 2, height: 2}, {col: 5, row: 7}), {col: 5, row: 7, width: 2, height: 2});
+    assert.deepEqual(footprintAt({width: 4, height: 2}, {col: 5, row: 7}), {col: 4, row: 7, width: 4, height: 2});
+});
+
+// ---- Mode -----------------------------------------------------------------------
+
+test('starts outside placement mode', () => {
+    const {placement} = setup();
+    assert.equal(placement.selectedType, null);
+    assert.equal(placement.isPlacing, false);
+    assert.equal(placement.preview({col: 3, row: 3}), null);
+});
+
+test('select enters placement mode; cancel leaves it', () => {
+    const {placement} = setup();
+    assert.equal(placement.select('factory'), true);
+    assert.equal(placement.selectedType, 'factory');
+    assert.equal(placement.isPlacing, true);
+    assert.equal(placement.select('outpost'), true);
+    assert.equal(placement.selectedType, 'outpost');
+    placement.cancel();
+    assert.equal(placement.selectedType, null);
+    assert.equal(placement.isPlacing, false);
+});
+
+test('select rejects unknown types and keeps the current mode', () => {
+    const {placement} = setup();
+    placement.select('outpost');
+    assert.equal(placement.select('tower'), false);
+    assert.equal(placement.selectedType, 'outpost');
+});
+
+test('placeAt without a selection fails with no-selection and changes nothing', () => {
+    const {grid, placement} = setup();
+    assert.deepEqual(placement.placeAt({col: 3, row: 3}), {ok: false, reason: NO_SELECTION});
+    assert.deepEqual(placement.buildings(), []);
+    assert.deepEqual(occupantsOf(grid), []);
+});
+
+// ---- Preview ----------------------------------------------------------------------
+
+test('preview reports the grid validation result for the centred footprint', () => {
+    const {placement} = setup();
+    placement.select('factory');
+    assert.deepEqual(placement.preview({col: 5, row: 5}), {footprint: {col: 4, row: 4, width: 3, height: 3}, ok: true});
+    assert.deepEqual(placement.preview({col: 0, row: 5}), {
+        footprint: {col: -1, row: 4, width: 3, height: 3}, ok: false, reason: PlacementFailure.OUT_OF_BOUNDS,
+    });
+    assert.equal(placement.preview(null), null);
+});
+
+test('preview matches grid.canPlace exactly and never mutates', () => {
+    const {grid, placement} = setup();
+    placement.select('outpost');
+    placement.placeAt({col: 5, row: 5});
+    placement.select('factory');
+    for (const cell of [{col: 5, row: 5}, {col: 6, row: 6}, {col: 10, row: 10}, {col: 23, row: 15}, {col: 0, row: 0}]) {
+        const p = placement.preview(cell);
+        const {footprint, ...result} = p;
+        assert.deepEqual(result, grid.canPlace(footprint));
+    }
+    assert.equal(placement.buildings().length, 1);
+    assert.equal(occupantsOf(grid).length, 1);
+});
+
+// ---- Placement --------------------------------------------------------------------
+
+test('valid factory placement occupies all nine cells', () => {
+    const {grid, placement} = setup();
+    placement.select('factory');
+    const result = placement.placeAt({col: 10, row: 8});
+    assert.deepEqual(result, {ok: true, building: {id: 'factory-1', type: 'factory', col: 9, row: 7, width: 3, height: 3}});
+    for (let row = 7; row <= 9; row++) {
+        for (let col = 9; col <= 11; col++) assert.equal(grid.occupantAt(col, row), 'factory-1');
+    }
+    assert.equal(grid.occupantAt(8, 8), null);
+    assert.equal(grid.occupantAt(12, 8), null);
+});
+
+test('placement mode stays active after success; ids are deterministic', () => {
+    const {placement} = setup();
+    placement.select('outpost');
+    assert.equal(placement.placeAt({col: 0, row: 0}).building.id, 'outpost-1');
+    assert.equal(placement.selectedType, 'outpost');
+    assert.equal(placement.placeAt({col: 2, row: 0}).building.id, 'outpost-2');
+    placement.select('factory');
+    assert.equal(placement.placeAt({col: 10, row: 10}).building.id, 'factory-3');
+    assert.deepEqual(placement.buildings().map((b) => b.id), ['outpost-1', 'outpost-2', 'factory-3']);
+});
+
+test('overlapping placement is rejected without changing grid or buildings', () => {
+    const {grid, placement} = setup();
+    placement.select('factory');
+    placement.placeAt({col: 10, row: 8});
+    const gridBefore = JSON.stringify(grid.snapshot());
+    const buildingsBefore = JSON.stringify(placement.buildings());
+
+    assert.deepEqual(placement.placeAt({col: 12, row: 9}), {ok: false, reason: PlacementFailure.OCCUPIED, blockers: ['factory-1']});
+    placement.select('outpost');
+    assert.deepEqual(placement.placeAt({col: 10, row: 8}), {ok: false, reason: PlacementFailure.OCCUPIED, blockers: ['factory-1']});
+
+    assert.equal(JSON.stringify(grid.snapshot()), gridBefore);
+    assert.equal(JSON.stringify(placement.buildings()), buildingsBefore);
+});
+
+test('edge placement that crosses the grid boundary is rejected without changes', () => {
+    const {grid, placement} = setup();
+    placement.select('factory');
+    for (const cell of [{col: 0, row: 5}, {col: 23, row: 5}, {col: 5, row: 0}, {col: 5, row: 15}]) {
+        assert.deepEqual(placement.placeAt(cell), {ok: false, reason: PlacementFailure.OUT_OF_BOUNDS});
+    }
+    assert.deepEqual(placement.buildings(), []);
+    assert.deepEqual(occupantsOf(grid), []);
+    // Flush against the edge is fine.
+    assert.equal(placement.placeAt({col: 1, row: 1}).ok, true);
+    assert.equal(placement.placeAt({col: 22, row: 14}).ok, true);
+});
+
+test('a rejected attempt does not consume an id', () => {
+    const {placement} = setup();
+    placement.select('factory');
+    placement.placeAt({col: 0, row: 0}); // out of bounds
+    assert.equal(placement.placeAt({col: 5, row: 5}).building.id, 'factory-1');
+});
+
+test('adjacent buildings are accepted', () => {
+    const {placement} = setup();
+    placement.select('factory');
+    placement.placeAt({col: 5, row: 5});
+    placement.select('outpost');
+    assert.equal(placement.placeAt({col: 7, row: 5}).ok, true);
+    assert.equal(placement.placeAt({col: 3, row: 5}).ok, true);
+});
+
+test('buildings always mirror the grid occupants', () => {
+    const {grid, placement} = setup();
+    placement.select('factory');
+    placement.placeAt({col: 5, row: 5});
+    placement.placeAt({col: 6, row: 6}); // rejected
+    placement.select('outpost');
+    placement.placeAt({col: 20, row: 3});
+    assert.deepEqual(asOccupants(placement.buildings()), occupantsOf(grid));
+});
+
+test('buildings() returns detached data', () => {
+    const {grid, placement} = setup();
+    placement.select('outpost');
+    const {building} = placement.placeAt({col: 2, row: 2});
+    building.col = 9;
+    const list = placement.buildings();
+    list[0].col = 9;
+    list.push({id: 'fake'});
+    assert.deepEqual(placement.buildings(), [{id: 'outpost-1', type: 'outpost', col: 2, row: 2, width: 1, height: 1}]);
+    assert.equal(grid.occupantAt(2, 2), 'outpost-1');
+    assert.deepEqual(JSON.parse(JSON.stringify(placement.buildings())), placement.buildings());
+});

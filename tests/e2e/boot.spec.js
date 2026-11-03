@@ -15,5 +15,10 @@ test('game boots into the game scene in the ready phase with a live QA surface',
         grid: null,
         selectedCell: null,
         highlight: null,
+        ui: {titleVisible: true, startVisible: true, cancelVisible: false},
+        placement: null,
+        previewView: null,
+        buildings: [],
+        buildingViews: [],
     });
 });

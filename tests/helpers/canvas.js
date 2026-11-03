@@ -29,6 +29,15 @@ export const byAction = (page, action) => page.locator(`[data-action="${action}"
 
 export const clickAction = (page, action) => clickCanvasElement(byAction(page, action), page);
 
+/** Touch-tap a canvas element via its DOM proxy (requires hasTouch). Same passthrough idea as clickCanvasElement. */
+export async function tapAction(page, action) {
+    const locator = byAction(page, action);
+    await locator.waitFor({state: 'visible'});
+    const box = await locator.boundingBox();
+    if (!box) throw new Error(`Canvas proxy is not measurable: ${action}`);
+    await page.touchscreen.tap(box.x + box.width / 2, box.y + box.height / 2);
+}
+
 /**
  * Map a point in the game's logical (world) space to page coordinates, using
  * the canvas's on-screen box. Test-side only: it lets specs aim real pointer

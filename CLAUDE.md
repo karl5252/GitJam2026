@@ -153,14 +153,29 @@ Avoid implementing gameplay rules directly inside Phaser scenes.
 ### Current implementation
 
 - `src/core/gamePhase.js`: Bootstrap game phase logic.
-- `src/core/grid.js`: `Grid` class (Phaser-free). Configurable `cols`/`rows`/`tileSize` with an origin offset (`originX`/`originY`). World↔cell conversion (`worldToCell`, `cellToWorld`, `cellCenter`, `footprintRect`). NxM footprints `{col, row, width, height}`, anchored at the top-left cell. `canPlace`/`place` are atomic and return `{ok}` or `{ok: false, reason}`, where reason is one of `PlacementFailure`: `invalid-footprint`, `out-of-bounds`, `occupied` (plus `blockers`), `duplicate-id`. Also `remove`, `occupantAt` and `snapshot()`, which returns detached JSON data for QASurface. Not yet rendered or connected to pointer input.
+- `src/core/grid.js`: `Grid` class (Phaser-free). Configurable `cols`/`rows`/`tileSize` with an origin offset (`originX`/`originY`). World↔cell conversion (`worldToCell`, `cellToWorld`, `cellCenter`, `footprintRect`). NxM footprints `{col, row, width, height}`, anchored at the top-left cell. `canPlace`/`place` are atomic and return `{ok}` or `{ok: false, reason}`, where reason is one of `PlacementFailure`: `invalid-footprint`, `out-of-bounds`, `occupied` (plus `blockers`), `duplicate-id`. Also `remove`, `occupantAt` and `snapshot()`, which returns detached JSON data. The grid is the source of truth for occupancy and validity.
+- `src/core/buildingTypes.js`: frozen plain data. `outpost` is 1×1 and `factory` is 3×3. `getBuildingType(id)` returns the type or `null`.
+- `src/core/buildingPlacement.js`:
+  - `footprintAt(type, cell)` centers a footprint on the pointer cell: anchor = cell − floor((size − 1) / 2). For even sizes, the pointer cell is the left/top cell of the central pair.
+  - `BuildingPlacement(grid)` provides `select`/`cancel`/`selectedType`/`isPlacing`.
+  - `preview(cell)` returns `{footprint, ...grid.canPlace()}` and never changes anything.
+  - `placeAt(cell)` delegates to `grid.place`. A rejected attempt changes nothing, and `no-selection` is returned when not placing.
+  - Ids are deterministic (`outpost-1`, `factory-2`, …). `buildings()` returns a detached list.
 - `src/scenes/BootScene.js`: Starts the game scene.
 - `src/scenes/GameScene.js`:
-  - The title sits at the top and the Start button at the bottom, outside the grid area.
-  - Clicking Start creates a 24×16 `Grid` with 32px cells, centered at origin (256, 104). The grid lines are drawn with Phaser Graphics.
-  - A scene-level `pointerdown` (mouse or touch) selects the cell from `pointer.worldX/worldY` via `grid.worldToCell` and highlights it. A pointer outside the grid clears the selection.
-  - QASurface exposes `grid` (the snapshot), `selectedCell` and `highlight`. All three are `null` before Start.
-  - Grid cells have no DOM proxies. E2E tests click real canvas points with `clickWorld`/`tapWorld` from `tests/helpers/canvas.js`.
+  - Start hides the title and Start button and removes the `start` proxy. It then creates a 24×16 `Grid` with 32px cells at origin (256, 104), drawn with Phaser Graphics, and shows the build menu in the band left of the grid.
+  - The build menu has Outpost and Factory buttons (proxies `build-outpost`/`build-factory`, with `data-selected`) and a Cancel button. Cancel is visible, with proxy `cancel-placement`, only while placing.
+  - **Normal mode:** `pointerdown` selects or highlights the cell from `pointer.worldX/worldY` via `grid.worldToCell`. A pointer outside the grid clears the selection.
+  - **Placement mode:** `pointermove` previews the footprint, and `pointerdown` attempts placement. Selection is cleared and disabled. Placement mode stays active after a successful placement. Escape or Cancel exits.
+  - The preview color comes from the domain result: green when ok, red otherwise.
+  - Scene-level pointer handlers ignore events whose hit list (`currentlyOver`) contains a UI object, so a press on a button never counts as grid input.
+  - QASurface exposes:
+    - `grid`, `selectedCell`, `highlight`
+    - `ui` (title, Start and Cancel visibility)
+    - `placement` (`selectedType` and the domain `preview` result)
+    - `previewView` (the rendered preview: visibility, rect, colors)
+    - `buildings` (domain) and `buildingViews` (the rendered rectangles)
+  - Grid cells have no DOM proxies. E2E tests press real canvas points with `clickWorld`/`tapWorld`, and press buttons through their proxies with `clickAction`/`tapAction` (`tests/helpers/canvas.js`).
 
 Do not assume that planned gameplay systems already exist.
 
