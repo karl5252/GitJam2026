@@ -11,10 +11,12 @@ import {settleNight} from '../core/settlement.js';
 import {calculatePower, PowerStatus} from '../core/power.js';
 import {Pollution, calculateEmissions, threatLevel} from '../core/pollution.js';
 import {Mutants, SPAWN_SCHEDULE} from '../core/mutants.js';
+import {Autocannons} from '../core/autocannons.js';
 import {TEST_MODE} from '../testMode.js';
 import {addProxy, markScene, setBodyState} from '../testShadow/TestProxy.js';
 import {QASurface} from '../testShadow/QASurface.js';
 import {MutantLayer} from './MutantLayer.js';
+import {AutocannonLayer} from './AutocannonLayer.js';
 
 const GRID_COLS = 24;
 const GRID_ROWS = 16;
@@ -24,7 +26,7 @@ const GRID_LINE_COLOR = 0x78909c;
 const HIGHLIGHT_COLOR = 0xffeb3b;
 export const PREVIEW_VALID_COLOR = 0x4caf50;
 export const PREVIEW_INVALID_COLOR = 0xe53935;
-const BUILDING_COLORS = {outpost: 0x9e9e9e, factory: 0x616161, powerPlant: 0x5c6bc0};
+const BUILDING_COLORS = {outpost: 0x9e9e9e, factory: 0x616161, powerPlant: 0x5c6bc0, autocannon: 0x00897b};
 const BUILDING_STROKE = 0x212121;
 export const UNPOWERED_STROKE = 0xe53935; // enabled but not operating (low power / blackout)
 export const DISABLED_ALPHA = 0.35; // switched OFF by the player
@@ -82,6 +84,8 @@ export class GameScene extends Phaser.Scene {
         this.pollutionHud = null;
         this.mutants = null;
         this.mutantLayer = null;
+        this.autocannons = null;
+        this.autocannonLayer = null;
         this.lastResult = null;
         this.selectedCell = null;
         this.selectionHighlight = null;
@@ -223,6 +227,13 @@ export class GameScene extends Phaser.Scene {
             schedule: mutantsOff ? [] : SPAWN_SCHEDULE,
         });
         this.mutantLayer = new MutantLayer(this, this.grid);
+        this.autocannons = new Autocannons({
+            cycle: this.cycle,
+            placement: this.placement,
+            grid: this.grid,
+            mutants: this.mutants,
+        });
+        this.autocannonLayer = new AutocannonLayer(this, this.grid);
 
         const bounds = this.grid.footprintRect({col: 0, row: 0, width: GRID_COLS, height: GRID_ROWS});
         const lines = this.add.graphics();
@@ -363,7 +374,16 @@ export class GameScene extends Phaser.Scene {
             if (isDay && this.cycle.lastSettlement) this.showSettlement(this.cycle.lastSettlement);
         }
         this.updateShiftHud();
-        this.mutantLayer.sync(this.mutants.snapshot(), this.placement.buildings());
+        const mutants = this.mutants.snapshot();
+        const buildings = this.placement.buildings();
+        this.mutantLayer.sync(mutants, buildings);
+        this.autocannonLayer.sync({
+            cannons: this.autocannons.snapshot(),
+            mutants,
+            buildings,
+            tick: this.clock.tick,
+            isNight: this.cycle.shift === Shift.NIGHT,
+        });
     }
 
     handleEndDay() {
@@ -400,7 +420,7 @@ export class GameScene extends Phaser.Scene {
             y += 88;
         }
 
-        this.cancelButton = this.createButton(y + 40, 'Cancel', 0x8e2b2b);
+        this.cancelButton = this.createButton(y, 'Cancel', 0x8e2b2b);
         this.cancelButton.rect.on('pointerdown', () => this.exitPlacementMode());
         this.setCancelVisible(false);
 
@@ -616,14 +636,17 @@ export class GameScene extends Phaser.Scene {
     /**
      * One fixed 1/60 s simulation step. Called by both update() and manual
      * QA stepping. Drives the shift cycle (night countdown and the automatic
-     * Night -> Day transition), then the mutants. The order matters: if
-     * settlement throws on the final tick, the mutants do not step, so the
-     * retried tick cannot apply anything twice. The counter lets QA verify
-     * that every tick ran this path.
+     * Night -> Day transition), then turrets, then the surviving mutants. The
+     * order matters: a mutant killed this tick cannot act, and if settlement
+     * throws on the final tick nothing else steps, so the retried tick cannot
+     * apply anything twice. The counter lets QA verify that every tick ran
+     * this path.
      */
     stepSimulation(tick) {
         this.simulationSteps++;
         this.cycle?.onTick(tick);
+        const defense = this.autocannons?.step();
+        if (defense?.shots.length) this.autocannonLayer.recordShots(defense.shots, this.clock.tick);
         const effects = this.mutants?.step();
         if (effects?.destroyed.length) this.handleBuildingsDestroyed(effects.destroyed);
     }
@@ -633,6 +656,7 @@ export class GameScene extends Phaser.Scene {
         for (const id of ids) {
             this.buildingViews.get(id).destroy();
             this.buildingViews.delete(id);
+            this.autocannonLayer.remove(id);
         }
         if (ids.includes(this.selectedBuildingId)) this.selectAt(null);
         this.refreshPower();
@@ -694,6 +718,10 @@ export class GameScene extends Phaser.Scene {
             mutants: this.mutants ? this.mutants.snapshot() : null,
             mutantViews: this.mutantLayer ? this.mutantLayer.mutantViews() : null,
             hpBarViews: this.mutantLayer ? this.mutantLayer.hpBarViews() : null,
+            // Domain turret state, then the rendered barrels and tracers.
+            autocannons: this.autocannons ? this.autocannons.snapshot() : null,
+            barrelViews: this.autocannonLayer ? this.autocannonLayer.barrelViews() : null,
+            tracerViews: this.autocannonLayer ? this.autocannonLayer.tracerViews() : null,
             // Actual pollution HUD text, read off the game object.
             pollutionView: this.pollutionHud ? {visible: this.pollutionHud.visible, text: this.pollutionHud.text} : null,
             simulation: {

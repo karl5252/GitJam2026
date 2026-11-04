@@ -37,6 +37,14 @@ export const BUILDING_TYPES = Object.freeze({
         pollutionPerNight: 12,
         maxHp: 300,
     }),
+    autocannon: Object.freeze({
+        id: 'autocannon', name: 'Autocannon', width: 1, height: 1,
+        cost: Object.freeze({credits: 250, ap: 1}),
+        operations: Object.freeze({income: 0, upkeep: 0}),
+        power: Object.freeze({supply: 0, demand: 20}),
+        pollutionPerNight: 0,
+        maxHp: 150,
+    }),
 });
 
 /** Definition for a type id, or null if unknown. */

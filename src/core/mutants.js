@@ -10,15 +10,16 @@
  * settles, and a retried final tick cannot apply damage twice. Outside Night
  * step() removes any survivors, which is how dawn cleanup happens.
  *
- * Building HP and occupancy belong to BuildingPlacement; a mutant only holds
- * building ids. `targetId` is the preferred target, locked until destroyed.
+ * Mutant HP is owned here and only changes through damageMutant(). Building
+ * HP and occupancy belong to BuildingPlacement; a mutant only holds building
+ * ids. `targetId` is the preferred target, locked until destroyed.
  * `obstacleId` is a building that blocked the next step: the mutant stays
  * put and attacks it until destroyed, then resumes toward `targetId`.
  */
 import {Shift} from './shiftCycle.js';
 
 export const MUTANT = Object.freeze({
-    maxHp: 40, // stored for defenses; nothing damages mutants yet
+    maxHp: 40,
     speed: 0.5, // px per tick; must stay below the smallest footprint size
     attackRange: 8, // px from the footprint edge
     attackDamage: 5,
@@ -29,7 +30,10 @@ export const MUTANT = Object.freeze({
 export const SPAWN_SCHEDULE = Object.freeze([600]);
 
 /** Px subtracted from a building's distance: higher is more attractive. */
-export const TARGET_BIAS = Object.freeze({powerPlant: 256, factory: 128, outpost: 0});
+export const TARGET_BIAS = Object.freeze({powerPlant: 256, factory: 128, autocannon: 64, outpost: 0});
+
+export const UNKNOWN_MUTANT = 'unknown-mutant';
+export const INVALID_DAMAGE = 'invalid-damage';
 
 const NO_EFFECTS = Object.freeze({
     spawned: Object.freeze([]),
@@ -145,6 +149,25 @@ export class Mutants {
         for (const mutant of this.#mutants) this.#act(mutant, buildings, effects);
         if (spawnDue) this.#spawn(buildings, effects);
         return effects;
+    }
+
+    /**
+     * Apply damage to a living mutant. This is the only way mutant HP changes
+     * and the only way a mutant dies. At 0 HP the record is removed, so a
+     * mutant dies exactly once and later damage is rejected as unknown.
+     * @returns {{ok: true, killed: boolean, hp: number} | {ok: false, reason: 'unknown-mutant' | 'invalid-damage'}}
+     */
+    damageMutant(id, amount) {
+        if (!Number.isSafeInteger(amount) || amount <= 0) return {ok: false, reason: INVALID_DAMAGE};
+        const index = this.#mutants.findIndex((mutant) => mutant.id === id);
+        if (index === -1) return {ok: false, reason: UNKNOWN_MUTANT};
+
+        const mutant = this.#mutants[index];
+        const hp = Math.max(0, mutant.hp - amount);
+        mutant.hp = hp;
+        if (hp > 0) return {ok: true, killed: false, hp};
+        this.#mutants.splice(index, 1);
+        return {ok: true, killed: true, hp};
     }
 
     /** Detached plain data, in spawn order. */

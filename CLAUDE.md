@@ -31,11 +31,11 @@ This file provides project context, architectural constraints, and working rules
 
 **Target platforms:** Desktop browsers and mobile browsers in landscape orientation.
 
-**Current status:** TASK 011A (Basic Mutant Foundation) complete. TASK 011B (Autocannon) is the next proposed task. It is **not approved**: do not start it without explicit developer approval.
+**Current status:** TASK 011B (Autocannon Defense) complete. No next task is approved: only work on tasks the developer explicitly assigns.
 
 The project was initialized from the Wee Games Starter Kit Basic. The original demo applications have been removed.
 
-Implemented so far: grid placement, Credits and AP, the Day/Night cycle, global power, nightly settlement, pollution and derived threat, and one basic mutant that damages and destroys buildings. There are no defenses, repairs, HQ or game over yet.
+Implemented so far: grid placement, Credits and AP, the Day/Night cycle, global power, nightly settlement, pollution and derived threat, one basic mutant that damages and destroys buildings, and the Autocannon, which kills mutants. There are no repairs, HQ or game over yet.
 
 ### Game concept
 
@@ -174,6 +174,7 @@ Avoid implementing gameplay rules directly inside Phaser scenes.
   - `outpost`: 1×1, costs `{credits: 100, ap: 1}`, operations `{income: 0, upkeep: 20}` per completed night, power `{supply: 0, demand: 10}`, `pollutionPerNight: 0`, `maxHp: 100`.
   - `factory`: 3×3, costs `{credits: 400, ap: 1}`, operations `{income: 150, upkeep: 0}` per completed night, power `{supply: 0, demand: 40}`, `pollutionPerNight: 8`, `maxHp: 300`.
   - `powerPlant`: 3×3, costs `{credits: 500, ap: 1}`, operations `{income: 0, upkeep: 0}`, power `{supply: 100, demand: 0}`, `pollutionPerNight: 12`, `maxHp: 300`.
+  - `autocannon`: 1×1, costs `{credits: 250, ap: 1}`, operations `{income: 0, upkeep: 0}`, power `{supply: 0, demand: 20}`, `pollutionPerNight: 0`, `maxHp: 150`. It is a separate defensive building; Outpost is not a turret.
 - `src/core/power.js`: `calculatePower(buildings)` → `{generation, demand, status, buildings: [{id, type, enabled, powered}]}`.
   - One global pool, derived on demand from the building records and never stored. It is pure and does not mutate its input.
   - Generation and demand count **enabled** buildings only.
@@ -189,13 +190,22 @@ Avoid implementing gameplay rules directly inside Phaser scenes.
 - `src/core/mutants.js`: `Mutants({cycle, placement, grid, rng, schedule})`, temporary graybox values in `MUTANT`, `SPAWN_SCHEDULE` and `TARGET_BIAS`.
   - Positions are world pixels from the Grid. `speed` is 0.5 px per tick. All distances are Manhattan distances to a footprint rectangle (`distanceToFootprint`).
   - `step()` runs once per tick, **after** `ShiftCycle.onTick()`, and returns `{spawned, attacks, destroyed}` for that tick. Mutants act on night ticks 1..3599; tick 3600 only settles. A retried final tick therefore cannot apply damage twice. Outside Night, `step()` removes survivors with no penalty, which is the dawn cleanup.
-  - Records are `{id, x, y, hp, targetId, obstacleId, attackTimer}` and hold building ids only. `hp` is stored but nothing damages mutants yet.
+  - Records are `{id, x, y, hp, targetId, obstacleId, attackTimer}` and hold building ids only. `hp` starts at `MUTANT.maxHp`.
+  - `damageMutant(id, amount)` is the only way mutant HP changes. At 0 HP the record is removed, so a mutant dies exactly once and later damage returns `unknown-mutant`. Invalid amounts return `invalid-damage`. It returns `{ok, killed, hp}`.
   - `selectTarget`: lowest `distance - TARGET_BIAS`, then higher bias, then earliest in the building list. `targetId` stays locked until that building is destroyed.
   - Movement is one step along the longer axis toward the nearest footprint point, stopping within `attackRange`.
   - **Obstacles:** if the next step enters any footprint (`blockerAt`, closed bounds, so touching buildings leave no seam), the mutant stays put and sets `obstacleId`. It attacks that building until destroyed, then resumes toward `targetId`. There is no pathfinding.
   - `attackTimer` only runs while stationary and resets on any movement. The first hit lands on the 60th tick spent attacking.
   - **Spawning:** exactly one RNG draw per scheduled spawn picks one of the `borderSpawns` positions. If that border cell is occupied, the next free position clockwise is used. If every border cell is occupied, that spawn is skipped. Spawning does not depend on buildings existing.
   - With no buildings left, mutants wait in place until dawn. There is no HQ or game over yet.
+- `src/core/autocannons.js`: `Autocannons({cycle, placement, grid, mutants})`, temporary graybox values in `AUTOCANNON` (`range` 160, `damage` 10, `cooldownTicks` 30).
+  - `step()` runs once per tick, after `ShiftCycle.onTick()` and **before** `Mutants.step()`, and returns `{shots}` for that tick. Turrets fire on night ticks 1..3599, never on tick 3600. A mutant killed on a tick cannot act on it. A mutant spawned on a tick is first shot on the next one. Outside Night, `step()` clears all turret state, so cooldowns reset at dawn.
+  - It holds only `{cooldown, targetId}` per turret, keyed by building id. HP, position and `enabled` stay in `BuildingPlacement`, power is derived, and mutant HP stays in `Mutants`. `snapshot()` is built from the live building list, so a destroyed turret disappears immediately. Records of destroyed turrets are dropped on the next step.
+  - Range is circular and inclusive, measured from the footprint centre (`isInRange`, squared values, no `sqrt`).
+  - **Targeting:** `selectMutant` acquires the nearest mutant in range, with ties going to spawn order. A lock is kept while the target is alive and in range, even if a nearer mutant arrives. It is reacquired when the target dies or leaves range, and cleared when the turret is disabled or unpowered. Reacquiring never changes the cooldown.
+  - **Cooldown:** each powered tick it counts down, with or without a target. A ready turret fires the moment it has a target, then waits 30 ticks. It pauses while disabled or unpowered and resumes where it stopped, so toggling cannot beat the fire rate.
+  - A consumer needs status `normal`, so LOW_POWER and BLACKOUT silence every Autocannon. A Plant destroyed on a tick affects turrets from the next tick.
+  - Turrets act in building-list order and re-read living mutants each time, so a second turret never hits a mutant the first one killed. Hits resolve instantly; there are no projectiles.
 - `src/core/settlement.js`:
   - `calculateSettlement(buildings)` is pure and integer-only, and uses `calculatePower`. Income counts only from **powered** buildings. Upkeep is always charged in full, whether a building is enabled or powered. It returns `{gross, upkeep, net, counts, power: {generation, demand, status}}` and throws `TypeError` on an unknown type.
   - `settleNight({day, buildings, economy, pollution})` is the single atomic night-end transaction, and `pollution` is required. There is no rollback:
@@ -250,6 +260,7 @@ Avoid implementing gameplay rules directly inside Phaser scenes.
   - The global `clock.tick` is never reset.
 - `src/scenes/BootScene.js`: Starts the game scene.
 - `src/scenes/MutantLayer.js`: graybox circles for mutants and HP bars on damaged buildings. Presentation only; `sync(mutants, buildings)` takes detached snapshots.
+- `src/scenes/AutocannonLayer.js`: graybox barrels, quantized to 8 directions, and short tracers lasting 6 simulation ticks. Presentation only; facing and tracer timing never affect gameplay.
 - `src/scenes/GameScene.js`:
   - Start hides the title and Start button and removes the `start` proxy. It then creates a 24×16 `Grid` with 32px cells at origin (256, 104), drawn with Phaser Graphics, and shows the build menu in the band left of the grid.
   - The HUD in the top band has two lines:
@@ -266,7 +277,7 @@ Avoid implementing gameplay rules directly inside Phaser scenes.
   - **Keeping the UI in step:** `syncShiftUi()` runs after every clock advance, every QA step and END DAY. On each Day/Night change:
     - At Night it exits placement mode and hides the building buttons and END DAY, removing their proxies.
     - At Day it restores them and refreshes the resource line.
-  - The build menu has Outpost, Factory and Power Plant buttons (proxies `build-outpost`/`build-factory`/`build-powerPlant`, with `data-selected`). Their labels show the size and cost. There is also a Cancel button, visible with proxy `cancel-placement` only while placing.
+  - The build menu has Outpost, Factory, Power Plant and Autocannon buttons (proxies `build-outpost`/`build-factory`/`build-powerPlant`/`build-autocannon`, with `data-selected`). Their labels show the size and cost. There is also a Cancel button, visible with proxy `cancel-placement` only while placing.
   - **Normal mode:** `pointerdown` selects or highlights the cell from `pointer.worldX/worldY` via `grid.worldToCell`. If the cell is occupied, its building is selected too and the highlight covers the footprint. Normal mode never places. A pointer outside the grid clears the selection.
   - **Placement mode:** `pointermove` previews the footprint, and `pointerdown` attempts placement. Selection is cleared and disabled. Placement mode stays active after a successful placement. Escape or Cancel exits.
   - The preview color comes from the domain result: green when ok, red otherwise. An unaffordable footprint is red even when its cells are free.
@@ -280,6 +291,7 @@ Avoid implementing gameplay rules directly inside Phaser scenes.
     - `shiftCycle` (`{day, shift, elapsedNightTicks, remainingNightTicks}`, `null` before Start) and `shiftView` (the actual shift-line text)
     - `settlement` (the latest report, or `null`) and `settlementView` (the actual panel text and visibility)
     - `mutants` (domain records), `mutantViews` (rendered circles) and `hpBarViews` (rendered HP bars), all `null` before Start
+    - `autocannons` (`{id, cooldown, targetId}` per turret), `barrelViews` and `tracerViews` (rendered views), all `null` before Start
     - `pollution` (`{value, threatLevel, emissionsPerNight}`, `null` before Start; `emissionsPerNight` is derived from the current buildings, and the amount actually emitted is `settlement.pollution.emitted`) and `pollutionView` (the actual HUD text and visibility)
     - `simulation`: `{running, paused, tick, timeSeconds, stepsExecuted, rng: {seed, state}}`
     - `previewView` (the rendered preview: visibility, rect, colors)
@@ -287,7 +299,7 @@ Avoid implementing gameplay rules directly inside Phaser scenes.
   - **Simulation:**
     - The clock is created stopped. Start calls `cycle.begin()`, which starts it paused for Day 1.
     - `update(time, delta)` calls `clock.advance(delta, stepSimulation)` then `syncShiftUi()`, and ignores Phaser's `time`.
-    - `stepSimulation(tick)` counts `stepsExecuted`, calls `cycle.onTick(tick)`, then `mutants.step()`. Destroyed buildings are handled from that tick's result: `handleBuildingsDestroyed` removes the views, clears a stale selection and calls `refreshPower()`.
+    - `stepSimulation(tick)` counts `stepsExecuted`, calls `cycle.onTick(tick)`, then `autocannons.step()`, then `mutants.step()`. Shots and destroyed buildings are handled from that tick's results: `handleBuildingsDestroyed` removes the views, clears a stale selection and calls `refreshPower()`.
     - The RNG seed is `DEFAULT_SEED`. In TEST_MODE only, `?seed=N` overrides it.
     - In TEST_MODE only, `?mutants=off` gives the real `Mutants` an empty schedule. `boot(page, {mutants: false})` uses it for suites about power, economy and pollution. Combat tests must not use it, and production ignores it.
   - **TEST_MODE-only controls:** `window.__qa.sim` provides:
@@ -330,7 +342,7 @@ Gameplay-critical simulation must use a **fixed timestep of 60 Hz**.
 - Avoid `Date.now()` or wall-clock timing for gameplay outcomes.
 - Support deterministic state inspection and controlled tick advancement for testing.
 
-The simulation clock (`src/core/simulationClock.js`) and seeded RNG (`src/core/seededRandom.js`) are integrated in `GameScene`. They follow the Steel Abyss: Refit / BarrelStorm contracts: the 1/60 s accumulator, the 100 ms frame cap and the same LCG. The Day/Night `ShiftCycle` (`src/core/shiftCycle.js`) and `Mutants` (`src/core/mutants.js`) consume ticks, in that order. The clock is paused for all of Day Shift and runs for exactly 3600 ticks per Night. Nightly settlement (`src/core/settlement.js`) runs once, at the end of the final night tick, and applies Credits and pollution together. There is no per-tick revenue or pollution. Mutant spawning is the only consumer of random numbers so far. New simulated systems must run inside `GameScene.stepSimulation()` and draw randomness from `this.rng`.
+The simulation clock (`src/core/simulationClock.js`) and seeded RNG (`src/core/seededRandom.js`) are integrated in `GameScene`. They follow the Steel Abyss: Refit / BarrelStorm contracts: the 1/60 s accumulator, the 100 ms frame cap and the same LCG. The Day/Night `ShiftCycle` (`src/core/shiftCycle.js`), `Autocannons` (`src/core/autocannons.js`) and `Mutants` (`src/core/mutants.js`) consume ticks, in that order. The clock is paused for all of Day Shift and runs for exactly 3600 ticks per Night. Nightly settlement (`src/core/settlement.js`) runs once, at the end of the final night tick, and applies Credits and pollution together. There is no per-tick revenue or pollution. Mutant spawning is the only consumer of random numbers so far. New simulated systems must run inside `GameScene.stepSimulation()` and draw randomness from `this.rng`.
 
 ### Day Shift
 
@@ -578,10 +590,10 @@ Complete:
 - TASK 009: Global Power
 - TASK 010: Pollution and Environmental Pressure
 - TASK 011A: Basic Mutant Foundation
+- TASK 011B: Autocannon Defense
 
 Later, not yet assigned:
 
-- TASK 011B: Autocannon, a separate defensive building (next proposed task, not approved)
 - HQ and loss condition
 - Repeatable survival loop
 - Hardening: `Economy` does not bound balances. The constructor accepts unsafe integers and `adjustCredits` validates the delta but not the result, so a balance can pass the safe-integer range and lose precision. `settleNight` prevalidates this for settlement; `Economy` itself is unchanged.
