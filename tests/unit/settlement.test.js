@@ -2,6 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import {calculateSettlement, settleNight} from '../../src/core/settlement.js';
 import {Economy, EconomyFailure} from '../../src/core/economy.js';
+import {Pollution} from '../../src/core/pollution.js';
 import {SimulationClock} from '../../src/core/simulationClock.js';
 import {ShiftCycle, Shift} from '../../src/core/shiftCycle.js';
 import {Grid} from '../../src/core/grid.js';
@@ -98,31 +99,34 @@ test('unknown building types and malformed input throw', () => {
 
 test('settleNight applies net once and returns an exact report', () => {
     const economy = new Economy({credits: 0, ap: 2});
-    const report = settleNight({day: 1, buildings: [...b('powerPlant'), ...b('factory'), ...b('outpost')], economy});
+    const report = settleNight({day: 1, buildings: [...b('powerPlant'), ...b('factory'), ...b('outpost')], economy, pollution: new Pollution()});
     assert.deepEqual(report, {
         day: 1, gross: 150, upkeep: 20, net: 130, creditsBefore: 0, creditsAfter: 130,
         counts: counts({outpost: 1, factory: 1, powerPlant: 1}),
         power: {generation: 100, demand: 50, status: 'normal'},
+        pollution: {before: 0, emitted: 20, after: 20, threatLevel: 1},
     });
     assert.deepEqual(economy.snapshot(), {credits: 130, ap: 2}); // AP untouched
 });
 
 test('settleNight without power: factory idle, outpost upkeep still charged', () => {
     const economy = new Economy({credits: 500, ap: 3});
-    const report = settleNight({day: 1, buildings: [...b('factory'), ...b('outpost')], economy});
+    const report = settleNight({day: 1, buildings: [...b('factory'), ...b('outpost')], economy, pollution: new Pollution()});
     assert.deepEqual(report, {
         day: 1, gross: 0, upkeep: 20, net: -20, creditsBefore: 500, creditsAfter: 480,
         counts: counts({outpost: 1, factory: 1}),
         power: {generation: 0, demand: 50, status: 'blackout'},
+        pollution: {before: 0, emitted: 0, after: 0, threatLevel: 1},
     });
 });
 
 test('settleNight with no buildings still reports a zero night', () => {
     const economy = new Economy();
-    const report = settleNight({day: 4, buildings: [], economy});
+    const report = settleNight({day: 4, buildings: [], economy, pollution: new Pollution()});
     assert.deepEqual(report, {
         day: 4, gross: 0, upkeep: 0, net: 0, creditsBefore: 1000, creditsAfter: 1000, counts: ZERO_COUNTS,
         power: {generation: 0, demand: 0, status: 'normal'},
+        pollution: {before: 0, emitted: 0, after: 0, threatLevel: 1},
     });
     assert.deepEqual(economy.snapshot(), {credits: 1000, ap: 5});
 });
@@ -130,10 +134,11 @@ test('settleNight with no buildings still reports a zero night', () => {
 test('reports are frozen and detached from domain state', () => {
     const economy = new Economy();
     const buildings = [...b('powerPlant'), ...b('factory')];
-    const report = settleNight({day: 1, buildings, economy});
+    const report = settleNight({day: 1, buildings, economy, pollution: new Pollution()});
     assert.ok(Object.isFrozen(report));
     assert.ok(Object.isFrozen(report.counts));
     assert.ok(Object.isFrozen(report.power));
+    assert.ok(Object.isFrozen(report.pollution));
     assert.throws(() => { report.net = 0; }, TypeError);
     assert.throws(() => { report.counts.factory = 9; }, TypeError);
     assert.throws(() => { report.power.status = 'x'; }, TypeError);
@@ -147,7 +152,7 @@ test('reports are frozen and detached from domain state', () => {
 
 test('upkeep may drive Credits negative (debt)', () => {
     const economy = new Economy({credits: 30, ap: 5});
-    const report = settleNight({day: 2, buildings: b('outpost', 3), economy});
+    const report = settleNight({day: 2, buildings: b('outpost', 3), economy, pollution: new Pollution()});
     assert.equal(report.net, -60);
     assert.equal(report.creditsAfter, -30);
     assert.deepEqual(economy.snapshot(), {credits: -30, ap: 5});
@@ -155,9 +160,9 @@ test('upkeep may drive Credits negative (debt)', () => {
 
 test('invalid settlement data changes nothing', () => {
     const economy = new Economy({credits: 500, ap: 2});
-    assert.throws(() => settleNight({day: 1, buildings: [...b('factory'), {id: 'x', type: 'tower'}], economy}), TypeError);
-    assert.throws(() => settleNight({day: 0, buildings: b('factory'), economy}), RangeError);
-    assert.throws(() => settleNight({day: 1.5, buildings: [], economy}), RangeError);
+    assert.throws(() => settleNight({day: 1, buildings: [...b('factory'), {id: 'x', type: 'tower'}], economy, pollution: new Pollution()}), TypeError);
+    assert.throws(() => settleNight({day: 0, buildings: b('factory'), economy, pollution: new Pollution()}), RangeError);
+    assert.throws(() => settleNight({day: 1.5, buildings: [], economy, pollution: new Pollution()}), RangeError);
     assert.deepEqual(economy.snapshot(), {credits: 500, ap: 2});
 });
 
@@ -186,13 +191,14 @@ function world({credits = 1000, ap = 5} = {}) {
     const grid = new Grid({cols: 24, rows: 16, tileSize: 32});
     let cycle;
     const placement = new BuildingPlacement(grid, economy, {isConstructionAllowed: () => cycle.isConstructionAllowed});
+    const pollution = new Pollution();
     const calls = [];
     cycle = new ShiftCycle({
         clock,
         economy,
         settleNight: (day) => {
             calls.push(day);
-            return settleNight({day, buildings: placement.buildings(), economy});
+            return settleNight({day, buildings: placement.buildings(), economy, pollution});
         },
     });
     const onTick = (t) => cycle.onTick(t);
@@ -209,7 +215,7 @@ function world({credits = 1000, ap = 5} = {}) {
         for (let i = 0; i < n; i++) clock.advance(delta, onTick);
     };
     cycle.begin();
-    return {clock, economy, grid, placement, cycle, calls, step, frames, onTick};
+    return {clock, economy, pollution, grid, placement, cycle, calls, step, frames, onTick};
 }
 
 function build(w, type, col, row) {
@@ -248,6 +254,7 @@ test('settlement happens exactly once, at the end of night tick 3600', () => {
         day: 1, gross: 150, upkeep: 20, net: 130, creditsBefore: 0, creditsAfter: 130,
         counts: counts({outpost: 1, factory: 1, powerPlant: 1}),
         power: {generation: 100, demand: 50, status: 'normal'},
+        pollution: {before: 0, emitted: 20, after: 20, threatLevel: 1},
     });
     assert.deepEqual(w.economy.snapshot(), {credits: 130, ap: 5}); // AP restored to exactly 5
     assert.equal(w.cycle.shift, Shift.DAY);
@@ -328,6 +335,7 @@ test('a night with zero buildings still produces a zero report', () => {
     assert.deepEqual(w.cycle.lastSettlement, {
         day: 1, gross: 0, upkeep: 0, net: 0, creditsBefore: 1000, creditsAfter: 1000, counts: ZERO_COUNTS,
         power: {generation: 0, demand: 0, status: 'normal'},
+        pollution: {before: 0, emitted: 0, after: 0, threatLevel: 1},
     });
 });
 
@@ -382,9 +390,9 @@ test('a throwing settlement hook changes nothing; the final tick is retried', ()
         settleNight: (day) => {
             if (fail) {
                 // Invalid data: settleNight rejects before mutating the economy.
-                return settleNight({day, buildings: [{id: 'x', type: 'tower'}], economy});
+                return settleNight({day, buildings: [{id: 'x', type: 'tower'}], economy, pollution: new Pollution()});
             }
-            return settleNight({day, buildings: [], economy});
+            return settleNight({day, buildings: [], economy, pollution: new Pollution()});
         },
     });
     const onTick = (t) => cycle.onTick(t);

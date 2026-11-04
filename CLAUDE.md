@@ -2,6 +2,22 @@
 
 This file provides project context, architectural constraints, and working rules for Claude Code.
 
+## Task Selection and Session Resumption
+
+- The repository roadmap is informational, not permission to begin tasks.
+- Never select or begin the next roadmap item automatically.
+- Only work on tasks explicitly assigned by the human developer.
+- A message such as "continue", "resume", or "go on" means:
+    1. Resume the previously approved, unfinished task if one exists.
+    2. If the previous task is complete or the working tree is clean, report the last completed task and ask which task to work on.
+    3. Do not infer the next task from the roadmap or begin planning an unassigned feature.
+- If no task is active, do not scan unrelated repositories or execute the full test suite just to determine what to do next.
+- The current task's explicitly approved requirements take precedence over older roadmap descriptions.
+- Gameplay design decisions must come from the GDD or explicit developer instructions, not assumptions.
+- Do not repurpose an existing building type without approval.
+- Keep task IDs consistent with the current development sequence.
+- A clean Git working tree does not imply that the next roadmap task has been authorized.
+- 
 ## 1. Project
 
 **PAPI Industries: The Green Shift** is an industrial survival tower-defense game developed for GitHub Game Off 2026.
@@ -155,9 +171,9 @@ Avoid implementing gameplay rules directly inside Phaser scenes.
 - `src/core/gamePhase.js`: Bootstrap game phase logic.
 - `src/core/grid.js`: `Grid` class (Phaser-free). Configurable `cols`/`rows`/`tileSize` with an origin offset (`originX`/`originY`). World↔cell conversion (`worldToCell`, `cellToWorld`, `cellCenter`, `footprintRect`). NxM footprints `{col, row, width, height}`, anchored at the top-left cell. `canPlace`/`place` are atomic and return `{ok}` or `{ok: false, reason}`, where reason is one of `PlacementFailure`: `invalid-footprint`, `out-of-bounds`, `occupied` (plus `blockers`), `duplicate-id`. Also `remove`, `occupantAt` and `snapshot()`, which returns detached JSON data. The grid is the source of truth for occupancy and validity.
 - `src/core/buildingTypes.js`: frozen plain data, with temporary graybox values. `getBuildingType(id)` returns the type or `null`.
-  - `outpost`: 1×1, costs `{credits: 100, ap: 1}`, operations `{income: 0, upkeep: 20}` per completed night, power `{supply: 0, demand: 10}`.
-  - `factory`: 3×3, costs `{credits: 400, ap: 1}`, operations `{income: 150, upkeep: 0}` per completed night, power `{supply: 0, demand: 40}`.
-  - `powerPlant`: 3×3, costs `{credits: 500, ap: 1}`, operations `{income: 0, upkeep: 0}`, power `{supply: 100, demand: 0}`.
+  - `outpost`: 1×1, costs `{credits: 100, ap: 1}`, operations `{income: 0, upkeep: 20}` per completed night, power `{supply: 0, demand: 10}`, `pollutionPerNight: 0`.
+  - `factory`: 3×3, costs `{credits: 400, ap: 1}`, operations `{income: 150, upkeep: 0}` per completed night, power `{supply: 0, demand: 40}`, `pollutionPerNight: 8`.
+  - `powerPlant`: 3×3, costs `{credits: 500, ap: 1}`, operations `{income: 0, upkeep: 0}`, power `{supply: 100, demand: 0}`, `pollutionPerNight: 12`.
 - `src/core/power.js`: `calculatePower(buildings)` → `{generation, demand, status, buildings: [{id, type, enabled, powered}]}`.
   - One global pool, derived on demand from the building records and never stored. It is pure and does not mutate its input.
   - Generation and demand count **enabled** buildings only.
@@ -166,9 +182,19 @@ Avoid implementing gameplay rules directly inside Phaser scenes.
     - `low-power`: 0 < generation < demand.
     - `blackout`: generation is 0 and demand > 0.
   - A consumer is `powered` only when it is enabled and the status is `normal`. Low power and blackout stop **all** consumers; there is no priority or partial allocation. A generator is powered when enabled.
+- `src/core/pollution.js`:
+  - `threatLevel(pollution)` is pure and is the only source of threat, which is never stored: 0-24 = 1, 25-49 = 2, 50-99 = 3, 100+ = 4.
+  - `calculateEmissions(buildings)` is pure and sums `pollutionPerNight` over buildings that `calculatePower` reports as `powered`. Disabled buildings and unpowered consumers emit nothing.
+  - `Pollution(value = 0)` has a private value, read through `value` or `snapshot()` → `{value}`. `add(amount)` validates the amount and the resulting total as safe integers before changing anything. There is no decrease, so it never goes negative and never decays.
 - `src/core/settlement.js`:
   - `calculateSettlement(buildings)` is pure and integer-only, and uses `calculatePower`. Income counts only from **powered** buildings. Upkeep is always charged in full, whether a building is enabled or powered. It returns `{gross, upkeep, net, counts, power: {generation, demand, status}}` and throws `TypeError` on an unknown type.
-  - `settleNight({day, buildings, economy})` calculates first, which may throw before any change, then makes a single `economy.adjustCredits(net)` call. It returns a frozen report `{day, gross, upkeep, net, creditsBefore, creditsAfter, counts, power}`, where `day` is the day whose night completed. The power state used is the one at the end of the night.
+  - `settleNight({day, buildings, economy, pollution})` is the single atomic night-end transaction, and `pollution` is required. There is no rollback:
+    1. Calculate settlement and emissions, with no side effects.
+    2. Prevalidate the current balances, `net`, `emitted` and both resulting totals as safe integers.
+    3. Commit `pollution.add(emitted)`, then `economy.adjustCredits(net)`. Neither can fail for prevalidated values.
+    4. Build the report, so it exists only after both commits.
+
+    Any throw leaves Credits and pollution unchanged. It returns a frozen report `{day, gross, upkeep, net, creditsBefore, creditsAfter, counts, power, pollution: {before, emitted, after, threatLevel}}`, where `day` is the day whose night completed. The power state used is the one at the end of the night, for both income and emissions.
   - It never touches AP, buildings, enabled flags or the grid.
 - `src/core/economy.js`:
   - `Economy({credits, ap})` defaults to `STARTING_RESOURCES` (1000 / 5). Balances are private, read through getters.
@@ -217,6 +243,7 @@ Avoid implementing gameplay rules directly inside Phaser scenes.
   - The HUD in the top band has two lines:
     - The shift line: `Day N · Day Shift`, or at night `Day N · Night Shift · 59.8 s left`, with `(paused)` added when the QA clock is paused. The countdown is `remainingNightTicks / 60`.
     - The resource line: `Credits: N   AP: N`.
+  - The pollution HUD sits at the top of the right band (x 1040, y 16): `Pollution N` and `Threat Level N`. It refreshes at Start and on each Day/Night change.
   - Both lines are created at Start, together with the `Economy` and `ShiftCycle`. The scene wires `settleNight` to `core/settlement.js` and contains no formulas.
   - The right band (x 1040) holds:
     - The power summary: `Power G / D` and the status label (NORMAL / LOW POWER / BLACKOUT).
@@ -240,6 +267,7 @@ Avoid implementing gameplay rules directly inside Phaser scenes.
     - `resources` (`economy.snapshot()`), `hudView` (the actual HUD text), `menuLabels` (the actual button labels)
     - `shiftCycle` (`{day, shift, elapsedNightTicks, remainingNightTicks}`, `null` before Start) and `shiftView` (the actual shift-line text)
     - `settlement` (the latest report, or `null`) and `settlementView` (the actual panel text and visibility)
+    - `pollution` (`{value, threatLevel, emissionsPerNight}`, `null` before Start; `emissionsPerNight` is derived from the current buildings, and the amount actually emitted is `settlement.pollution.emitted`) and `pollutionView` (the actual HUD text and visibility)
     - `simulation`: `{running, paused, tick, timeSeconds, stepsExecuted, rng: {seed, state}}`
     - `previewView` (the rendered preview: visibility, rect, colors)
     - `buildings` (domain records, including `enabled`) and `buildingViews` (the rendered rectangles, including `alpha` and `strokeColor`)
@@ -288,7 +316,7 @@ Gameplay-critical simulation must use a **fixed timestep of 60 Hz**.
 - Avoid `Date.now()` or wall-clock timing for gameplay outcomes.
 - Support deterministic state inspection and controlled tick advancement for testing.
 
-The simulation clock (`src/core/simulationClock.js`) and seeded RNG (`src/core/seededRandom.js`) are integrated in `GameScene`. They follow the Steel Abyss: Refit / BarrelStorm contracts: the 1/60 s accumulator, the 100 ms frame cap and the same LCG. The Day/Night `ShiftCycle` (`src/core/shiftCycle.js`) is the only system that consumes ticks so far. The clock is paused for all of Day Shift and runs for exactly 3600 ticks per Night. Nightly settlement (`src/core/settlement.js`) runs once, at the end of the final night tick. There is no per-tick revenue. Nothing consumes random numbers yet. New simulated systems must run inside `GameScene.stepSimulation()` and draw randomness from `this.rng`.
+The simulation clock (`src/core/simulationClock.js`) and seeded RNG (`src/core/seededRandom.js`) are integrated in `GameScene`. They follow the Steel Abyss: Refit / BarrelStorm contracts: the 1/60 s accumulator, the 100 ms frame cap and the same LCG. The Day/Night `ShiftCycle` (`src/core/shiftCycle.js`) is the only system that consumes ticks so far. The clock is paused for all of Day Shift and runs for exactly 3600 ticks per Night. Nightly settlement (`src/core/settlement.js`) runs once, at the end of the final night tick, and applies Credits and pollution together. There is no per-tick revenue or pollution. Nothing consumes random numbers yet. New simulated systems must run inside `GameScene.stepSimulation()` and draw randomness from `this.rng`.
 
 ### Day Shift
 
@@ -522,16 +550,25 @@ PAPI Industries is a time-limited game-jam project.
 
 **Prioritize a playable core loop over feature quantity.**
 
-Initial implementation priorities:
+Implementation sequence (informational; only explicitly assigned tasks may start):
 
-1. Bootstrap
-2. Grid integration
-3. Building placement
-4. Credits and Action Points
-5. Simulation clock and RNG
-6. Day/Night state machine
-7. Basic enemies and defenses
-8. Repeatable survival loop
+Complete:
+
+- Bootstrap
+- Grid integration
+- Building placement
+- Credits and Action Points
+- Simulation clock and RNG
+- Day/Night state machine
+- TASK 008: Settlement
+- TASK 009: Global Power
+- TASK 010: Pollution and Environmental Pressure
+
+Later, not yet assigned:
+
+- Combat: enemies and defenses
+- Repeatable survival loop
+- Hardening: `Economy` does not bound balances. The constructor accepts unsafe integers and `adjustCredits` validates the delta but not the result, so a balance can pass the safe-integer range and lose precision. `settleNight` prevalidates this for settlement; `Economy` itself is unchanged.
 
 Advanced systems, additional content, and visual polish must not be introduced ahead of their assigned tasks.
 

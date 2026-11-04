@@ -7,14 +7,17 @@ test('defines outpost (1x1), factory (3x3) and power plant (3x3)', () => {
     assert.deepEqual(BUILDING_TYPES.outpost, {
         id: 'outpost', name: 'Outpost', width: 1, height: 1,
         cost: {credits: 100, ap: 1}, operations: {income: 0, upkeep: 20}, power: {supply: 0, demand: 10},
+        pollutionPerNight: 0,
     });
     assert.deepEqual(BUILDING_TYPES.factory, {
         id: 'factory', name: 'Factory', width: 3, height: 3,
         cost: {credits: 400, ap: 1}, operations: {income: 150, upkeep: 0}, power: {supply: 0, demand: 40},
+        pollutionPerNight: 8,
     });
     assert.deepEqual(BUILDING_TYPES.powerPlant, {
         id: 'powerPlant', name: 'Power Plant', width: 3, height: 3,
         cost: {credits: 500, ap: 1}, operations: {income: 0, upkeep: 0}, power: {supply: 100, demand: 0},
+        pollutionPerNight: 12,
     });
 });
 

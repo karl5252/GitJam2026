@@ -12,6 +12,7 @@
  */
 import {BUILDING_TYPES, getBuildingType} from './buildingTypes.js';
 import {calculatePower} from './power.js';
+import {Pollution, calculateEmissions, threatLevel} from './pollution.js';
 
 const isNonNegativeInt = (n) => Number.isInteger(n) && n >= 0;
 
@@ -46,20 +47,43 @@ export function calculateSettlement(buildings) {
 }
 
 /**
- * Apply one completed night to the economy. Atomic: the calculation runs
- * (and may throw) before any state changes; the only mutation is a single
- * economy.adjustCredits(net). AP, buildings, power flags and grid are never
- * touched.
+ * Apply one completed night to the economy and to pollution, as one atomic
+ * step with no rollback:
+ *   1. Calculate settlement and emissions (no side effects; may throw).
+ *   2. Prevalidate both changes, inputs and results (may throw).
+ *   3. Commit pollution, then Credits. Neither can fail for prevalidated
+ *      values: Pollution.add and Economy.adjustCredits reject only what step
+ *      2 has already ruled out, and everything here is synchronous.
+ *   4. Build the report, so it exists only after both commits.
+ * Any throw therefore happens with Credits and pollution both unchanged, and
+ * ShiftCycle can safely retry the final tick. AP, buildings, power flags and
+ * grid are never touched.
  *
- * @param {{day: number, buildings: Array, economy: import('./economy.js').Economy}} input
+ * @param {{day: number, buildings: Array, economy: import('./economy.js').Economy,
+ *          pollution: Pollution}} input
  *   day - the day whose night just completed
- * @returns {Readonly<{day, gross, upkeep, net, creditsBefore, creditsAfter, counts, power}>} frozen report
+ * @returns {Readonly<{day, gross, upkeep, net, creditsBefore, creditsAfter, counts, power,
+ *                     pollution: {before, emitted, after, threatLevel}}>} frozen report
  */
-export function settleNight({day, buildings, economy}) {
+export function settleNight({day, buildings, economy, pollution}) {
     if (!Number.isInteger(day) || day < 1) throw new RangeError(`day must be a positive integer, got ${day}`);
+    if (!(pollution instanceof Pollution)) throw new TypeError('settleNight requires a Pollution instance');
+
     const {gross, upkeep, net, counts, power} = calculateSettlement(buildings);
+    const emitted = calculateEmissions(buildings);
+
     const creditsBefore = economy.credits;
+    const pollutionBefore = pollution.value;
+    for (const [label, value] of Object.entries({
+        creditsBefore, net, creditsAfter: creditsBefore + net,
+        pollutionBefore, emitted, pollutionAfter: pollutionBefore + emitted,
+    })) {
+        if (!Number.isSafeInteger(value)) throw new RangeError(`Settlement ${label} is not a safe integer: ${value}`);
+    }
+
+    pollution.add(emitted);
     economy.adjustCredits(net);
+
     return Object.freeze({
         day,
         gross,
@@ -69,5 +93,11 @@ export function settleNight({day, buildings, economy}) {
         creditsAfter: economy.credits,
         counts: Object.freeze(counts),
         power: Object.freeze(power),
+        pollution: Object.freeze({
+            before: pollutionBefore,
+            emitted,
+            after: pollution.value,
+            threatLevel: threatLevel(pollution.value),
+        }),
     });
 }

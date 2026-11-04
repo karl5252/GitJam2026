@@ -89,6 +89,7 @@ function settlementSuite({pressWorld, pressAction}) {
             day: 1, gross: 150, upkeep: 20, net: 130, creditsBefore: 0, creditsAfter: 130,
             counts: {outpost: 1, factory: 1, powerPlant: 1},
             power: {generation: 100, demand: 50, status: 'normal'},
+            pollution: {before: 0, emitted: 20, after: 20, threatLevel: 1},
         };
         expect(s.settlement).toEqual(expected);
         expect(s.resources).toEqual({credits: 130, ap: 5});
@@ -116,6 +117,7 @@ function settlementSuite({pressWorld, pressAction}) {
             day: 1, gross: 0, upkeep: 20, net: -20, creditsBefore: 500, creditsAfter: 480,
             counts: {outpost: 1, factory: 1, powerPlant: 0},
             power: {generation: 0, demand: 50, status: 'blackout'},
+            pollution: {before: 0, emitted: 0, after: 0, threatLevel: 1},
         });
         expect(s.hudView.text).toBe('Credits: 480   AP: 5');
         expect(s.settlementView.text).toBe(panelText(s.settlement));
@@ -144,6 +146,7 @@ function settlementSuite({pressWorld, pressAction}) {
             day: 1, gross: 0, upkeep: 0, net: 0, creditsBefore: 1000, creditsAfter: 1000,
             counts: {outpost: 0, factory: 0, powerPlant: 0},
             power: {generation: 0, demand: 0, status: 'normal'},
+            pollution: {before: 0, emitted: 0, after: 0, threatLevel: 1},
         });
         expect(s.settlementView).toEqual({visible: true, text: panelText(s.settlement)});
         expect(s.resources).toEqual({credits: 1000, ap: 5});

@@ -9,6 +9,7 @@ import {SeededRandom, DEFAULT_SEED, parseSeed} from '../core/seededRandom.js';
 import {ShiftCycle, Shift} from '../core/shiftCycle.js';
 import {settleNight} from '../core/settlement.js';
 import {calculatePower, PowerStatus} from '../core/power.js';
+import {Pollution, calculateEmissions, threatLevel} from '../core/pollution.js';
 import {TEST_MODE} from '../testMode.js';
 import {addProxy, markScene, setBodyState} from '../testShadow/TestProxy.js';
 import {QASurface} from '../testShadow/QASurface.js';
@@ -74,7 +75,9 @@ export class GameScene extends Phaser.Scene {
         this.grid = null;
         this.placement = null;
         this.economy = null;
+        this.pollution = null;
         this.hud = null;
+        this.pollutionHud = null;
         this.lastResult = null;
         this.selectedCell = null;
         this.selectionHighlight = null;
@@ -190,11 +193,17 @@ export class GameScene extends Phaser.Scene {
             originY: (height - GRID_ROWS * TILE_SIZE) / 2,
         });
         this.economy = new Economy();
+        this.pollution = new Pollution();
         // Orchestration only: the settlement formula lives in core/settlement.js.
         this.cycle = new ShiftCycle({
             clock: this.clock,
             economy: this.economy,
-            settleNight: (day) => settleNight({day, buildings: this.placement.buildings(), economy: this.economy}),
+            settleNight: (day) => settleNight({
+                day,
+                buildings: this.placement.buildings(),
+                economy: this.economy,
+                pollution: this.pollution,
+            }),
         });
         this.placement = new BuildingPlacement(this.grid, this.economy, {
             isConstructionAllowed: () => this.cycle.isConstructionAllowed,
@@ -242,6 +251,13 @@ export class GameScene extends Phaser.Scene {
             fontSize: '28px',
             color: '#ffffff',
         }).setOrigin(0.5);
+        // Top of the right band, clear of the centred shift and resource lines.
+        this.pollutionHud = this.add.text(1040, 16, '', {
+            fontFamily: 'monospace',
+            fontSize: '22px',
+            color: '#ffffff',
+            lineSpacing: 4,
+        }).setOrigin(0, 0);
         // Right band beside the grid (grid ends at x 1024): global power
         // summary, then the latest nightly settlement (hidden until the first
         // night completes).
@@ -260,6 +276,7 @@ export class GameScene extends Phaser.Scene {
             lineSpacing: 4,
         }).setOrigin(0, 0).setVisible(false);
         this.updateHud();
+        this.updatePollutionHud();
     }
 
     /** Render a settlement report (already calculated in core). */
@@ -297,6 +314,11 @@ export class GameScene extends Phaser.Scene {
         this.hud.setText(`Credits: ${credits}   AP: ${ap}`);
     }
 
+    updatePollutionHud() {
+        const {value} = this.pollution.snapshot();
+        this.pollutionHud.setText(`Pollution ${value}\nThreat Level ${threatLevel(value)}`);
+    }
+
     /** Shift line; the night countdown is derived from remaining simulation ticks. */
     updateShiftHud() {
         const {day, shift, remainingNightTicks} = this.cycle.snapshot();
@@ -322,6 +344,7 @@ export class GameScene extends Phaser.Scene {
             this.setBuildMenuVisible(isDay);
             this.setEndDayVisible(isDay);
             this.updateHud(); // AP is restored and the night settled at the start of each Day
+            this.updatePollutionHud();
             if (isDay && this.cycle.lastSettlement) this.showSettlement(this.cycle.lastSettlement);
         }
         this.updateShiftHud();
@@ -628,6 +651,17 @@ export class GameScene extends Phaser.Scene {
                 }
                 : null,
             resources: this.economy ? this.economy.snapshot() : null,
+            // Domain pollution. emissionsPerNight is what the current buildings
+            // would emit; settlement.pollution.emitted is what the last night did.
+            pollution: this.pollution
+                ? {
+                    ...this.pollution.snapshot(),
+                    threatLevel: threatLevel(this.pollution.value),
+                    emissionsPerNight: calculateEmissions(this.placement.buildings()),
+                }
+                : null,
+            // Actual pollution HUD text, read off the game object.
+            pollutionView: this.pollutionHud ? {visible: this.pollutionHud.visible, text: this.pollutionHud.text} : null,
             simulation: {
                 ...this.clock.snapshot(),
                 stepsExecuted: this.simulationSteps,
