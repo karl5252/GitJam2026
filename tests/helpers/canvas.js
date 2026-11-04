@@ -80,9 +80,12 @@ export const body = (page) => page.locator('body');
  * @param {boolean} [opts.waitForQA] - also wait for window.__qa.getState
  *   to exist (QASurface.js). Only pass this for scenes that install one —
  *   the tic-tac-toe demo doesn't, since nothing there needs it.
+ * @param {boolean} [opts.mutants] - false adds ?mutants=off, an empty spawn
+ *   schedule for suites about power, economy and pollution. Combat tests
+ *   must keep the default so they run the real schedule.
  */
-export async function boot(page, {path = '/', scene, waitForQA = false} = {}) {
-    await page.goto(`${path}?testMode`);
+export async function boot(page, {path = '/', scene, waitForQA = false, mutants = true} = {}) {
+    await page.goto(`${path}?testMode${mutants ? '' : '&mutants=off'}`);
     if (scene) {
         await expect(body(page)).toHaveAttribute('data-scene', scene, {timeout: 10_000});
     }

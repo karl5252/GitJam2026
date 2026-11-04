@@ -2,7 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import {Grid, PlacementFailure} from '../../src/core/grid.js';
 import {BUILDING_TYPES} from '../../src/core/buildingTypes.js';
-import {BuildingPlacement, footprintAt, NO_SELECTION} from '../../src/core/buildingPlacement.js';
+import {BuildingPlacement, footprintAt, INVALID_STATE, NO_SELECTION, UNKNOWN_BUILDING} from '../../src/core/buildingPlacement.js';
 import {Economy, EconomyFailure} from '../../src/core/economy.js';
 
 const setup = (resources) => {
@@ -98,7 +98,7 @@ test('valid factory placement occupies all nine cells', () => {
     const {grid, placement} = setup();
     placement.select('factory');
     const result = placement.placeAt({col: 10, row: 8});
-    assert.deepEqual(result, {ok: true, building: {id: 'factory-1', type: 'factory', col: 9, row: 7, width: 3, height: 3, enabled: true}});
+    assert.deepEqual(result, {ok: true, building: {id: 'factory-1', type: 'factory', col: 9, row: 7, width: 3, height: 3, enabled: true, hp: 300}});
     for (let row = 7; row <= 9; row++) {
         for (let col = 9; col <= 11; col++) assert.equal(grid.occupantAt(col, row), 'factory-1');
     }
@@ -179,7 +179,7 @@ test('buildings() returns detached data', () => {
     const list = placement.buildings();
     list[0].col = 9;
     list.push({id: 'fake'});
-    assert.deepEqual(placement.buildings(), [{id: 'outpost-1', type: 'outpost', col: 2, row: 2, width: 1, height: 1, enabled: true}]);
+    assert.deepEqual(placement.buildings(), [{id: 'outpost-1', type: 'outpost', col: 2, row: 2, width: 1, height: 1, enabled: true, hp: 100}]);
     assert.equal(grid.occupantAt(2, 2), 'outpost-1');
     assert.deepEqual(JSON.parse(JSON.stringify(placement.buildings())), placement.buildings());
 });
@@ -312,4 +312,89 @@ test('a failing economy commit rolls back the grid (all-or-nothing)', () => {
 
     economy.spend = () => ({ok: true});
     assert.equal(placement.placeAt({col: 5, row: 5}).building.id, 'factory-1'); // id was not consumed
+});
+
+// ---- Building HP and destruction --------------------------------------------------
+
+function damageWorld() {
+    const grid = new Grid({cols: 12, rows: 10, tileSize: 32});
+    const economy = new Economy();
+    const placement = new BuildingPlacement(grid, economy);
+    placement.select('factory');
+    const {building} = placement.placeAt({col: 3, row: 3});
+    placement.cancel();
+    return {grid, economy, placement, id: building.id};
+}
+
+test('a new building starts at its type maxHp', () => {
+    const {placement} = damageWorld();
+    assert.equal(placement.buildings()[0].hp, 300);
+});
+
+test('damage reduces hp and changes nothing else', () => {
+    const {grid, economy, placement, id} = damageWorld();
+    const before = {grid: grid.snapshot(), economy: economy.snapshot(), record: placement.buildings()[0]};
+    assert.deepEqual(placement.damageBuilding(id, 40), {ok: true, destroyed: false, hp: 260});
+    assert.deepEqual(placement.buildings()[0], {...before.record, hp: 260});
+    assert.deepEqual(grid.snapshot(), before.grid);
+    assert.deepEqual(economy.snapshot(), before.economy);
+});
+
+test('a building left at 1 hp survives; exact lethal damage destroys it', () => {
+    const {grid, placement, id} = damageWorld();
+    assert.deepEqual(placement.damageBuilding(id, 299), {ok: true, destroyed: false, hp: 1});
+    assert.equal(grid.occupantAt(3, 3), id);
+    assert.deepEqual(placement.damageBuilding(id, 1), {ok: true, destroyed: true, hp: 0});
+    assert.deepEqual(placement.buildings(), []);
+    assert.deepEqual(grid.snapshot().occupants, []);
+});
+
+test('overkill destroys once, every footprint cell is freed, and a repeat is rejected', () => {
+    const {grid, placement, id} = damageWorld();
+    assert.deepEqual(placement.damageBuilding(id, 9999), {ok: true, destroyed: true, hp: 0});
+    for (let col = 2; col <= 4; col++) {
+        for (let row = 2; row <= 4; row++) assert.equal(grid.occupantAt(col, row), null);
+    }
+    assert.deepEqual(placement.damageBuilding(id, 5), {ok: false, reason: UNKNOWN_BUILDING});
+});
+
+test('invalid damage changes nothing', () => {
+    const {placement, id} = damageWorld();
+    for (const bad of [0, -5, 1.5, NaN, Infinity, Number.MAX_SAFE_INTEGER + 1, '5', null, undefined]) {
+        assert.deepEqual(placement.damageBuilding(id, bad), {ok: false, reason: INVALID_STATE}, String(bad));
+    }
+    assert.deepEqual(placement.damageBuilding('factory-99', 5), {ok: false, reason: UNKNOWN_BUILDING});
+    assert.equal(placement.buildings()[0].hp, 300);
+});
+
+test('a record without occupancy throws and changes nothing', () => {
+    const {grid, placement, id} = damageWorld();
+    grid.remove(id);
+    assert.throws(() => placement.damageBuilding(id, 300), /no grid occupancy/);
+    assert.equal(placement.buildings()[0].hp, 300);
+});
+
+test('damage works while construction is disabled', () => {
+    const grid = new Grid({cols: 12, rows: 10, tileSize: 32});
+    let allowed = true;
+    const placement = new BuildingPlacement(grid, new Economy(), {isConstructionAllowed: () => allowed});
+    placement.select('outpost');
+    const {building} = placement.placeAt({col: 1, row: 1});
+    allowed = false;
+    assert.equal(placement.damageBuilding(building.id, 5).ok, true);
+});
+
+test('ids are not reused after destruction, and the cells accept a new building', () => {
+    const {grid, placement, id} = damageWorld();
+    placement.damageBuilding(id, 300);
+    placement.select('factory');
+    const result = placement.placeAt({col: 3, row: 3});
+    assert.equal(result.building.id, 'factory-2');
+    assert.equal(grid.occupantAt(3, 3), 'factory-2');
+});
+
+test('buildings() hp is detached', () => {
+    const {placement} = damageWorld();
+    placement.buildings()[0].hp = 1;
+    assert.equal(placement.buildings()[0].hp, 300);
 });

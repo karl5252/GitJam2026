@@ -10,6 +10,7 @@
  *               while the building is enabled (see core/power.js)
  *   pollutionPerNight: added per completed Night Shift while the building is
  *               powered (see core/pollution.js)
+ *   maxHp:      starting and maximum hit points
  */
 export const BUILDING_TYPES = Object.freeze({
     outpost: Object.freeze({
@@ -18,6 +19,7 @@ export const BUILDING_TYPES = Object.freeze({
         operations: Object.freeze({income: 0, upkeep: 20}),
         power: Object.freeze({supply: 0, demand: 10}),
         pollutionPerNight: 0,
+        maxHp: 100,
     }),
     factory: Object.freeze({
         id: 'factory', name: 'Factory', width: 3, height: 3,
@@ -25,6 +27,7 @@ export const BUILDING_TYPES = Object.freeze({
         operations: Object.freeze({income: 150, upkeep: 0}),
         power: Object.freeze({supply: 0, demand: 40}),
         pollutionPerNight: 8,
+        maxHp: 300,
     }),
     powerPlant: Object.freeze({
         id: 'powerPlant', name: 'Power Plant', width: 3, height: 3,
@@ -32,6 +35,7 @@ export const BUILDING_TYPES = Object.freeze({
         operations: Object.freeze({income: 0, upkeep: 0}),
         power: Object.freeze({supply: 100, demand: 0}),
         pollutionPerNight: 12,
+        maxHp: 300,
     }),
 });
 

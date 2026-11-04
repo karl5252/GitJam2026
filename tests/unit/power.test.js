@@ -150,7 +150,7 @@ test('toggling costs no Credits or AP and leaves the grid unchanged', () => {
     const grid = w.grid.snapshot();
 
     assert.deepEqual(w.placement.setEnabled(plant, false), {
-        ok: true, building: {id: plant, type: 'powerPlant', col: 4, row: 4, width: 3, height: 3, enabled: false},
+        ok: true, building: {id: plant, type: 'powerPlant', col: 4, row: 4, width: 3, height: 3, enabled: false, hp: 300},
     });
     assert.equal(w.placement.setEnabled(factory, false).ok, true);
     assert.equal(w.placement.setEnabled(factory, true).ok, true);

@@ -10,9 +10,11 @@ import {ShiftCycle, Shift} from '../core/shiftCycle.js';
 import {settleNight} from '../core/settlement.js';
 import {calculatePower, PowerStatus} from '../core/power.js';
 import {Pollution, calculateEmissions, threatLevel} from '../core/pollution.js';
+import {Mutants, SPAWN_SCHEDULE} from '../core/mutants.js';
 import {TEST_MODE} from '../testMode.js';
 import {addProxy, markScene, setBodyState} from '../testShadow/TestProxy.js';
 import {QASurface} from '../testShadow/QASurface.js';
+import {MutantLayer} from './MutantLayer.js';
 
 const GRID_COLS = 24;
 const GRID_ROWS = 16;
@@ -78,6 +80,8 @@ export class GameScene extends Phaser.Scene {
         this.pollution = null;
         this.hud = null;
         this.pollutionHud = null;
+        this.mutants = null;
+        this.mutantLayer = null;
         this.lastResult = null;
         this.selectedCell = null;
         this.selectionHighlight = null;
@@ -208,6 +212,17 @@ export class GameScene extends Phaser.Scene {
         this.placement = new BuildingPlacement(this.grid, this.economy, {
             isConstructionAllowed: () => this.cycle.isConstructionAllowed,
         });
+        // TEST_MODE only: ?mutants=off gives the real system an empty schedule,
+        // for E2E suites about power, economy and pollution.
+        const mutantsOff = TEST_MODE && new URLSearchParams(window.location.search).get('mutants') === 'off';
+        this.mutants = new Mutants({
+            cycle: this.cycle,
+            placement: this.placement,
+            grid: this.grid,
+            rng: this.rng,
+            schedule: mutantsOff ? [] : SPAWN_SCHEDULE,
+        });
+        this.mutantLayer = new MutantLayer(this, this.grid);
 
         const bounds = this.grid.footprintRect({col: 0, row: 0, width: GRID_COLS, height: GRID_ROWS});
         const lines = this.add.graphics();
@@ -348,6 +363,7 @@ export class GameScene extends Phaser.Scene {
             if (isDay && this.cycle.lastSettlement) this.showSettlement(this.cycle.lastSettlement);
         }
         this.updateShiftHud();
+        this.mutantLayer.sync(this.mutants.snapshot(), this.placement.buildings());
     }
 
     handleEndDay() {
@@ -600,12 +616,26 @@ export class GameScene extends Phaser.Scene {
     /**
      * One fixed 1/60 s simulation step. Called by both update() and manual
      * QA stepping. Drives the shift cycle (night countdown and the automatic
-     * Night -> Day transition). No other gameplay is simulated yet; the
-     * counter lets QA verify that every tick ran this path.
+     * Night -> Day transition), then the mutants. The order matters: if
+     * settlement throws on the final tick, the mutants do not step, so the
+     * retried tick cannot apply anything twice. The counter lets QA verify
+     * that every tick ran this path.
      */
     stepSimulation(tick) {
         this.simulationSteps++;
         this.cycle?.onTick(tick);
+        const effects = this.mutants?.step();
+        if (effects?.destroyed.length) this.handleBuildingsDestroyed(effects.destroyed);
+    }
+
+    /** Domain already removed these buildings; bring the presentation in line. */
+    handleBuildingsDestroyed(ids) {
+        for (const id of ids) {
+            this.buildingViews.get(id).destroy();
+            this.buildingViews.delete(id);
+        }
+        if (ids.includes(this.selectedBuildingId)) this.selectAt(null);
+        this.refreshPower();
     }
 
     // ---- QA ----------------------------------------------------------------
@@ -660,6 +690,10 @@ export class GameScene extends Phaser.Scene {
                     emissionsPerNight: calculateEmissions(this.placement.buildings()),
                 }
                 : null,
+            // Domain mutants, then the rendered circles and building HP bars.
+            mutants: this.mutants ? this.mutants.snapshot() : null,
+            mutantViews: this.mutantLayer ? this.mutantLayer.mutantViews() : null,
+            hpBarViews: this.mutantLayer ? this.mutantLayer.hpBarViews() : null,
             // Actual pollution HUD text, read off the game object.
             pollutionView: this.pollutionHud ? {visible: this.pollutionHud.visible, text: this.pollutionHud.text} : null,
             simulation: {

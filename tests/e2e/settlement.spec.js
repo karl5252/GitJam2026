@@ -41,7 +41,7 @@ const panelText = (r) => [
 
 function settlementSuite({pressWorld, pressAction}) {
     async function start(page) {
-        await boot(page, {scene: 'game', waitForQA: true});
+        await boot(page, {scene: 'game', waitForQA: true, mutants: false});
         await pressAction(page, 'start');
         await expect(body(page)).toHaveAttribute('data-phase', 'started');
         return sample(page);

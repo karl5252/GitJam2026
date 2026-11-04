@@ -20,7 +20,7 @@ function expectConsistent(s) {
 
 function simulationSuite(pressAction) {
     async function start(page) {
-        await boot(page, {scene: 'game', waitForQA: true});
+        await boot(page, {scene: 'game', waitForQA: true, mutants: false});
         await pressAction(page, 'start');
         await expect(body(page)).toHaveAttribute('data-phase', 'started');
     }
@@ -105,7 +105,7 @@ function simulationSuite(pressAction) {
         expect(after.resources).toEqual(before.resources);
         expect(after.grid).toEqual(before.grid);
         expect(after.buildings).toEqual(before.buildings);
-        expect(after.simulation.rng).toEqual(before.simulation.rng); // nothing consumes RNG yet
+        expect(after.simulation.rng).toEqual(before.simulation.rng); // the empty spawn schedule draws nothing
     });
 }
 

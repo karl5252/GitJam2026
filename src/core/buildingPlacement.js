@@ -104,7 +104,7 @@ export class BuildingPlacement {
         }
 
         this.#nextId++;
-        const building = {id, type: type.id, ...footprint, enabled: true};
+        const building = {id, type: type.id, ...footprint, enabled: true, hp: type.maxHp};
         this.#buildings.push(building);
         return {ok: true, building: {...building}};
     }
@@ -123,6 +123,30 @@ export class BuildingPlacement {
         if (!building) return {ok: false, reason: UNKNOWN_BUILDING};
         building.enabled = enabled;
         return {ok: true, building: {...building}};
+    }
+
+    /**
+     * Apply damage to a placed building. This is the only way HP changes and
+     * the only way a building is destroyed. At 0 HP the grid cells and the
+     * record go together, so a building is destroyed exactly once; further
+     * damage is rejected as unknown. Deliberately not behind the construction
+     * gate, and never touches the economy. Ids are never reused.
+     * @returns {{ok: true, destroyed: boolean, hp: number} | {ok: false, reason: 'unknown-building' | 'invalid-state'}}
+     */
+    damageBuilding(id, amount) {
+        if (!Number.isSafeInteger(amount) || amount <= 0) return {ok: false, reason: INVALID_STATE};
+        const index = this.#buildings.findIndex((b) => b.id === id);
+        if (index === -1) return {ok: false, reason: UNKNOWN_BUILDING};
+
+        const building = this.#buildings[index];
+        const hp = Math.max(0, building.hp - amount);
+        if (hp > 0) {
+            building.hp = hp;
+            return {ok: true, destroyed: false, hp};
+        }
+        if (!this.#grid.remove(id)) throw new Error(`Building ${id} has no grid occupancy`);
+        this.#buildings.splice(index, 1);
+        return {ok: true, destroyed: true, hp};
     }
 
     /** Construction gate, then spatial rules (grid), then resources (economy). Never mutates. */

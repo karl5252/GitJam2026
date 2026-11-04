@@ -38,7 +38,7 @@ const flags = (s) => Object.fromEntries(s.power.buildings.map((b) => [b.id, [b.e
 
 function powerSuite({pressWorld, pressAction}) {
     async function start(page) {
-        await boot(page, {scene: 'game', waitForQA: true});
+        await boot(page, {scene: 'game', waitForQA: true, mutants: false});
         await pressAction(page, 'start');
         await expect(body(page)).toHaveAttribute('data-phase', 'started');
         return sample(page);
@@ -85,7 +85,7 @@ function powerSuite({pressWorld, pressAction}) {
         await place(page, state, 'powerPlant', 17, 8);
         const s = await sample(page);
         expect(s.buildings).toEqual([
-            {id: 'powerPlant-1', type: 'powerPlant', col: 16, row: 7, width: 3, height: 3, enabled: true},
+            {id: 'powerPlant-1', type: 'powerPlant', col: 16, row: 7, width: 3, height: 3, enabled: true, hp: 300},
         ]);
         expect(s.resources).toEqual({credits: 500, ap: 4});
         expect(s.power).toMatchObject({generation: 100, demand: 0, status: 'normal'});
