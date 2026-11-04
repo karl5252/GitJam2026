@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {
-    MUTANT, Mutants, SPAWN_SCHEDULE, TARGET_BIAS, blockerAt, borderSpawns, distanceToFootprint, selectTarget,
+    MUTANT, Mutants, TARGET_BIAS, blockerAt, borderSpawns, distanceToFootprint, selectTarget,
 } from '../../src/core/mutants.js';
 import {BUILDING_TYPES} from '../../src/core/buildingTypes.js';
 import {BuildingPlacement, UNKNOWN_BUILDING} from '../../src/core/buildingPlacement.js';
@@ -110,9 +110,8 @@ const building = (id, type, col, row, width = 1, height = 1) => ({id, type, col,
 
 test('graybox values are the approved ones', () => {
     assert.deepEqual(MUTANT, {maxHp: 40, speed: 0.5, attackRange: 8, attackDamage: 5, attackCooldownTicks: 60});
-    assert.deepEqual(SPAWN_SCHEDULE, [600]);
     assert.deepEqual(TARGET_BIAS, {powerPlant: 256, factory: 128, autocannon: 64, outpost: 0});
-    assert.ok(Object.isFrozen(MUTANT) && Object.isFrozen(SPAWN_SCHEDULE) && Object.isFrozen(TARGET_BIAS));
+    assert.ok(Object.isFrozen(MUTANT) && Object.isFrozen(TARGET_BIAS));
 });
 
 test('every building type has an explicit target bias', () => {

@@ -31,11 +31,11 @@ This file provides project context, architectural constraints, and working rules
 
 **Target platforms:** Desktop browsers and mobile browsers in landscape orientation.
 
-**Current status:** TASK 011B (Autocannon Defense) complete. No next task is approved: only work on tasks the developer explicitly assigns.
+**Current status:** TASK 012A (Night Wave Director) complete. No next task is approved: only work on tasks the developer explicitly assigns.
 
 The project was initialized from the Wee Games Starter Kit Basic. The original demo applications have been removed.
 
-Implemented so far: grid placement, Credits and AP, the Day/Night cycle, global power, nightly settlement, pollution and derived threat, one basic mutant that damages and destroys buildings, and the Autocannon, which kills mutants. There are no repairs, HQ or game over yet.
+Implemented so far: grid placement, Credits and AP, the Day/Night cycle, global power, nightly settlement, pollution and derived threat, one basic mutant type that damages and destroys buildings, the Autocannon, which kills mutants, and nightly waves that scale with the night, Threat Level and Autocannon count. There are no repairs, HQ or game over yet.
 
 ### Game concept
 
@@ -187,7 +187,13 @@ Avoid implementing gameplay rules directly inside Phaser scenes.
   - `threatLevel(pollution)` is pure and is the only source of threat, which is never stored: 0-24 = 1, 25-49 = 2, 50-99 = 3, 100+ = 4.
   - `calculateEmissions(buildings)` is pure and sums `pollutionPerNight` over buildings that `calculatePower` reports as `powered`. Disabled buildings and unpowered consumers emit nothing.
   - `Pollution(value = 0)` has a private value, read through `value` or `snapshot()` → `{value}`. `add(amount)` validates the amount and the resulting total as safe integers before changing anything. There is no decrease, so it never goes negative and never decays.
-- `src/core/mutants.js`: `Mutants({cycle, placement, grid, rng, schedule})`, temporary graybox values in `MUTANT`, `SPAWN_SCHEDULE` and `TARGET_BIAS`.
+- `src/core/waves.js`: pure night wave planning, with temporary graybox values in `WAVE`. No state, clock or randomness.
+  - `nightBudget = 1 + floor((night - 1) / 2)`, `pollutionBudget = 2 * (threatLevel - 1)`, `defenseResponse = min(4, floor(max(0, autocannonCount - 1) / 2))`, `budget = min(20, nightBudget + pollutionBudget + defenseResponse)`.
+  - `waveSchedule(budget)` gives strictly increasing integer ticks from 600 to 2700, with gaps that shrink through the night, so at most one mutant spawns per tick.
+  - `nightPlan({day, pollution, buildings})` returns a frozen plan `{day, threatLevel, autocannons, nightBudget, pollutionBudget, defenseResponse, budget, schedule}` holding numbers only. Every existing Autocannon counts, enabled or not, powered or not. Threat Level is derived from pollution here and stored nowhere else.
+  - `waveProgress(plan, elapsedNightTicks)` counts scheduled slots reached.
+- `src/core/mutants.js`: `Mutants({cycle, placement, grid, rng, schedule, planNight})`, temporary graybox values in `MUTANT` and `TARGET_BIAS`.
+  - `planNight(day)` is called once per night, on night tick 1, and the plan stays frozen until dawn. That equals sampling at END DAY: pollution only changes during settlement, construction is off at night, and no mutant exists yet. A night's emissions therefore affect the next night's plan. `plan()` returns the plan, or `null` outside a started Night. A fixed `schedule` array is used when there is no `planNight`.
   - Positions are world pixels from the Grid. `speed` is 0.5 px per tick. All distances are Manhattan distances to a footprint rectangle (`distanceToFootprint`).
   - `step()` runs once per tick, **after** `ShiftCycle.onTick()`, and returns `{spawned, attacks, destroyed}` for that tick. Mutants act on night ticks 1..3599; tick 3600 only settles. A retried final tick therefore cannot apply damage twice. Outside Night, `step()` removes survivors with no penalty, which is the dawn cleanup.
   - Records are `{id, x, y, hp, targetId, obstacleId, attackTimer}` and hold building ids only. `hp` starts at `MUTANT.maxHp`.
@@ -196,7 +202,7 @@ Avoid implementing gameplay rules directly inside Phaser scenes.
   - Movement is one step along the longer axis toward the nearest footprint point, stopping within `attackRange`.
   - **Obstacles:** if the next step enters any footprint (`blockerAt`, closed bounds, so touching buildings leave no seam), the mutant stays put and sets `obstacleId`. It attacks that building until destroyed, then resumes toward `targetId`. There is no pathfinding.
   - `attackTimer` only runs while stationary and resets on any movement. The first hit lands on the 60th tick spent attacking.
-  - **Spawning:** exactly one RNG draw per scheduled spawn picks one of the `borderSpawns` positions. If that border cell is occupied, the next free position clockwise is used. If every border cell is occupied, that spawn is skipped. Spawning does not depend on buildings existing.
+  - **Spawning:** exactly one RNG draw per scheduled spawn picks one of the `borderSpawns` positions. If that border cell is occupied, the next free position clockwise is used. If every border cell is occupied, that spawn is skipped and not retried, and its slot still counts as reached. Spawning does not depend on buildings existing.
   - With no buildings left, mutants wait in place until dawn. There is no HQ or game over yet.
 - `src/core/autocannons.js`: `Autocannons({cycle, placement, grid, mutants})`, temporary graybox values in `AUTOCANNON` (`range` 160, `damage` 10, `cooldownTicks` 30).
   - `step()` runs once per tick, after `ShiftCycle.onTick()` and **before** `Mutants.step()`, and returns `{shots}` for that tick. Turrets fire on night ticks 1..3599, never on tick 3600. A mutant killed on a tick cannot act on it. A mutant spawned on a tick is first shot on the next one. Outside Night, `step()` clears all turret state, so cooldowns reset at dawn.
@@ -266,6 +272,7 @@ Avoid implementing gameplay rules directly inside Phaser scenes.
   - The HUD in the top band has two lines:
     - The shift line: `Day N · Day Shift`, or at night `Day N · Night Shift · 59.8 s left`, with `(paused)` added when the QA clock is paused. The countdown is `remainingNightTicks / 60`.
     - The resource line: `Credits: N   AP: N`.
+  - The wave HUD sits at the top of the left band (x 16, y 20): `Mutants N | Wave X/Y`. `N` is living mutants, and `X/Y` is scheduled slots reached out of total, not kills. It is visible only while a night plan exists.
   - The pollution HUD sits at the top of the right band (x 1040, y 16): `Pollution N` and `Threat Level N`. It refreshes at Start and on each Day/Night change.
   - Both lines are created at Start, together with the `Economy` and `ShiftCycle`. The scene wires `settleNight` to `core/settlement.js` and contains no formulas.
   - The right band (x 1040) holds:
@@ -291,6 +298,7 @@ Avoid implementing gameplay rules directly inside Phaser scenes.
     - `shiftCycle` (`{day, shift, elapsedNightTicks, remainingNightTicks}`, `null` before Start) and `shiftView` (the actual shift-line text)
     - `settlement` (the latest report, or `null`) and `settlementView` (the actual panel text and visibility)
     - `mutants` (domain records), `mutantViews` (rendered circles) and `hpBarViews` (rendered HP bars), all `null` before Start
+    - `wave` (the frozen night plan, `null` outside a started Night), `waveProgress` (slots reached, or `null`) and `waveView` (the actual HUD text and visibility)
     - `autocannons` (`{id, cooldown, targetId}` per turret), `barrelViews` and `tracerViews` (rendered views), all `null` before Start
     - `pollution` (`{value, threatLevel, emissionsPerNight}`, `null` before Start; `emissionsPerNight` is derived from the current buildings, and the amount actually emitted is `settlement.pollution.emitted`) and `pollutionView` (the actual HUD text and visibility)
     - `simulation`: `{running, paused, tick, timeSeconds, stepsExecuted, rng: {seed, state}}`
@@ -301,7 +309,7 @@ Avoid implementing gameplay rules directly inside Phaser scenes.
     - `update(time, delta)` calls `clock.advance(delta, stepSimulation)` then `syncShiftUi()`, and ignores Phaser's `time`.
     - `stepSimulation(tick)` counts `stepsExecuted`, calls `cycle.onTick(tick)`, then `autocannons.step()`, then `mutants.step()`. Shots and destroyed buildings are handled from that tick's results: `handleBuildingsDestroyed` removes the views, clears a stale selection and calls `refreshPower()`.
     - The RNG seed is `DEFAULT_SEED`. In TEST_MODE only, `?seed=N` overrides it.
-    - In TEST_MODE only, `?mutants=off` gives the real `Mutants` an empty schedule. `boot(page, {mutants: false})` uses it for suites about power, economy and pollution. Combat tests must not use it, and production ignores it.
+    - In TEST_MODE only, `?mutants=off` gives the real `Mutants` an empty schedule instead of `nightPlan`. `boot(page, {mutants: false})` uses it for suites about power, economy and pollution. Combat tests must not use it, and production ignores it.
   - **TEST_MODE-only controls:** `window.__qa.sim` provides:
     - `pause()` → `clock.pause()`
     - `resume()` → `cycle.resume()`, Night only
@@ -591,6 +599,7 @@ Complete:
 - TASK 010: Pollution and Environmental Pressure
 - TASK 011A: Basic Mutant Foundation
 - TASK 011B: Autocannon Defense
+- TASK 012A: Night Wave Director
 
 Later, not yet assigned:
 

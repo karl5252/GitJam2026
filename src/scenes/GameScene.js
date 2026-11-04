@@ -10,7 +10,8 @@ import {ShiftCycle, Shift} from '../core/shiftCycle.js';
 import {settleNight} from '../core/settlement.js';
 import {calculatePower, PowerStatus} from '../core/power.js';
 import {Pollution, calculateEmissions, threatLevel} from '../core/pollution.js';
-import {Mutants, SPAWN_SCHEDULE} from '../core/mutants.js';
+import {Mutants} from '../core/mutants.js';
+import {nightPlan, waveProgress} from '../core/waves.js';
 import {Autocannons} from '../core/autocannons.js';
 import {TEST_MODE} from '../testMode.js';
 import {addProxy, markScene, setBodyState} from '../testShadow/TestProxy.js';
@@ -82,6 +83,7 @@ export class GameScene extends Phaser.Scene {
         this.pollution = null;
         this.hud = null;
         this.pollutionHud = null;
+        this.waveHud = null;
         this.mutants = null;
         this.mutantLayer = null;
         this.autocannons = null;
@@ -217,14 +219,19 @@ export class GameScene extends Phaser.Scene {
             isConstructionAllowed: () => this.cycle.isConstructionAllowed,
         });
         // TEST_MODE only: ?mutants=off gives the real system an empty schedule,
-        // for E2E suites about power, economy and pollution.
+        // for E2E suites about power, economy and pollution. Otherwise the
+        // formula in core/waves.js plans each night.
         const mutantsOff = TEST_MODE && new URLSearchParams(window.location.search).get('mutants') === 'off';
         this.mutants = new Mutants({
             cycle: this.cycle,
             placement: this.placement,
             grid: this.grid,
             rng: this.rng,
-            schedule: mutantsOff ? [] : SPAWN_SCHEDULE,
+            planNight: mutantsOff ? null : (day) => nightPlan({
+                day,
+                pollution: this.pollution.value,
+                buildings: this.placement.buildings(),
+            }),
         });
         this.mutantLayer = new MutantLayer(this, this.grid);
         this.autocannons = new Autocannons({
@@ -277,6 +284,12 @@ export class GameScene extends Phaser.Scene {
             fontSize: '28px',
             color: '#ffffff',
         }).setOrigin(0.5);
+        // Top of the left band, clear of the centred shift line. Night only.
+        this.waveHud = this.add.text(16, 20, '', {
+            fontFamily: 'monospace',
+            fontSize: '20px',
+            color: '#ffffff',
+        }).setOrigin(0, 0).setVisible(false);
         // Top of the right band, clear of the centred shift and resource lines.
         this.pollutionHud = this.add.text(1040, 16, '', {
             fontFamily: 'monospace',
@@ -345,6 +358,16 @@ export class GameScene extends Phaser.Scene {
         this.pollutionHud.setText(`Pollution ${value}\nThreat Level ${threatLevel(value)}`);
     }
 
+    /** Living mutants, then scheduled slots reached out of total. Not a kill counter. */
+    updateWaveHud(mutants) {
+        const plan = this.mutants.plan();
+        this.waveHud.setVisible(plan !== null);
+        if (!plan) return;
+        const reached = waveProgress(plan, this.cycle.elapsedNightTicks);
+        const text = `Mutants ${mutants.length} | Wave ${reached}/${plan.schedule.length}`;
+        if (this.waveHud.text !== text) this.waveHud.setText(text);
+    }
+
     /** Shift line; the night countdown is derived from remaining simulation ticks. */
     updateShiftHud() {
         const {day, shift, remainingNightTicks} = this.cycle.snapshot();
@@ -377,6 +400,7 @@ export class GameScene extends Phaser.Scene {
         const mutants = this.mutants.snapshot();
         const buildings = this.placement.buildings();
         this.mutantLayer.sync(mutants, buildings);
+        this.updateWaveHud(mutants);
         this.autocannonLayer.sync({
             cannons: this.autocannons.snapshot(),
             mutants,
@@ -718,6 +742,10 @@ export class GameScene extends Phaser.Scene {
             mutants: this.mutants ? this.mutants.snapshot() : null,
             mutantViews: this.mutantLayer ? this.mutantLayer.mutantViews() : null,
             hpBarViews: this.mutantLayer ? this.mutantLayer.hpBarViews() : null,
+            // The frozen night plan, slots reached so far, and the actual HUD text.
+            wave: this.mutants ? this.mutants.plan() : null,
+            waveProgress: this.mutants?.plan() ? waveProgress(this.mutants.plan(), this.cycle.elapsedNightTicks) : null,
+            waveView: this.waveHud ? {visible: this.waveHud.visible, text: this.waveHud.text} : null,
             // Domain turret state, then the rendered barrels and tracers.
             autocannons: this.autocannons ? this.autocannons.snapshot() : null,
             barrelViews: this.autocannonLayer ? this.autocannonLayer.barrelViews() : null,

@@ -26,9 +26,6 @@ export const MUTANT = Object.freeze({
     attackCooldownTicks: 60,
 });
 
-/** Night ticks at which one mutant spawns. */
-export const SPAWN_SCHEDULE = Object.freeze([600]);
-
 /** Px subtracted from a building's distance: higher is more attractive. */
 export const TARGET_BIAS = Object.freeze({powerPlant: 256, factory: 128, autocannon: 64, outpost: 0});
 
@@ -110,6 +107,8 @@ export class Mutants {
     #grid;
     #rng;
     #schedule;
+    #planNight;
+    #plan = null; // frozen for the night on tick 1, cleared at dawn
     #spawns;
     #mutants = [];
     #nextId = 1;
@@ -119,15 +118,19 @@ export class Mutants {
      *          placement: import('./buildingPlacement.js').BuildingPlacement,
      *          grid: import('./grid.js').Grid,
      *          rng: import('./seededRandom.js').SeededRandom,
-     *          schedule?: readonly number[]}} deps
+     *          schedule?: readonly number[],
+     *          planNight?: ((day: number) => {schedule: readonly number[]}) | null}} deps
+     *   schedule  - fixed spawn ticks, the same every night
+     *   planNight - asked once per night, on night tick 1; overrides schedule
      */
-    constructor({cycle, placement, grid, rng, schedule = SPAWN_SCHEDULE}) {
+    constructor({cycle, placement, grid, rng, schedule = [], planNight = null}) {
         assertValidSchedule(schedule, cycle.nightTicks);
         this.#cycle = cycle;
         this.#placement = placement;
         this.#grid = grid;
         this.#rng = rng;
         this.#schedule = schedule;
+        this.#planNight = planNight;
         this.#spawns = borderSpawns(grid);
     }
 
@@ -139,9 +142,11 @@ export class Mutants {
     step() {
         if (this.#cycle.shift !== Shift.NIGHT) {
             this.#mutants.length = 0;
+            this.#plan = null;
             return NO_EFFECTS;
         }
-        const spawnDue = this.#schedule.includes(this.#cycle.elapsedNightTicks);
+        this.#plan ??= this.#resolvePlan();
+        const spawnDue = this.#plan.schedule.includes(this.#cycle.elapsedNightTicks);
         if (this.#mutants.length === 0 && !spawnDue) return NO_EFFECTS;
 
         const effects = {spawned: [], attacks: [], destroyed: []};
@@ -149,6 +154,11 @@ export class Mutants {
         for (const mutant of this.#mutants) this.#act(mutant, buildings, effects);
         if (spawnDue) this.#spawn(buildings, effects);
         return effects;
+    }
+
+    /** The frozen plan for the current night, or null outside a started Night. */
+    plan() {
+        return this.#plan;
     }
 
     /**
@@ -173,6 +183,13 @@ export class Mutants {
     /** Detached plain data, in spawn order. */
     snapshot() {
         return this.#mutants.map((mutant) => ({...mutant}));
+    }
+
+    #resolvePlan() {
+        if (!this.#planNight) return Object.freeze({schedule: Object.freeze([...this.#schedule])});
+        const plan = this.#planNight(this.#cycle.day);
+        assertValidSchedule(plan.schedule, this.#cycle.nightTicks);
+        return plan;
     }
 
     #act(mutant, buildings, effects) {
