@@ -3,10 +3,16 @@
  * no randomness. Spawn positions stay in Mutants, which draws one RNG value
  * per spawn.
  *
- *   nightBudget     = 1 + floor((night - 1) / nightsPerExtra)
- *   pollutionBudget = perThreatLevel * (threatLevel - 1)
- *   defenseResponse = min(maxResponse, floor(max(0, autocannons - 1) / cannonsPerResponse))
- *   budget          = min(maxPerNight, nightBudget + pollutionBudget + defenseResponse)
+ *   nightBudget        = 1 + floor((night - 1) / nightsPerExtra)
+ *   pollutionBudget    = perThreatLevel * (threatLevel - 1)
+ *   defenseResponse    = min(maxResponse, floor(max(0, autocannons - 1) / cannonsPerResponse))
+ *   accelerationBudget = floor(max(0, night - accelerationFromNight)^2 / accelerationDivisor)
+ *   budget             = min(maxPerNight, the sum of all four)
+ *   lastSpawnTick      = max(minLastTick, lastTick - windowShrinkPerNight * max(0, night - accelerationFromNight))
+ *
+ * Acceleration and the shrinking spawn window depend only on the night, so
+ * pressure keeps rising without Pollution. A larger wave arriving in a shorter
+ * window is what outruns a fixed number of Autocannons.
  *
  * Mutants asks for a plan once, on night tick 1, and keeps it until dawn.
  * Pollution only changes during settlement, construction is off at night and
@@ -20,11 +26,15 @@ import {threatLevel} from './pollution.js';
 export const WAVE = Object.freeze({
     firstTick: 600,
     lastTick: 2700, // later spawns would mostly be removed at dawn before arriving
+    minLastTick: 1200,
+    windowShrinkPerNight: 100,
     nightsPerExtra: 2,
     perThreatLevel: 2,
     cannonsPerResponse: 2,
     maxResponse: 4,
-    maxPerNight: 20,
+    accelerationFromNight: 6,
+    accelerationDivisor: 12,
+    maxPerNight: 40,
 });
 
 const AUTOCANNON_TYPE = 'autocannon';
@@ -50,24 +60,46 @@ export function defenseResponse(autocannons) {
     return Math.min(WAVE.maxResponse, Math.floor(Math.max(0, autocannons - 1) / WAVE.cannonsPerResponse));
 }
 
+const nightsAccelerated = (night) => Math.max(0, night - WAVE.accelerationFromNight);
+
+export function accelerationBudget(night) {
+    assertCount('night', night, 1);
+    return Math.floor(nightsAccelerated(night) ** 2 / WAVE.accelerationDivisor);
+}
+
 export function waveBudget(night, threat, autocannons) {
-    return Math.min(WAVE.maxPerNight, nightBudget(night) + pollutionBudget(threat) + defenseResponse(autocannons));
+    const total = nightBudget(night) + pollutionBudget(threat) + defenseResponse(autocannons) + accelerationBudget(night);
+    return Math.min(WAVE.maxPerNight, total);
+}
+
+/** The latest spawn tick of a night: the window closes earlier as nights pass. */
+export function lastSpawnTick(night) {
+    assertCount('night', night, 1);
+    return Math.max(WAVE.minLastTick, WAVE.lastTick - WAVE.windowShrinkPerNight * nightsAccelerated(night));
 }
 
 /**
  * Spawn ticks for a budget: strictly increasing, one spawn per tick, from
  * firstTick to lastTick, with gaps that shrink through the night. Integer
- * arithmetic only.
+ * arithmetic only. The approved windows never need it, but in a window much
+ * shorter than the budget gaps round to zero, so spawns are walked back until
+ * each has its own tick.
+ * @param {number} budget
+ * @param {number} [lastTick] - the last spawn tick; a budget must fit the window
  * @returns {readonly number[]} frozen
  */
-export function waveSchedule(budget) {
+export function waveSchedule(budget, lastTick = WAVE.lastTick) {
     assertCount('budget', budget, 0);
+    assertCount('lastTick', lastTick, WAVE.firstTick);
     if (budget <= 1) return Object.freeze(budget === 1 ? [WAVE.firstTick] : []);
-    const span = WAVE.lastTick - WAVE.firstTick;
+    const span = lastTick - WAVE.firstTick;
     const last = budget - 1;
-    return Object.freeze(Array.from({length: budget}, (_, i) => (
+    if (last > span) throw new RangeError(`budget ${budget} does not fit a window ending on tick ${lastTick}`);
+    const ticks = Array.from({length: budget}, (_, i) => (
         WAVE.firstTick + Math.floor(span * i * (2 * last - i) / (last * last))
-    )));
+    ));
+    for (let i = last - 1; i >= 0; i--) ticks[i] = Math.min(ticks[i], ticks[i + 1] - 1);
+    return Object.freeze(ticks);
 }
 
 /**
@@ -86,8 +118,10 @@ export function nightPlan({day, pollution, buildings}) {
         nightBudget: nightBudget(day),
         pollutionBudget: pollutionBudget(threat),
         defenseResponse: defenseResponse(autocannons),
+        accelerationBudget: accelerationBudget(day),
         budget,
-        schedule: waveSchedule(budget),
+        lastSpawnTick: lastSpawnTick(day),
+        schedule: waveSchedule(budget, lastSpawnTick(day)),
     });
 }
 

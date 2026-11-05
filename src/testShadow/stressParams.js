@@ -4,7 +4,9 @@
 // this with TEST_MODE, so production never reads these parameters. Both give
 // the real Mutants a fixed schedule; nothing here simulates anything.
 //
-//   ?waveBudget=N  the real waveSchedule(N), for N in 0..WAVE.maxPerNight
+//   ?waveBudget=N    the real waveSchedule(N), for N in 0..WAVE.maxPerNight
+//   ?waveLastTick=T  with waveBudget, ends that schedule on tick T, for T in
+//                    WAVE.minLastTick..WAVE.lastTick. Ignored on its own.
 //   ?stressRamp=N  one mutant per tick from tick 1, for N in 1..3599
 
 import {WAVE, waveSchedule} from '../core/waves.js';
@@ -23,5 +25,7 @@ export function parseStressSchedule(search) {
     const ramp = parseCount(params.get('stressRamp'), 1, MAX_RAMP);
     if (ramp !== null) return Array.from({length: ramp}, (_, i) => i + 1);
     const budget = parseCount(params.get('waveBudget'), 0, WAVE.maxPerNight);
-    return budget === null ? null : [...waveSchedule(budget)];
+    if (budget === null) return null;
+    const lastTick = parseCount(params.get('waveLastTick'), WAVE.minLastTick, WAVE.lastTick);
+    return [...waveSchedule(budget, lastTick ?? WAVE.lastTick)];
 }

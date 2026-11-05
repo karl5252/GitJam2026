@@ -40,7 +40,7 @@ For a fair run, keep the machine awake, leave free disk space, and close other b
 - **Synthetic:** test-only spawn schedules and resources, plus mid-night rebuilding through the real `placeAt()` with an isolated open construction gate. This keeps combat going under load. It says nothing about normal construction rules or the economy.
 - **Legal:** the real planner, starting resources, construction gate and settlement, using only commands a player can issue.
 
-The nightly cap of 20 does not apply to synthetic scenarios, because they use a fixed `schedule`. Production balance is unchanged.
+The nightly cap, 20 when this was measured and 40 since TASK 015, does not apply to synthetic scenarios, because they use a fixed `schedule`.
 
 ## Domain results
 
@@ -112,7 +112,7 @@ Each `DOMElement` adds 3 scene listeners, so the TEST_MODE toggle proxy is exclu
 - This run uses **software rendering**, so GPU-side cost here says little about real hardware. A hardware-GPU run is needed before treating that part as a real problem.
 - The simulation kept real time throughout, at over 59 ticks per second even at 1000 mutants.
 
-At the real cap of 20, there is no measurable pressure. Idle and 20-mutant nights are indistinguishable: both show 33 ms frames at a similar rate, so those frames are not caused by combat.
+At the former cap of 20, there is no measurable pressure. Idle and 20-mutant nights are indistinguishable: both show 33 ms frames at a similar rate, so those frames are not caused by combat.
 
 **Inside the domain,** a CPU profile of 2000 mutants and 36 cannons shows `Mutants.snapshot()` at 31.4% of self time (`mutants.js:185`), followed by `blockerAt` at 14.7%, `Mutants.step` at 12.3% and building lookup at 10.9%. Turrets call `snapshot()` per turret per tick. The profiled script also called it once per tick itself, so that share is somewhat inflated.
 
@@ -157,6 +157,18 @@ Failure-only diagnostics now attach `boot-diagnostics.json` to any failed `boot(
 | TASK 014 first full run | `page.goto: net::ERR_NO_BUFFER_SPACE` | Before any game code |
 
 No failure reproduced in 1,189 stress boots (slowest 821 ms) or 325 stress test runs. `TIME_WAIT` sockets peaked at 862 of 16,384 ports during a full run, so port exhaustion is not the cause. The third failure shows the browser's network layer can fail on this machine. Whether the first two share that cause is unproven, although one failed module request does produce the same `data-scene` symptom. The root cause is unknown.
+
+## Wave cap of 40 (TASK 015)
+
+Real-time browser nights on the same machine, on 5 November 2026, with a Plant and two Autocannons:
+
+| Night | Ticks per second | Simulation mean ms | Render callbacks mean ms | Frames over 20 ms |
+|---|---:|---:|---:|---:|
+| 20 mutants | 59.7 | 0.033 | 0.235 | 272 of 3343 (8%) |
+| 40 mutants, full window | 59.8 | 0.033 | 0.235 | 149 of 3463 (4%) |
+| 40 mutants, ending on tick 1200 | 59.6 | 0.039 | 0.501 | 402 of 3215 (13%) |
+
+`?waveBudget=40&waveLastTick=1200` is the shortest approved window. 36 mutants were alive at the last spawn, and they destroyed the whole test base by dawn. The simulation kept real time, and render callbacks stayed under 3 ms per frame at worst. More frames exceeded 20 ms, always at the 33 ms step this machine also shows when idle, and p50 stayed at 16.7 ms. This is one run with software rendering, so that share is not a stable measurement.
 
 ## Known gaps
 

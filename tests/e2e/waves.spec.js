@@ -65,6 +65,23 @@ function waveSuite({pressWorld, pressAction}) {
         await finishNight(page);
     }
 
+    test('night 7 closes its spawn window at tick 2600, and the HUD follows', async ({page}) => {
+        await start(page);
+        for (let night = 1; night <= 6; night++) await completeNight(page);
+        await nightTo(page, 2599);
+        let s = await sample(page);
+        expect(s.wave).toMatchObject({
+            day: 7, threatLevel: 1, nightBudget: 4, accelerationBudget: 0, budget: 4,
+            lastSpawnTick: 2600, schedule: [600, 1711, 2377, 2600],
+        });
+        expect(s.waveView.text).toBe('Mutants 3 | Wave 3/4');
+
+        await stepExactly(page, 1);
+        s = await sample(page);
+        expect(s.mutants).toHaveLength(4);
+        expect(s.waveView.text).toBe('Mutants 4 | Wave 4/4');
+    });
+
     test('night 1 plans one mutant at tick 600, and the HUD shows Night only', async ({page}) => {
         const state = await start(page);
         await place(page, state, 'outpost', {col: 12, row: 8});
@@ -76,6 +93,7 @@ function waveSuite({pressWorld, pressAction}) {
         s = await sample(page);
         expect(s.wave).toEqual({
             day: 1, threatLevel: 1, autocannons: 0, nightBudget: 1, pollutionBudget: 0, defenseResponse: 0,
+            accelerationBudget: 0, lastSpawnTick: 2700,
             budget: 1, schedule: [600],
         });
         expect(s.waveProgress).toBe(0);
@@ -146,7 +164,7 @@ function waveSuite({pressWorld, pressAction}) {
         let s = await sample(page);
         expect(s.wave).toEqual({
             day: 3, threatLevel: 2, autocannons: 0, nightBudget: 2, pollutionBudget: 2, defenseResponse: 0,
-            budget: 4, schedule: [600, 1766, 2466, 2700],
+            accelerationBudget: 0, budget: 4, lastSpawnTick: 2700, schedule: [600, 1766, 2466, 2700],
         });
 
         for (const [tick, count] of [[600, 1], [1765, 1], [1766, 2], [2465, 2], [2466, 3], [2700, 4]]) {

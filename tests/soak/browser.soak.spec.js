@@ -4,7 +4,7 @@ import {boot, body, byAction, clickAction, clickWorld} from '../helpers/canvas.j
 import {hqFlow} from '../helpers/hq.js';
 import {sample} from '../helpers/qa.js';
 import {getBuildingType} from '../../src/core/buildingTypes.js';
-import {waveSchedule} from '../../src/core/waves.js';
+import {WAVE, waveSchedule} from '../../src/core/waves.js';
 import {Shift} from '../../src/core/shiftCycle.js';
 import {canonicalState, createWorld, digestOf, worldState} from './harness.js';
 
@@ -122,6 +122,65 @@ test('real time: an idle night is the reference for instrumentation cost', async
     await page.waitForTimeout(6000);
     const perf = await stopProbe(page);
     writeResult('idle', {scenario: 'idle night, 0 mutants', ...label, workload: {mutants: 0, buildings: 3}, perf});
+    expect(perf.ticksPerSecond).toBeGreaterThanOrEqual(MIN_TICKS_PER_SECOND);
+    expect(errors).toEqual([]);
+});
+
+test('real time: a defended night at the cap of 40 scheduled mutants', async ({page}) => {
+    const errors = watchErrors(page);
+    const state = await start(page, 'waveBudget=40');
+    await defendedBase(page, state);
+    const label = await beginRealTimeNight(page);
+    await waitForLateNight(page);
+    const late = await sample(page);
+    await waitForDawn(page);
+    const perf = await stopProbe(page);
+    const dawn = await sample(page);
+
+    const killed = 40 - late.mutants.length;
+    writeResult('defended-40', {
+        scenario: 'defended, waveBudget=40, Plant + 2 Autocannons', ...label,
+        workload: {scheduled: 40, killedByLateNight: killed, aliveLate: late.mutants.length, buildingsAtDawn: dawn.buildings.length},
+        perf,
+    });
+    expect(late.waveProgress).toBe(40);
+    expect(killed, 'turrets must actually kill').toBeGreaterThan(0);
+    expect(dawn.mutants).toEqual([]);
+    expect(perf.ticksPerSecond).toBeGreaterThanOrEqual(MIN_TICKS_PER_SECOND);
+    expect(errors).toEqual([]);
+});
+
+test('real time: 40 mutants in the shortest approved spawn window', async ({page}) => {
+    const errors = watchErrors(page);
+    const state = await start(page, `waveBudget=40&waveLastTick=${WAVE.minLastTick}`);
+    await defendedBase(page, state);
+    const label = await beginRealTimeNight(page);
+
+    await page.waitForFunction((tick) => window.__qa.getState().shiftCycle.elapsedNightTicks >= tick, WAVE.minLastTick, {polling: 100});
+    const compressed = await sample(page);
+    expect(compressed.wave.schedule).toEqual([...waveSchedule(40, WAVE.minLastTick)]);
+    expect(new Set(compressed.wave.schedule).size).toBe(40);
+    expect(compressed.wave.schedule.at(-1)).toBe(WAVE.minLastTick);
+    expect(compressed.waveProgress).toBe(40);
+    expect(compressed.mutantViews).toHaveLength(compressed.mutants.length);
+
+    await waitForLateNight(page);
+    const late = await sample(page);
+    await waitForDawn(page);
+    const perf = await stopProbe(page);
+    const dawn = await sample(page);
+
+    const killed = 40 - late.mutants.length;
+    writeResult('compressed-40', {
+        scenario: 'defended, 40 mutants ending on tick 1200, Plant + 2 Autocannons', ...label,
+        workload: {scheduled: 40, aliveAtLastSpawn: compressed.mutants.length, killedByLateNight: killed, aliveLate: late.mutants.length, buildingsAtDawn: dawn.buildings.length},
+        perf,
+    });
+    expect(compressed.mutants.length, 'the window must really overlap attackers').toBeGreaterThan(20);
+    expect(killed, 'turrets must actually kill').toBeGreaterThan(0);
+    expect(dawn.mutants).toEqual([]);
+    expect(dawn.mutantViews).toEqual([]);
+    expect(dawn.shiftCycle.day).toBe(2);
     expect(perf.ticksPerSecond).toBeGreaterThanOrEqual(MIN_TICKS_PER_SECOND);
     expect(errors).toEqual([]);
 });

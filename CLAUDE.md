@@ -31,7 +31,7 @@ This file provides project context, architectural constraints, and working rules
 
 **Target platforms:** Desktop browsers and mobile browsers in landscape orientation.
 
-**Current status:** TASK 014 (Efficient Test Execution) complete. No next task is approved: only work on tasks the developer explicitly assigns.
+**Current status:** TASK 015 (Combat Escalation) complete. No next task is approved: only work on tasks the developer explicitly assigns.
 
 The project was initialized from the Wee Games Starter Kit Basic. The original demo applications have been removed.
 
@@ -200,9 +200,10 @@ Avoid implementing gameplay rules directly inside Phaser scenes.
   - `calculateEmissions(buildings)` is pure and sums `pollutionPerNight` over buildings that `calculatePower` reports as `powered`. Disabled buildings and unpowered consumers emit nothing.
   - `Pollution(value = 0)` has a private value, read through `value` or `snapshot()` → `{value}`. `add(amount)` validates the amount and the resulting total as safe integers before changing anything. There is no decrease, so it never goes negative and never decays.
 - `src/core/waves.js`: pure night wave planning, with temporary graybox values in `WAVE`. No state, clock or randomness.
-  - `nightBudget = 1 + floor((night - 1) / 2)`, `pollutionBudget = 2 * (threatLevel - 1)`, `defenseResponse = min(4, floor(max(0, autocannonCount - 1) / 2))`, `budget = min(20, nightBudget + pollutionBudget + defenseResponse)`.
-  - `waveSchedule(budget)` gives strictly increasing integer ticks from 600 to 2700, with gaps that shrink through the night, so at most one mutant spawns per tick.
-  - `nightPlan({day, pollution, buildings})` returns a frozen plan `{day, threatLevel, autocannons, nightBudget, pollutionBudget, defenseResponse, budget, schedule}` holding numbers only. Every existing Autocannon counts, enabled or not, powered or not. Threat Level is derived from pollution here and stored nowhere else.
+  - `nightBudget = 1 + floor((night - 1) / 2)`, `pollutionBudget = 2 * (threatLevel - 1)`, `defenseResponse = min(4, floor(max(0, autocannonCount - 1) / 2))`, `accelerationBudget = floor(max(0, night - 6)^2 / 12)`, `budget = min(40, nightBudget + pollutionBudget + defenseResponse + accelerationBudget)`.
+  - `lastSpawnTick(night) = max(1200, 2700 - 100 * max(0, night - 6))`. Acceleration and the window depend only on the night, so pressure rises without Pollution. Nights 1 to 6 are unchanged.
+  - `waveSchedule(budget, lastTick = 2700)` gives strictly increasing integer ticks from 600 to `lastTick`, with gaps that shrink through the night, so at most one mutant spawns per tick. Final gaps that round to zero are walked back to their own ticks, and a budget that cannot fit the window throws `RangeError`.
+  - `nightPlan({day, pollution, buildings})` returns a frozen plan `{day, threatLevel, autocannons, nightBudget, pollutionBudget, defenseResponse, accelerationBudget, budget, lastSpawnTick, schedule}` holding numbers only. Every existing Autocannon counts, enabled or not, powered or not. Threat Level is derived from pollution here and stored nowhere else.
   - `waveProgress(plan, elapsedNightTicks)` counts scheduled slots reached.
 - `src/core/mutants.js`: `Mutants({cycle, placement, grid, rng, schedule, planNight})`, temporary graybox values in `MUTANT` and `TARGET_BIAS`.
   - `planNight(day)` is called once per night, on night tick 1, and the plan stays frozen until dawn. That equals sampling at END DAY: pollution only changes during settlement, construction is off at night, and no mutant exists yet. A night's emissions therefore affect the next night's plan. `plan()` returns the plan, or `null` outside a started Night. A fixed `schedule` array is used when there is no `planNight`.
@@ -240,7 +241,7 @@ Avoid implementing gameplay rules directly inside Phaser scenes.
   - `canAfford(cost)` never changes anything. It checks in a fixed order: `invalid-cost` → `insufficient-credits` → `insufficient-ap` (`EconomyFailure`).
   - `spend(cost)` deducts both resources together, or neither.
   - `restoreAp(ap)` sets AP (used at the start of each Day) and leaves Credits untouched.
-  - `adjustCredits(delta)` takes a safe integer only. It may take Credits **negative**, which is debt from nightly upkeep. Affordability is unchanged (`cost.credits <= credits`), so every purchase is rejected while in debt. Starting balances stay non-negative, and there is no bankruptcy rule yet.
+  - `adjustCredits(delta)` takes a safe integer only. It may take Credits **negative**, which is debt from nightly upkeep. Affordability is unchanged (`cost.credits <= credits`), so every purchase is rejected while in debt. Starting balances stay non-negative. Debt never ends the run: HQ destruction is the only approved Game Over.
   - `snapshot()` returns detached data.
 - `src/core/buildingPlacement.js`:
   - `footprintAt(type, cell)` centers a footprint on the pointer cell: anchor = cell − floor((size − 1) / 2). For even sizes, the pointer cell is the left/top cell of the central pair.
@@ -329,7 +330,7 @@ Avoid implementing gameplay rules directly inside Phaser scenes.
     - `update(time, delta)` calls `clock.advance(delta, stepSimulation)` then `syncShiftUi()`, and ignores Phaser's `time`.
     - `stepSimulation(tick)` counts `stepsExecuted`, calls `cycle.onTick(tick)`, then `autocannons.step()`, then `mutants.step()`. Shots and destroyed buildings are handled from that tick's results: `handleBuildingsDestroyed` removes the views, clears a stale selection and calls `refreshPower()`.
     - The RNG seed is `DEFAULT_SEED`. In TEST_MODE only, `?seed=N` overrides it.
-    - In TEST_MODE only, `?waveBudget=N` and `?stressRamp=N` (`src/testShadow/stressParams.js`) give the real `Mutants` a fixed schedule for the soak suites.
+    - In TEST_MODE only, `?waveBudget=N` (optionally with `&waveLastTick=T`) and `?stressRamp=N` (`src/testShadow/stressParams.js`) give the real `Mutants` a fixed schedule for the soak suites.
     - In TEST_MODE only, `?hq=off` is a compatibility mode for legacy suites written before HQ existed: no HQ button, no HQ rule, and END DAY is always allowed. Production ignores it.
     - In TEST_MODE only, `?mutants=off` gives the real `Mutants` an empty schedule instead of `nightPlan`. `boot(page, {mutants: false})` uses it for suites about power, economy and pollution. Combat tests must not use it, and production ignores it.
   - **TEST_MODE-only controls:** `window.__qa.sim` provides:
@@ -670,6 +671,7 @@ Complete:
 - TASK 012B: Combat Soak & Performance Baseline
 - TASK 013: Headquarters, Defeat & Game Over
 - TASK 014: Efficient Test Execution
+- TASK 015: Combat Escalation
 
 Later, not yet assigned:
 
@@ -678,8 +680,9 @@ Later, not yet assigned:
 
 Known balance issues, accepted for now and not final behaviour (see the GDD):
 
-- Corner camping: an HQ in a corner with one Autocannon survived all scripted runs.
-- No-income turtling: a defense-only build with no Factory survived 20 scripted nights.
+- Corner advantage: corners stay stronger than the centre. Since TASK 015, a corner HQ with one Autocannon falls around Night 19 in scripted runs.
+- Centre industry: scripted industrial bases in the centre can do worse than defensive turtles. The opening has no cannon on Night 1, HQ damage is permanent, and losing a Plant silences every cannon. Only real playtests can judge industrial viability.
+- Starting budget: Power Plant + Factory + Autocannon costs 1150 Credits against a 1000-Credit start. Real gameplay will determine whether this is a meaningful opening decision or an unfair trap.
 
 Advanced systems, additional content, and visual polish must not be introduced ahead of their assigned tasks.
 

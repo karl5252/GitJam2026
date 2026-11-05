@@ -1,7 +1,8 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {
-    WAVE, defenseResponse, nightBudget, nightPlan, pollutionBudget, waveBudget, waveProgress, waveSchedule,
+    WAVE, accelerationBudget, defenseResponse, lastSpawnTick, nightBudget, nightPlan, pollutionBudget, waveBudget,
+    waveProgress, waveSchedule,
 } from '../../src/core/waves.js';
 import {Autocannons} from '../../src/core/autocannons.js';
 import {BuildingPlacement} from '../../src/core/buildingPlacement.js';
@@ -13,6 +14,7 @@ import {SeededRandom} from '../../src/core/seededRandom.js';
 import {settleNight} from '../../src/core/settlement.js';
 import {Shift, ShiftCycle} from '../../src/core/shiftCycle.js';
 import {SimulationClock} from '../../src/core/simulationClock.js';
+import {createWorld} from '../soak/harness.js';
 
 const cannons = (n) => Array.from({length: n}, (_, i) => ({id: `autocannon-${i + 1}`, type: 'autocannon'}));
 
@@ -20,8 +22,9 @@ const cannons = (n) => Array.from({length: n}, (_, i) => ({id: `autocannon-${i +
 
 test('wave values are the approved ones, and frozen', () => {
     assert.deepEqual(WAVE, {
-        firstTick: 600, lastTick: 2700, nightsPerExtra: 2, perThreatLevel: 2,
-        cannonsPerResponse: 2, maxResponse: 4, maxPerNight: 20,
+        firstTick: 600, lastTick: 2700, minLastTick: 1200, windowShrinkPerNight: 100,
+        nightsPerExtra: 2, perThreatLevel: 2, cannonsPerResponse: 2, maxResponse: 4,
+        accelerationFromNight: 6, accelerationDivisor: 12, maxPerNight: 40,
     });
     assert.ok(Object.isFrozen(WAVE));
 });
@@ -42,11 +45,11 @@ test('defense response steps at 3, 5, 7 and 9 cannons, capped at 4', () => {
 
 test('the approved wave table, by night, threat and cannons', () => {
     const table = {
-        0: {1: [1, 3, 5, 7], 3: [2, 4, 6, 8], 5: [3, 5, 7, 9], 10: [5, 7, 9, 11], 20: [10, 12, 14, 16]},
-        1: {1: [1, 3, 5, 7], 3: [2, 4, 6, 8], 5: [3, 5, 7, 9], 10: [5, 7, 9, 11], 20: [10, 12, 14, 16]},
-        3: {1: [2, 4, 6, 8], 3: [3, 5, 7, 9], 5: [4, 6, 8, 10], 10: [6, 8, 10, 12], 20: [11, 13, 15, 17]},
-        5: {1: [3, 5, 7, 9], 3: [4, 6, 8, 10], 5: [5, 7, 9, 11], 10: [7, 9, 11, 13], 20: [12, 14, 16, 18]},
-        9: {1: [5, 7, 9, 11], 3: [6, 8, 10, 12], 5: [7, 9, 11, 13], 10: [9, 11, 13, 15], 20: [14, 16, 18, 20]},
+        0: {1: [1, 3, 5, 7], 3: [2, 4, 6, 8], 5: [3, 5, 7, 9], 10: [6, 8, 10, 12], 20: [26, 28, 30, 32]},
+        1: {1: [1, 3, 5, 7], 3: [2, 4, 6, 8], 5: [3, 5, 7, 9], 10: [6, 8, 10, 12], 20: [26, 28, 30, 32]},
+        3: {1: [2, 4, 6, 8], 3: [3, 5, 7, 9], 5: [4, 6, 8, 10], 10: [7, 9, 11, 13], 20: [27, 29, 31, 33]},
+        5: {1: [3, 5, 7, 9], 3: [4, 6, 8, 10], 5: [5, 7, 9, 11], 10: [8, 10, 12, 14], 20: [28, 30, 32, 34]},
+        9: {1: [5, 7, 9, 11], 3: [6, 8, 10, 12], 5: [7, 9, 11, 13], 10: [10, 12, 14, 16], 20: [30, 32, 34, 36]},
     };
     for (const [count, nights] of Object.entries(table)) {
         for (const [night, row] of Object.entries(nights)) {
@@ -60,12 +63,44 @@ test('night 2 at Threat 1 is one mutant; night 3 is two', () => {
     assert.equal(waveBudget(3, 1, 0), 2);
 });
 
-test('the total cap of 20 holds, and is reached on the expected nights', () => {
-    const firstCapped = (count) => Array.from({length: 60}, (_, i) => i + 1).find((night) => waveBudget(night, 4, count) === 20);
-    assert.equal(firstCapped(0), 27);
-    assert.equal(firstCapped(9), 19);
-    assert.equal(waveBudget(18, 4, 9), 19);
-    assert.equal(waveBudget(1000, 4, 1000), 20);
+test('the total cap of 40 holds, and is reached on the expected nights', () => {
+    const firstCapped = (count) => Array.from({length: 60}, (_, i) => i + 1).find((night) => waveBudget(night, 4, count) === 40);
+    assert.equal(firstCapped(0), 23);
+    assert.equal(firstCapped(9), 22);
+    assert.equal(waveBudget(21, 4, 9), 39);
+    assert.equal(waveBudget(1000, 4, 1000), 40);
+});
+
+test('acceleration starts after night 6 and grows with the square of the nights since', () => {
+    const expected = [[1, 0], [6, 0], [7, 0], [9, 0], [10, 1], [11, 2], [12, 3], [15, 6], [18, 12], [20, 16], [25, 30]];
+    for (const [night, budget] of expected) assert.equal(accelerationBudget(night), budget, `night ${night}`);
+});
+
+test('the spawn window closes 100 ticks earlier each night after 6, down to tick 1200', () => {
+    const expected = [[1, 2700], [6, 2700], [7, 2600], [10, 2300], [20, 1300], [21, 1200], [22, 1200], [1000, 1200]];
+    for (const [night, tick] of expected) assert.equal(lastSpawnTick(night), tick, `night ${night}`);
+});
+
+test('nights 1 to 6 keep the earlier budgets and the full spawn window', () => {
+    for (let night = 1; night <= 6; night++) {
+        for (let threat = 1; threat <= 4; threat++) {
+            for (const count of [0, 3, 9]) {
+                const plan = nightPlan({day: night, pollution: [0, 25, 50, 100][threat - 1], buildings: cannons(count)});
+                const earlier = nightBudget(night) + pollutionBudget(threat) + defenseResponse(count);
+                assert.equal(plan.budget, earlier);
+                assert.deepEqual(plan.schedule, waveSchedule(earlier));
+            }
+        }
+    }
+});
+
+test('night-based pressure does not need Pollution', () => {
+    const quiet = (night) => nightPlan({day: night, pollution: 0, buildings: []});
+    assert.deepEqual([quiet(20).budget, quiet(20).lastSpawnTick], [26, 1300]);
+    assert.deepEqual([quiet(23).budget, quiet(23).lastSpawnTick], [36, 1200]);
+    const dirty = nightPlan({day: 20, pollution: 100, buildings: []});
+    assert.equal(dirty.budget, quiet(20).budget + 6);
+    assert.equal(dirty.lastSpawnTick, quiet(20).lastSpawnTick);
 });
 
 test('pressure never falls as night, threat or cannons rise', () => {
@@ -73,7 +108,8 @@ test('pressure never falls as night, threat or cannons rise', () => {
         for (let threat = 1; threat <= 4; threat++) {
             for (let count = 0; count <= 12; count++) {
                 const budget = waveBudget(night, threat, count);
-                assert.ok(budget >= 1 && budget <= 20);
+                assert.ok(budget >= 1 && budget <= WAVE.maxPerNight);
+                assert.ok(lastSpawnTick(night + 1) <= lastSpawnTick(night));
                 assert.ok(waveBudget(night + 1, threat, count) >= budget);
                 if (threat < 4) assert.ok(waveBudget(night, threat + 1, count) >= budget);
                 assert.ok(waveBudget(night, threat, count + 1) >= budget);
@@ -86,10 +122,15 @@ test('invalid inputs are rejected', () => {
     for (const bad of [0, -1, 1.5, NaN, Infinity, '2', null]) {
         assert.throws(() => nightBudget(bad), RangeError, String(bad));
         assert.throws(() => pollutionBudget(bad), RangeError, String(bad));
+        assert.throws(() => accelerationBudget(bad), RangeError, String(bad));
+        assert.throws(() => lastSpawnTick(bad), RangeError, String(bad));
     }
     for (const bad of [-1, 1.5, NaN, '2', null]) {
         assert.throws(() => defenseResponse(bad), RangeError, String(bad));
         assert.throws(() => waveSchedule(bad), RangeError, String(bad));
+    }
+    for (const bad of [599, 1.5, NaN, '2700', null]) {
+        assert.throws(() => waveSchedule(2, bad), RangeError, String(bad));
     }
 });
 
@@ -105,6 +146,46 @@ test('exact schedules for sample budgets', () => {
     assert.deepEqual(waveSchedule(8), [600, 1157, 1628, 2014, 2314, 2528, 2657, 2700]);
 });
 
+test('a shorter window ends on its own last tick', () => {
+    assert.deepEqual(waveSchedule(0, 1200), []);
+    assert.deepEqual(waveSchedule(1, 1200), [600]);
+    assert.deepEqual(waveSchedule(2, 1200), [600, 1200]);
+    assert.deepEqual(waveSchedule(4, 2600), [600, 1711, 2377, 2600]);
+});
+
+test('every budget fits every night window, one spawn per tick', () => {
+    for (let night = 1; night <= 30; night++) {
+        const lastTick = lastSpawnTick(night);
+        for (let budget = 2; budget <= WAVE.maxPerNight; budget++) {
+            const schedule = waveSchedule(budget, lastTick);
+            const label = `night ${night}, budget ${budget}`;
+            assert.equal(schedule.length, budget, label);
+            assert.equal(schedule[0], WAVE.firstTick, label);
+            assert.equal(schedule.at(-1), lastTick, label);
+            assert.ok(schedule.every((tick, i) => Number.isInteger(tick) && (i === 0 || tick > schedule[i - 1])), label);
+        }
+    }
+});
+
+test('the tightest approved wave keeps a tick for every spawn', () => {
+    assert.deepEqual(waveSchedule(40, 1200).slice(-6), [1190, 1193, 1196, 1198, 1199, 1200]);
+});
+
+test('crowded spawns are walked back to their own ticks, without moving the first or last', () => {
+    const packed = Array.from({length: 40}, (_, i) => 600 + i);
+    assert.deepEqual(waveSchedule(40, 639), packed);
+    const tight = waveSchedule(40, 660);
+    assert.deepEqual([tight[0], tight.at(-1)], [600, 660]);
+    assert.ok(tight.every((tick, i) => i === 0 || tick > tight[i - 1]));
+    assert.deepEqual(waveSchedule(2, 601), [600, 601]);
+});
+
+test('a budget too large for its window is refused, not silently shortened', () => {
+    assert.throws(() => waveSchedule(5, 603), /does not fit/);
+    assert.throws(() => waveSchedule(3, 601), /does not fit/);
+    assert.equal(waveSchedule(1, 600).length, 1);
+});
+
 test('every budget gives strictly increasing ticks inside the window, one per tick', () => {
     for (let budget = 1; budget <= WAVE.maxPerNight; budget++) {
         const schedule = waveSchedule(budget);
@@ -115,15 +196,15 @@ test('every budget gives strictly increasing ticks inside the window, one per ti
     }
 });
 
-test('gaps never widen, and the smallest gap at the cap is 6 ticks', () => {
+test('gaps never widen, and the smallest gap of a 20-mutant wave is 6 ticks', () => {
     for (let budget = 3; budget <= WAVE.maxPerNight; budget++) {
         const schedule = waveSchedule(budget);
         const gaps = schedule.slice(1).map((tick, i) => tick - schedule[i]);
         // floor() can shift a gap by one tick either way.
         assert.ok(gaps.every((gap, i) => i === 0 || gap <= gaps[i - 1] + 1), `budget ${budget}: ${gaps}`);
     }
-    const capped = waveSchedule(20);
-    assert.equal(Math.min(...capped.slice(1).map((tick, i) => tick - capped[i])), 6);
+    const twenty = waveSchedule(20);
+    assert.equal(Math.min(...twenty.slice(1).map((tick, i) => tick - twenty[i])), 6);
 });
 
 test('large waves are quiet early and strongest late', () => {
@@ -139,8 +220,19 @@ test('large waves are quiet early and strongest late', () => {
 test('a plan reports every term of the formula', () => {
     assert.deepEqual(nightPlan({day: 5, pollution: 60, buildings: cannons(3)}), {
         day: 5, threatLevel: 3, autocannons: 3, nightBudget: 3, pollutionBudget: 4, defenseResponse: 1,
-        budget: 8, schedule: [...waveSchedule(8)],
+        accelerationBudget: 0, budget: 8, lastSpawnTick: 2700, schedule: [...waveSchedule(8)],
     });
+});
+
+test('a late plan uses the accelerated budget and its shorter window', () => {
+    const plan = nightPlan({day: 20, pollution: 100, buildings: cannons(3)});
+    assert.deepEqual(
+        [plan.nightBudget, plan.pollutionBudget, plan.defenseResponse, plan.accelerationBudget, plan.budget, plan.lastSpawnTick],
+        [10, 6, 1, 16, 33, 1300],
+    );
+    assert.deepEqual(plan.schedule, waveSchedule(33, 1300));
+    assert.equal(plan.schedule.length, 33);
+    assert.ok(Object.isFrozen(plan.schedule));
 });
 
 test('Threat Level boundaries change the plan at pollution 25, 50 and 100', () => {
@@ -433,6 +525,57 @@ function playThree(advance, seed = 731) {
         trail.push({buildings: w.placement.buildings(), report: w.reports.at(-1), rng: w.rng.snapshot()});
     }
     return {trail, spawnTicks: spawnTicks(w), plans: w.planCalls, shots: w.log.flatMap((l) => l.shots), economy: w.economy.snapshot()};
+}
+
+test('a late night spawns on exactly the planned ticks, and the same seed repeats them', () => {
+    const late = () => {
+        const w = world({pollution: 100});
+        for (let night = 1; night < 21; night++) { w.cycle.endDay(); w.step(3600); }
+        w.log.length = 0;
+        w.cycle.endDay();
+        w.step(1300);
+        return {plan: w.mutants.plan(), ticks: spawnTicks(w), mutants: w.mutants.snapshot()};
+    };
+    const first = late();
+    assert.equal(first.plan.lastSpawnTick, 1200);
+    assert.deepEqual(first.ticks, [...first.plan.schedule]);
+    assert.equal(first.ticks.length, first.plan.budget);
+    assert.deepEqual(late(), first);
+});
+
+/**
+ * A no-income turtle: all 1000 Credits on two Autocannons and a Plant, with no
+ * further commands. Provisional balance target, not final gameplay: it should
+ * hold for many nights, then fall to combat at any tested HQ position.
+ */
+const TURTLES = {
+    centre: {hq: [12, 8], cannons: [[10, 6], [14, 6]], plant: [12, 4]},
+    'north-west corner': {hq: [1, 1], cannons: [[3, 3], [1, 3]], plant: [1, 5]},
+    'south-east corner': {hq: [22, 14], cannons: [[20, 12], [22, 12]], plant: [22, 10]},
+};
+
+for (const [name, layout] of Object.entries(TURTLES)) {
+    test(`a no-income turtle eventually falls to combat: ${name}`, () => {
+        for (const seed of [1, 98]) {
+            const w = createWorld({seed, requireHq: true});
+            assert.equal(w.place('hq', ...layout.hq).ok, true);
+            assert.equal(w.place('autocannon', ...layout.cannons[0]).ok, true);
+            let shots = 0;
+            const tick = (t) => { shots += w.tick(t).defense.shots.length; };
+            for (let night = 1; night <= 25 && w.cycle.shift === Shift.DAY; night++) {
+                if (night === 2) {
+                    assert.equal(w.place('powerPlant', ...layout.plant).ok, true);
+                    assert.equal(w.place('autocannon', ...layout.cannons[1]).ok, true);
+                }
+                w.cycle.endDay();
+                while (w.cycle.shift === Shift.NIGHT) w.cycle.stepTicks(240, tick);
+            }
+            assert.equal(w.cycle.shift, Shift.DEFEATED, `seed ${seed} should fall by night 25`);
+            assert.ok(w.cycle.defeatReport.day >= 15, `seed ${seed} fell on night ${w.cycle.defeatReport.day}`);
+            assert.ok(shots > 500, `seed ${seed} only fired ${shots} shots`);
+            assert.equal(w.economy.credits, 0); // never earned or spent anything after Day 2
+        }
+    });
 }
 
 test('the same seed and state give identical waves', () => {
