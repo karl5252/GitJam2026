@@ -1,0 +1,146 @@
+{
+  "format": "papi-layout",
+  "version": 1,
+  "grid": {
+    "cols": 24,
+    "rows": 16
+  },
+  "buildings": [
+    {
+      "type": "hq",
+      "col": 2,
+      "row": 11,
+      "enabled": true
+    },
+    {
+      "type": "powerPlant",
+      "col": 6,
+      "row": 7,
+      "enabled": true
+    },
+    {
+      "type": "autocannon",
+      "col": 9,
+      "row": 14,
+      "enabled": true
+    },
+    {
+      "type": "factory",
+      "col": 6,
+      "row": 13,
+      "enabled": true
+    },
+    {
+      "type": "autocannon",
+      "col": 0,
+      "row": 9,
+      "enabled": true
+    },
+    {
+      "type": "autocannon",
+      "col": 9,
+      "row": 6,
+      "enabled": true
+    },
+    {
+      "type": "powerPlant",
+      "col": 6,
+      "row": 10,
+      "enabled": true
+    },
+    {
+      "type": "autocannon",
+      "col": 0,
+      "row": 15,
+      "enabled": true
+    },
+    {
+      "type": "factory",
+      "col": 3,
+      "row": 7,
+      "enabled": true
+    }
+  ],
+  "roads": [
+    {
+      "col": 1,
+      "row": 10,
+      "kind": "hq-ring"
+    },
+    {
+      "col": 2,
+      "row": 10,
+      "kind": "hq-ring"
+    },
+    {
+      "col": 3,
+      "row": 10,
+      "kind": "hq-ring"
+    },
+    {
+      "col": 4,
+      "row": 10,
+      "kind": "hq-ring"
+    },
+    {
+      "col": 5,
+      "row": 10,
+      "kind": "hq-ring"
+    },
+    {
+      "col": 1,
+      "row": 11,
+      "kind": "hq-ring"
+    },
+    {
+      "col": 5,
+      "row": 11,
+      "kind": "hq-ring"
+    },
+    {
+      "col": 1,
+      "row": 12,
+      "kind": "hq-ring"
+    },
+    {
+      "col": 5,
+      "row": 12,
+      "kind": "hq-ring"
+    },
+    {
+      "col": 1,
+      "row": 13,
+      "kind": "hq-ring"
+    },
+    {
+      "col": 5,
+      "row": 13,
+      "kind": "hq-ring"
+    },
+    {
+      "col": 1,
+      "row": 14,
+      "kind": "hq-ring"
+    },
+    {
+      "col": 2,
+      "row": 14,
+      "kind": "hq-ring"
+    },
+    {
+      "col": 3,
+      "row": 14,
+      "kind": "hq-ring"
+    },
+    {
+      "col": 4,
+      "row": 14,
+      "kind": "hq-ring"
+    },
+    {
+      "col": 5,
+      "row": 14,
+      "kind": "hq-ring"
+    }
+  ]
+}
