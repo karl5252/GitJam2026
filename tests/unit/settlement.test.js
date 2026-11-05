@@ -121,7 +121,7 @@ test('settleNight without power: factory idle, outpost upkeep still charged', ()
 });
 
 test('settleNight with no buildings still reports a zero night', () => {
-    const economy = new Economy();
+    const economy = new Economy({credits: 1000, ap: 5});
     const report = settleNight({day: 4, buildings: [], economy, pollution: new Pollution()});
     assert.deepEqual(report, {
         day: 4, gross: 0, upkeep: 0, net: 0, creditsBefore: 1000, creditsAfter: 1000, counts: ZERO_COUNTS,
@@ -132,7 +132,7 @@ test('settleNight with no buildings still reports a zero night', () => {
 });
 
 test('reports are frozen and detached from domain state', () => {
-    const economy = new Economy();
+    const economy = new Economy({credits: 1000, ap: 5});
     const buildings = [...b('powerPlant'), ...b('factory')];
     const report = settleNight({day: 1, buildings, economy, pollution: new Pollution()});
     assert.ok(Object.isFrozen(report));

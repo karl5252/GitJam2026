@@ -10,7 +10,7 @@ const FRAME = 1000 / 60;
 
 function setup() {
     const clock = new SimulationClock();
-    const economy = new Economy();
+    const economy = new Economy({credits: 1000, ap: 5}); // fixed for arithmetic, not the starting budget
     const cycle = new ShiftCycle({clock, economy});
     const grid = new Grid({cols: 24, rows: 16, tileSize: 32, originX: 256, originY: 104});
     const placement = new BuildingPlacement(grid, economy, {isConstructionAllowed: () => cycle.isConstructionAllowed});

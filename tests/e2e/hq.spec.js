@@ -2,6 +2,9 @@ import {test, expect} from '@playwright/test';
 import {byAction, clickAction, clickWorld, tapAction, tapWorld} from '../helpers/canvas.js';
 import {cellCenter, hqFlow, qaSim} from '../helpers/hq.js';
 import {sample} from '../helpers/qa.js';
+import {STARTING_RESOURCES} from '../../src/core/economy.js';
+
+const START = STARTING_RESOURCES.credits;
 
 /**
  * The real HQ-first flow, through real input: HQ placed from the build menu,
@@ -78,7 +81,7 @@ function hqSuite(input) {
         const s = await sample(page);
         expect(s.buildings).toEqual([{id: 'hq-1', type: 'hq', col: 11, row: 7, width: 3, height: 3, enabled: true, hp: 600}]);
         expect(s.buildingViews).toHaveLength(1);
-        expect(s.resources).toEqual({credits: 1000, ap: 5});
+        expect(s.resources).toEqual({credits: START, ap: 5});
         expect(s.menuState).toEqual({hq: 'built', outpost: 'available', factory: 'available', powerPlant: 'available', autocannon: 'available'});
         expect(s.menuLabels.hq).toBe('HQ 3x3\nBUILT');
         expect(s.placement.selectedType).toBeNull();

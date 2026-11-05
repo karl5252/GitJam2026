@@ -2,6 +2,9 @@ import {test, expect} from '@playwright/test';
 import {body, byAction, clickAction, clickWorld, tapAction, tapWorld} from '../helpers/canvas.js';
 import {cellCenter, hqFlow, qaSim} from '../helpers/hq.js';
 import {sample} from '../helpers/qa.js';
+import {STARTING_RESOURCES} from '../../src/core/economy.js';
+
+const START = STARTING_RESOURCES.credits;
 
 /**
  * Defeat and restart on the real HQ-first flow. waveBudget=20 is the existing
@@ -105,7 +108,7 @@ function gameOverSuite(input) {
         s = await sample(page);
         expect(s.buildings).toEqual([]);
         expect(s.grid.occupants).toEqual([]);
-        expect(s.resources).toEqual({credits: 1000, ap: 5});
+        expect(s.resources).toEqual({credits: START, ap: 5});
         expect(s.pollution).toMatchObject({value: 0, threatLevel: 1});
         expect(s.shiftCycle).toMatchObject({day: 1, shift: 'day'});
         expect(s.settlement).toBeNull();

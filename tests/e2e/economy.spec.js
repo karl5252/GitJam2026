@@ -1,6 +1,7 @@
 import {test, expect} from '@playwright/test';
 import {boot, body, clickAction, clickWorld, tapAction, tapWorld, worldToScreen} from '../helpers/canvas.js';
 import {sample} from '../helpers/qa.js';
+import {STARTING_RESOURCES} from '../../src/core/economy.js';
 
 /**
  * Credits + AP through real canvas input. HUD assertions read the actual
@@ -8,6 +9,7 @@ import {sample} from '../helpers/qa.js';
  */
 
 const INVALID_COLOR = 0xe53935;
+const START = STARTING_RESOURCES.credits;
 
 const cellCenter = (grid, col, row) => ({
     x: grid.originX + (col + 0.5) * grid.tileSize,
@@ -58,8 +60,8 @@ function economySuite({pressWorld, pressAction}) {
 
     test('HUD shows starting balances and buttons show costs', async ({page}) => {
         const state = await start(page);
-        expect(state.resources).toEqual({credits: 1000, ap: 5});
-        expect(state.hudView).toEqual({visible: true, text: 'Credits: 1000   AP: 5'});
+        expect(state.resources).toEqual({credits: 1250, ap: 5});
+        expect(state.hudView).toEqual({visible: true, text: 'Credits: 1250   AP: 5'});
         expect(state.menuLabels).toEqual({
             outpost: 'Outpost 1x1\n100c · 1 AP',
             factory: 'Factory 3x3\n400c · 1 AP',
@@ -72,22 +74,22 @@ function economySuite({pressWorld, pressAction}) {
         const state = await start(page);
         await choose(page, 'outpost');
         await placeOk(page, state, 2, 2, 1);
-        await expectResources(page, {credits: 900, ap: 4});
+        await expectResources(page, {credits: START - 100, ap: 4});
 
         await choose(page, 'factory');
         await placeOk(page, state, 10, 8, 2);
-        await expectResources(page, {credits: 500, ap: 3});
+        await expectResources(page, {credits: START - 500, ap: 3});
     });
 
     test('overlap and out-of-bounds attempts do not deduct credits or AP', async ({page}) => {
         const state = await start(page);
         await choose(page, 'factory');
         await placeOk(page, state, 10, 8, 1);
-        await expectResources(page, {credits: 600, ap: 4});
+        await expectResources(page, {credits: START - 400, ap: 4});
 
         await expectRejected(page, state, 11, 9, 'occupied');
         await expectRejected(page, state, 0, 5, 'out-of-bounds');
-        await expectResources(page, {credits: 600, ap: 4});
+        await expectResources(page, {credits: START - 400, ap: 4});
     });
 
     test('unaffordable factory on free cells: invalid preview, rejected, nothing deducted', async ({page}) => {
@@ -95,7 +97,8 @@ function economySuite({pressWorld, pressAction}) {
         await choose(page, 'factory');
         await placeOk(page, state, 3, 3, 1);
         await placeOk(page, state, 8, 3, 2);
-        await expectResources(page, {credits: 200, ap: 3});
+        await placeOk(page, state, 13, 3, 3); // three Factories leave too little for a fourth
+        await expectResources(page, {credits: START - 1200, ap: 2});
 
         await expectRejected(page, state, 15, 10, 'insufficient-credits');
         const after = await sample(page);
@@ -104,17 +107,17 @@ function economySuite({pressWorld, pressAction}) {
         const occupied = after.grid.occupants.some((o) =>
             col < o.col + o.width && o.col < col + 3 && row < o.row + o.height && o.row < row + 3);
         expect(occupied).toBe(false);
-        await expectResources(page, {credits: 200, ap: 3});
+        await expectResources(page, {credits: START - 1200, ap: 2});
     });
 
     test('out of AP: sixth outpost is rejected with no changes', async ({page}) => {
         const state = await start(page);
         await choose(page, 'outpost');
         for (let i = 0; i < 5; i++) await placeOk(page, state, 1 + i * 2, 1, i + 1);
-        await expectResources(page, {credits: 500, ap: 0});
+        await expectResources(page, {credits: START - 500, ap: 0});
 
         await expectRejected(page, state, 12, 8, 'insufficient-ap');
-        await expectResources(page, {credits: 500, ap: 0});
+        await expectResources(page, {credits: START - 500, ap: 0});
     });
 }
 
@@ -127,7 +130,8 @@ test.describe('desktop mouse', () => {
         await clickAction(page, 'build-factory');
         await clickWorld(page, cellCenter(state.grid, 3, 3), state);
         await clickWorld(page, cellCenter(state.grid, 8, 3), state);
-        await expectResources(page, {credits: 200, ap: 3});
+        await clickWorld(page, cellCenter(state.grid, 13, 3), state);
+        await expectResources(page, {credits: START - 1200, ap: 2});
 
         const p = await worldToScreen(page, cellCenter(state.grid, 15, 10), state);
         await page.mouse.move(p.x, p.y);
@@ -135,8 +139,8 @@ test.describe('desktop mouse', () => {
         const s = await sample(page);
         expect(s.placement.preview.footprint).toEqual({col: 14, row: 9, width: 3, height: 3});
         expect(s.previewView).toMatchObject({visible: true, fillColor: INVALID_COLOR, strokeColor: INVALID_COLOR});
-        expect(s.buildings.length).toBe(2);
-        await expectResources(page, {credits: 200, ap: 3});
+        expect(s.buildings.length).toBe(3);
+        await expectResources(page, {credits: START - 1200, ap: 2});
     });
 });
 

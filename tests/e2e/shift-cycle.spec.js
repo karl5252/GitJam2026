@@ -2,6 +2,9 @@ import {test, expect} from '@playwright/test';
 import {boot, body, byAction, clickAction, clickWorld, tapAction, tapWorld} from '../helpers/canvas.js';
 import {hqFlow} from '../helpers/hq.js';
 import {sample} from '../helpers/qa.js';
+import {STARTING_RESOURCES} from '../../src/core/economy.js';
+
+const START = STARTING_RESOURCES.credits;
 
 /**
  * Day -> Night -> Day through real END DAY presses. Nights are completed
@@ -114,7 +117,7 @@ function shiftSuite(input) {
         await pressWorld(page, cellCenter(state.grid, 10, 8), state);
         await expect.poll(async () => (await sample(page)).buildings.length).toBe(2);
         const day1 = await sample(page);
-        expect(day1.resources).toEqual({credits: 600, ap: 4});
+        expect(day1.resources).toEqual({credits: START - 400, ap: 4});
 
         await endDay(page);
         await qaSim(page, 'pause');
@@ -129,9 +132,9 @@ function shiftSuite(input) {
         s = await expectDayUi(page, 2);
         expect(s.simulation).toMatchObject({tick: 3600, stepsExecuted: 3600, paused: true});
         // Credits carry over. A Factory needs 40 power and HQ only gives 20, so
-        // without a Power Plant it earns nothing and Credits stay 600.
-        expect(s.resources).toEqual({credits: 600, ap: 5});
-        expect(s.hudView.text).toBe('Credits: 600   AP: 5');
+        // without a Power Plant it earns nothing and Credits stay the same.
+        expect(s.resources).toEqual({credits: START - 400, ap: 5});
+        expect(s.hudView.text).toBe(`Credits: ${START - 400}   AP: 5`);
         expect(s.buildings).toEqual(day1.buildings);
         expect(s.grid).toEqual(day1.grid);
         expect(s.buildingViews).toEqual(day1.buildingViews);
@@ -160,7 +163,7 @@ function shiftSuite(input) {
         await pressAction(page, 'build-outpost');
         await pressWorld(page, cellCenter(state.grid, 4, 4), state);
         await expect.poll(async () => (await sample(page)).buildings.length).toBe(2);
-        expect((await sample(page)).resources).toEqual({credits: 900, ap: 4});
+        expect((await sample(page)).resources).toEqual({credits: START - 100, ap: 4});
     });
 }
 

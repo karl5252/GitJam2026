@@ -2,6 +2,9 @@ import {test, expect} from '@playwright/test';
 import {boot, body, byAction, clickAction, clickWorld, tapAction, tapWorld} from '../helpers/canvas.js';
 import {hqFlow} from '../helpers/hq.js';
 import {sample} from '../helpers/qa.js';
+import {STARTING_RESOURCES} from '../../src/core/economy.js';
+
+const START = STARTING_RESOURCES.credits;
 
 /**
  * Pollution through real input: buildings placed on the canvas, the real END
@@ -139,7 +142,7 @@ function pollutionSuite(input) {
 
         await completeNight(page);
         const s = await sample(page);
-        expect(s.resources).toEqual({credits: 100 + 150, ap: 5});
+        expect(s.resources).toEqual({credits: START - 900 + 150, ap: 5});
         expect(s.buildings).toEqual(before.buildings);
         expect(s.grid).toEqual(before.grid);
         expect(s.power.status).toBe('normal');

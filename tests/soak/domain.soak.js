@@ -133,8 +133,10 @@ const SCENARIOS = [
     // Scripted openings split into two groups. On seed 98 the base survives all 20
     // nights and fights; on seed 1 its Plant falls early and it collapses. Seed 731
     // is also in the fragile group, so neither scenario uses the default seed.
+    // The collapse needs the tighter 1000-Credit opening, so it states that budget:
+    // at the 1250-Credit start, seed 1 survives too.
     {name: 'legal-survives-20-nights', workload: 'legal', nights: 20, strategy: 'steady', seed: 98, expect: ['shots', 'kills', 'attacks'], atLeast: {shots: 500, kills: 100}},
-    {name: 'legal-collapses-20-nights', workload: 'legal', nights: 20, strategy: 'steady', seed: 1, expect: ['attacks', 'destroyed']},
+    {name: 'legal-collapses-20-nights', workload: 'legal', nights: 20, strategy: 'steady', seed: 1, resources: {credits: 1000, ap: 5}, expect: ['attacks', 'destroyed']},
     {name: 'legal-no-defense-20-nights', workload: 'legal', nights: 20, strategy: 'none', expect: ['attacks', 'destroyed']},
     {name: 'legal-hq-survives-20-nights', workload: 'legal', hq: true, nights: 20, strategy: 'steady', seed: 98, expect: ['shots', 'kills', 'attacks'], atLeast: {shots: 500, kills: 100}},
     {name: 'legal-hq-undefended-defeat', workload: 'legal', hq: true, nights: 20, strategy: 'none', expect: ['attacks', 'destroyed', 'defeats']},
@@ -151,7 +153,7 @@ async function runScenario(scenario, {seed, driver}) {
     const world = createWorld({
         seed,
         schedule: isSynthetic ? Array.from({length: scenario.mutants}, (_, i) => i + 1) : null,
-        resources: isSynthetic ? SYNTHETIC_RESOURCES : undefined,
+        resources: isSynthetic ? SYNTHETIC_RESOURCES : scenario.resources,
         openConstruction: isSynthetic,
         requireHq: Boolean(scenario.hq),
     });

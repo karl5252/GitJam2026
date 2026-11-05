@@ -237,7 +237,7 @@ Avoid implementing gameplay rules directly inside Phaser scenes.
     Any throw leaves Credits and pollution unchanged. It returns a frozen report `{day, gross, upkeep, net, creditsBefore, creditsAfter, counts, power, pollution: {before, emitted, after, threatLevel}}`, where `day` is the day whose night completed. The power state used is the one at the end of the night, for both income and emissions.
   - It never touches AP, buildings, enabled flags or the grid.
 - `src/core/economy.js`:
-  - `Economy({credits, ap})` defaults to `STARTING_RESOURCES` (1000 / 5). Balances are private, read through getters.
+  - `Economy({credits, ap})` defaults to `STARTING_RESOURCES` (1250 / 5). Balances are private, read through getters.
   - `canAfford(cost)` never changes anything. It checks in a fixed order: `invalid-cost` → `insufficient-credits` → `insufficient-ap` (`EconomyFailure`).
   - `spend(cost)` deducts both resources together, or neither.
   - `restoreAp(ap)` sets AP (used at the start of each Day) and leaves Credits untouched.
@@ -685,8 +685,8 @@ Later, not yet assigned:
 Known balance issues, accepted for now and not final behaviour (see the GDD):
 
 - Corner advantage: corners stay stronger than the centre. Since TASK 015, a corner HQ with one Autocannon falls around Night 19 in scripted runs.
-- Centre industry: scripted industrial bases in the centre can do worse than defensive turtles. The opening has no cannon on Night 1, HQ damage is permanent, and losing a Plant silences every cannon. Only real playtests can judge industrial viability.
-- Starting budget: Power Plant + Factory + Autocannon costs 1150 Credits against a 1000-Credit start. Real gameplay will determine whether this is a meaningful opening decision or an unfair trap.
+- Centre industry: at 1000 Credits, scripted industrial bases in the centre could do worse than defensive turtles. At 1250 Credits one scripted build queue improved from 5 to 28 of 30 runs alive after Night 20. HQ damage is still permanent, and losing a Plant still silences every cannon. Only real playtests can judge industrial viability.
+- Starting budget: 1250 Credits is approved. Power Plant + Factory + Autocannon costs 1150, so the first Day can include all three. A no-income turtle can buy three Autocannons and a Plant, with a median defeat of Night 20 from the centre and Nights 23-24 from corners in scripted runs.
 
 Advanced systems, additional content, and visual polish must not be introduced ahead of their assigned tasks.
 

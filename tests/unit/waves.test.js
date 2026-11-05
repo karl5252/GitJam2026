@@ -544,14 +544,14 @@ test('a late night spawns on exactly the planned ticks, and the same seed repeat
 });
 
 /**
- * A no-income turtle: all 1000 Credits on two Autocannons and a Plant, with no
- * further commands. Provisional balance target, not final gameplay: it should
+ * A no-income turtle: the whole 1250-Credit budget on three Autocannons and a
+ * Plant on Day 1, with no further commands. Provisional balance target, not final gameplay: it should
  * hold for many nights, then fall to combat at any tested HQ position.
  */
 const TURTLES = {
-    centre: {hq: [12, 8], cannons: [[10, 6], [14, 6]], plant: [12, 4]},
-    'north-west corner': {hq: [1, 1], cannons: [[3, 3], [1, 3]], plant: [1, 5]},
-    'south-east corner': {hq: [22, 14], cannons: [[20, 12], [22, 12]], plant: [22, 10]},
+    centre: {hq: [12, 8], cannons: [[10, 6], [14, 6], [10, 10]], plant: [12, 4]},
+    'north-west corner': {hq: [1, 1], cannons: [[3, 3], [1, 3], [3, 1]], plant: [1, 5]},
+    'south-east corner': {hq: [22, 14], cannons: [[20, 12], [22, 12], [20, 14]], plant: [22, 10]},
 };
 
 for (const [name, layout] of Object.entries(TURTLES)) {
@@ -559,21 +559,18 @@ for (const [name, layout] of Object.entries(TURTLES)) {
         for (const seed of [1, 98]) {
             const w = createWorld({seed, requireHq: true});
             assert.equal(w.place('hq', ...layout.hq).ok, true);
-            assert.equal(w.place('autocannon', ...layout.cannons[0]).ok, true);
+            assert.equal(w.place('powerPlant', ...layout.plant).ok, true);
+            for (const cell of layout.cannons) assert.equal(w.place('autocannon', ...cell).ok, true);
             let shots = 0;
             const tick = (t) => { shots += w.tick(t).defense.shots.length; };
             for (let night = 1; night <= 25 && w.cycle.shift === Shift.DAY; night++) {
-                if (night === 2) {
-                    assert.equal(w.place('powerPlant', ...layout.plant).ok, true);
-                    assert.equal(w.place('autocannon', ...layout.cannons[1]).ok, true);
-                }
                 w.cycle.endDay();
                 while (w.cycle.shift === Shift.NIGHT) w.cycle.stepTicks(240, tick);
             }
             assert.equal(w.cycle.shift, Shift.DEFEATED, `seed ${seed} should fall by night 25`);
             assert.ok(w.cycle.defeatReport.day >= 15, `seed ${seed} fell on night ${w.cycle.defeatReport.day}`);
             assert.ok(shots > 500, `seed ${seed} only fired ${shots} shots`);
-            assert.equal(w.economy.credits, 0); // never earned or spent anything after Day 2
+            assert.equal(w.economy.credits, 0); // spent everything on Day 1, and never earned anything
         }
     });
 }

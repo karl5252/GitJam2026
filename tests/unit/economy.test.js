@@ -2,13 +2,16 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import {Economy, EconomyFailure, STARTING_RESOURCES} from '../../src/core/economy.js';
 
-test('starts with 1000 credits and 5 AP by default', () => {
-    assert.deepEqual({...STARTING_RESOURCES}, {credits: 1000, ap: 5});
+// A fixed balance for the arithmetic below, independent of the starting budget.
+const FIXTURE = {credits: 1000, ap: 5};
+
+test('starts with 1250 credits and 5 AP by default', () => {
+    assert.deepEqual({...STARTING_RESOURCES}, {credits: 1250, ap: 5});
     assert.ok(Object.isFrozen(STARTING_RESOURCES));
     const e = new Economy();
-    assert.equal(e.credits, 1000);
+    assert.equal(e.credits, 1250);
     assert.equal(e.ap, 5);
-    assert.deepEqual(e.snapshot(), {credits: 1000, ap: 5});
+    assert.deepEqual(e.snapshot(), {credits: 1250, ap: 5});
 });
 
 test('accepts custom non-negative integer balances, including zero', () => {
@@ -24,7 +27,7 @@ test('constructor rejects invalid balances', () => {
 });
 
 test('balances are read-only', () => {
-    const e = new Economy();
+    const e = new Economy(FIXTURE);
     assert.throws(() => { e.credits = 99999; }, TypeError);
     assert.throws(() => { e.ap = 99; }, TypeError);
     assert.deepEqual(e.snapshot(), {credits: 1000, ap: 5});
@@ -45,7 +48,7 @@ test('when both resources are short, insufficient-credits is reported first', ()
 });
 
 test('spend deducts both resources exactly once', () => {
-    const e = new Economy();
+    const e = new Economy(FIXTURE);
     assert.deepEqual(e.spend({credits: 400, ap: 1}), {ok: true});
     assert.deepEqual(e.snapshot(), {credits: 600, ap: 4});
     assert.deepEqual(e.spend({credits: 100, ap: 1}), {ok: true});
@@ -66,7 +69,7 @@ test('rejected spends leave balances unchanged (no partial deduction)', () => {
 });
 
 test('invalid costs are rejected with invalid-cost and change nothing', () => {
-    const e = new Economy();
+    const e = new Economy(FIXTURE);
     const bad = [
         null, undefined, 5, 'x',
         {}, {credits: 100}, {ap: 1},
@@ -89,7 +92,7 @@ test('restoreAp sets AP and leaves credits untouched', () => {
 });
 
 test('restoreAp rejects invalid values without changing state', () => {
-    const e = new Economy();
+    const e = new Economy(FIXTURE);
     for (const bad of [-1, 1.5, NaN, '5', undefined]) {
         assert.throws(() => e.restoreAp(bad), RangeError, String(bad));
     }
@@ -107,7 +110,7 @@ test('adjustCredits adds and subtracts integers, may go negative, leaves AP alon
 });
 
 test('adjustCredits rejects non-integers without changing state', () => {
-    const e = new Economy();
+    const e = new Economy(FIXTURE);
     for (const bad of [1.5, NaN, Infinity, '10', undefined, 2 ** 60]) {
         assert.throws(() => e.adjustCredits(bad), RangeError, String(bad));
     }
@@ -123,7 +126,7 @@ test('with a negative balance nothing is affordable (rule unchanged)', () => {
 });
 
 test('snapshot is detached', () => {
-    const e = new Economy();
+    const e = new Economy(FIXTURE);
     const snap = e.snapshot();
     snap.credits = 0;
     snap.ap = 0;

@@ -5,7 +5,8 @@ import {BUILDING_TYPES} from '../../src/core/buildingTypes.js';
 import {BuildingPlacement, footprintAt, INVALID_STATE, NO_SELECTION, UNKNOWN_BUILDING} from '../../src/core/buildingPlacement.js';
 import {Economy, EconomyFailure} from '../../src/core/economy.js';
 
-const setup = (resources) => {
+// The default is a fixed balance for arithmetic, independent of the starting budget.
+const setup = (resources = {credits: 1000, ap: 5}) => {
     const grid = new Grid({cols: 24, rows: 16, tileSize: 32, originX: 256, originY: 104});
     const economy = new Economy(resources);
     return {grid, economy, placement: new BuildingPlacement(grid, economy)};

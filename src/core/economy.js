@@ -7,7 +7,7 @@
  * can take Credits below zero (debt).
  */
 
-export const STARTING_RESOURCES = Object.freeze({credits: 1000, ap: 5});
+export const STARTING_RESOURCES = Object.freeze({credits: 1250, ap: 5});
 
 export const EconomyFailure = Object.freeze({
     INSUFFICIENT_CREDITS: 'insufficient-credits',

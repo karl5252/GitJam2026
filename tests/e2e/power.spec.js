@@ -1,6 +1,9 @@
 import {test, expect} from '@playwright/test';
 import {boot, body, byAction, clickAction, clickWorld, tapAction, tapWorld} from '../helpers/canvas.js';
 import {sample} from '../helpers/qa.js';
+import {STARTING_RESOURCES} from '../../src/core/economy.js';
+
+const START = STARTING_RESOURCES.credits;
 
 /**
  * Global power through real canvas input: placing a Power Plant, selecting
@@ -53,7 +56,7 @@ function powerSuite({pressWorld, pressAction}) {
         await pressAction(page, 'cancel-placement');
     }
 
-    /** Plant (centre 17,8), Factory (10,8), Outpost (3,3): 1000 Credits, 3 AP. */
+    /** Plant (centre 17,8), Factory (10,8), Outpost (3,3): costs 1000 Credits, 3 AP. */
     async function poweredBase(page, state) {
         await place(page, state, 'powerPlant', 17, 8);
         await place(page, state, 'factory', 10, 8);
@@ -88,7 +91,7 @@ function powerSuite({pressWorld, pressAction}) {
         expect(s.buildings).toEqual([
             {id: 'powerPlant-1', type: 'powerPlant', col: 16, row: 7, width: 3, height: 3, enabled: true, hp: 300},
         ]);
-        expect(s.resources).toEqual({credits: 500, ap: 4});
+        expect(s.resources).toEqual({credits: START - 500, ap: 4});
         expect(s.power).toMatchObject({generation: 100, demand: 0, status: 'normal'});
         expect(s.powerView.text).toBe('Power 100 / 0\nNORMAL');
     });
@@ -120,16 +123,19 @@ function powerSuite({pressWorld, pressAction}) {
     test('Day toggle: plant OFF -> blackout (free), settles without income; ON again -> income returns', async ({page}) => {
         const state = await start(page);
         await poweredBase(page, state);
+        // Spend the rest of the budget, so the blackout night really goes into debt.
+        await place(page, state, 'autocannon', 3, 12);
+        expect((await sample(page)).resources.credits).toBe(0);
         await select(page, state, 17, 8, 'powerPlant-1');
         const before = await sample(page);
 
         await toggle(page, false);
         let s = await sample(page);
-        expect(s.power).toMatchObject({generation: 0, demand: 50, status: 'blackout'});
+        expect(s.power).toMatchObject({generation: 0, demand: 70, status: 'blackout'});
         expect(flags(s)).toEqual({
-            'powerPlant-1': [false, false], 'factory-2': [true, false], 'outpost-3': [true, false],
+            'powerPlant-1': [false, false], 'factory-2': [true, false], 'outpost-3': [true, false], 'autocannon-4': [true, false],
         });
-        expect(s.powerView.text).toBe('Power 0 / 50\nBLACKOUT');
+        expect(s.powerView.text).toBe('Power 0 / 70\nBLACKOUT');
         // Rendered: plant dimmed, consumers outlined red.
         expect(view(s, 'powerPlant-1')).toMatchObject({alpha: DISABLED_ALPHA, strokeColor: NORMAL_STROKE});
         expect(view(s, 'factory-2')).toMatchObject({alpha: 1, strokeColor: UNPOWERED_STROKE});
@@ -141,7 +147,7 @@ function powerSuite({pressWorld, pressAction}) {
         await completeNight(page);
         s = await sample(page);
         expect(s.settlement).toMatchObject({gross: 0, upkeep: 20, net: -20, creditsBefore: 0, creditsAfter: -20});
-        expect(s.settlement.power).toEqual({generation: 0, demand: 50, status: 'blackout'});
+        expect(s.settlement.power).toEqual({generation: 0, demand: 70, status: 'blackout'});
         expect(s.buildings.find((b) => b.id === 'powerPlant-1').enabled).toBe(false); // persisted
 
         // Day 2: switch it back on.

@@ -2,6 +2,9 @@ import {test, expect} from '@playwright/test';
 import {byAction, clickAction, clickWorld, tapAction, tapWorld} from '../helpers/canvas.js';
 import {hqFlow, qaSim, stepExactly} from '../helpers/hq.js';
 import {sample} from '../helpers/qa.js';
+import {STARTING_RESOURCES} from '../../src/core/economy.js';
+
+const START = STARTING_RESOURCES.credits;
 
 /**
  * The systems together, on the real HQ-first flow with the real wave planner:
@@ -63,7 +66,7 @@ function integratedSuite(input) {
         await place(page, state, 'powerPlant', PLANT);
         await place(page, state, 'factory', FACTORY);
         let s = await sample(page);
-        expect(s.resources).toEqual({credits: 100, ap: 3});
+        expect(s.resources).toEqual({credits: START - 900, ap: 3});
         expect(s.powerView.text).toBe('Power 120 / 40\nNORMAL');
 
         await completeNight(page);
@@ -74,7 +77,7 @@ function integratedSuite(input) {
             pollution: {emitted: 20, after: 20},
         });
         expect(s.settlement.counts).toEqual({hq: 1, outpost: 0, factory: 1, powerPlant: 1, autocannon: 0});
-        expect(s.resources).toEqual({credits: 250, ap: 5});
+        expect(s.resources).toEqual({credits: START - 900 + 150, ap: 5});
     });
 
     test('waves escalate on the real planner with HQ in play', async ({page}) => {

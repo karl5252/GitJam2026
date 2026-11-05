@@ -1,6 +1,9 @@
 import {test, expect} from '@playwright/test';
 import {boot, body, byAction, clickAction, clickWorld, tapAction, tapWorld} from '../helpers/canvas.js';
 import {sample} from '../helpers/qa.js';
+import {STARTING_RESOURCES} from '../../src/core/economy.js';
+
+const START = STARTING_RESOURCES.credits;
 
 /**
  * Autocannons on the real spawn schedule, through real input: placed from the
@@ -115,7 +118,7 @@ function autocannonSuite({pressWorld, pressAction}) {
 
         const s = await sample(page);
         expect(s.buildings[0]).toMatchObject({type: 'autocannon', width: 1, height: 1, hp: 150, enabled: true});
-        expect(s.resources).toEqual({credits: 750, ap: 4});
+        expect(s.resources).toEqual({credits: START - 250, ap: 4});
         expect(s.power).toMatchObject({generation: 0, demand: 20, status: 'blackout'});
         expect(s.autocannons).toEqual([{id: s.buildings[0].id, cooldown: 0, targetId: null}]);
         expect(s.barrelViews).toHaveLength(1);
@@ -278,7 +281,7 @@ function autocannonSuite({pressWorld, pressAction}) {
         const s = await sample(page);
         expect(s.settlement).toMatchObject({gross: 0, upkeep: 0, net: 0, pollution: {emitted: 12}});
         expect(s.settlement.counts).toEqual({hq: 0, outpost: 0, factory: 0, powerPlant: 1, autocannon: 1});
-        expect(s.resources).toEqual({credits: 250, ap: 5});
+        expect(s.resources).toEqual({credits: START - 750, ap: 5});
     });
 
     test('real frames and QA stepping reach the same state', async ({page}) => {
