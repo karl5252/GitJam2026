@@ -1,7 +1,7 @@
 import {readFileSync} from 'node:fs';
 import {test, expect} from '@playwright/test';
 import {body, clickAction, clickWorld, tapAction, tapWorld} from '../helpers/canvas.js';
-import {hqFlow, qaSim, stepExactly} from '../helpers/hq.js';
+import {hqFlow} from '../helpers/hq.js';
 import {sample} from '../helpers/qa.js';
 
 /**
@@ -111,10 +111,9 @@ function snapshotSuite(input) {
 
     test('combat from a loaded base repeats exactly for the same seed', async ({page}) => {
         const night = async () => {
-            await nightTo(page, 1);
-            await stepExactly(page, 1500);
-            await qaSim(page, 'pause');
-            const {mutants, autocannons, simulation} = await sample(page);
+            await nightTo(page, 1500); // an exact Night tick, whatever real frames ran first
+            const {mutants, autocannons, simulation, shiftCycle} = await sample(page);
+            expect(shiftCycle.elapsedNightTicks).toBe(1500);
             return {mutants, autocannons, rng: simulation.rng};
         };
         await start(page, 'seed=98&waveBudget=20');

@@ -703,6 +703,7 @@ Later, not yet assigned:
 Known balance issues, accepted for now and not final behaviour (see the GDD):
 
 - Corner advantage: corners stay stronger than the centre. Since TASK 015, a corner HQ with one Autocannon falls around Night 19 in scripted runs. The HQ ring now keeps HQ one tile from every edge; that effect has not been simulated.
+- Wave predictability: production always uses `DEFAULT_SEED`, so spawn positions repeat every run. The first mutant always appears at border cell 22,15, which allows a deliberately asymmetric defense. Not changed; review it with the Wave Director.
 - Compact fortresses: the road rules barely constrain a compact base. FORTRESS 22 needed two cannons moved one tile and one extra road.
 - Centre industry: at 1000 Credits, scripted industrial bases in the centre could do worse than defensive turtles. At 1250 Credits one scripted build queue improved from 5 to 28 of 30 runs alive after Night 20. HQ damage is still permanent, and losing a Plant still silences every cannon. Only real playtests can judge industrial viability.
 - Starting budget: 1250 Credits is approved. Power Plant + Factory + Autocannon costs 1150, so the first Day can include all three. A no-income turtle can buy three Autocannons and a Plant, with a median defeat of Night 20 from the centre and Nights 23-24 from corners in scripted runs.

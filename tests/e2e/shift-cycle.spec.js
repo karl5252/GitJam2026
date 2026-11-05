@@ -114,7 +114,7 @@ function shiftSuite(input) {
     test('Night ends exactly at tick 3600 -> Day 2: AP restored, Credits and buildings kept', async ({page}) => {
         const state = await start(page);
         await pressAction(page, 'build-factory');
-        await pressWorld(page, cellCenter(state.grid, 10, 8), state);
+        await pressWorld(page, cellCenter(state.grid, 20, 7), state); // touches the ring of HQ at 20,3
         await expect.poll(async () => (await sample(page)).buildings.length).toBe(2);
         const day1 = await sample(page);
         expect(day1.resources).toEqual({credits: START - 400, ap: 4});

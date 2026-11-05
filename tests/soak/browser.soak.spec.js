@@ -435,7 +435,7 @@ test('stepped: repeated defeat and restart on the real HQ-first flow leave nothi
         await expect(body(page)).toHaveAttribute('data-phase', 'started');
         const state = await sample(page);
         await flow.buildHq(page, state, PLANT);
-        await flow.place(page, state, 'autocannon', CANNON_A);
+        await flow.place(page, state, 'autocannon', {col: 12, row: 5}); // just outside the HQ ring
         days.push(await counts(page));
 
         await flow.stepToDefeat(page, 6);
