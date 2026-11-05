@@ -89,14 +89,37 @@ export function selectTarget(point, buildings, grid) {
 
 /**
  * First building whose footprint contains the point. Bounds are closed, so
- * two touching buildings leave no walkable seam between them. Mutants.step()
- * answers the same question through the grid, which does not slow down as walls
- * are added; this is the plain definition of it.
+ * two touching buildings leave no walkable seam between them. This is the plain
+ * definition; gridBlockerAt gives the same answer faster.
  * @returns {string|null} building id
  */
 export function blockerAt(point, buildings, grid) {
     const blocker = buildings.find((b) => distanceToFootprint(point, grid.footprintRect(b)) === 0);
     return blocker ? blocker.id : null;
+}
+
+/**
+ * blockerAt answered through the grid, for a tick's worth of mutants: its cost
+ * does not grow with the number of walls. A point on a tile line touches the
+ * tiles either side, hence up to four. `passes` excuses a building, as an open
+ * gate is excused for a step along its axis.
+ * @param {Map<string, object>} byId the same buildings, by id
+ * @returns {object|null} the building
+ */
+export function gridBlockerAt({x, y}, buildings, byId, grid, passes = () => false) {
+    const col = (x - grid.originX) / grid.tileSize;
+    const row = (y - grid.originY) / grid.tileSize;
+    const cols = Number.isInteger(col) ? [col - 1, col] : [Math.floor(col)];
+    const rows = Number.isInteger(row) ? [row - 1, row] : [Math.floor(row)];
+    let first = null;
+    for (const r of rows) {
+        for (const c of cols) {
+            const building = byId.get(grid.occupantAt(c, r));
+            if (!building || building === first || passes(building)) continue;
+            if (!first || buildings.indexOf(building) < buildings.indexOf(first)) first = building;
+        }
+    }
+    return first;
 }
 
 /**
@@ -299,28 +322,10 @@ export class Mutants {
         return onMap.x === x && onMap.y === y ? null : onMap;
     }
 
-    /**
-     * What stops a step to `next`: the earliest building in the list touching
-     * that point, unless it is an open gate being walked along its passage axis.
-     * A point on a tile line touches the tiles either side, hence up to four.
-     * @returns {object|null} the building
-     */
+    /** What stops a step to `next`, unless it is an open gate being walked along its axis. */
     #blockerOf(mutant, next, buildings, byId) {
         const axis = next.x !== mutant.x ? 'x' : 'y';
-        const {originX, originY, tileSize} = this.#grid;
-        const col = (next.x - originX) / tileSize;
-        const row = (next.y - originY) / tileSize;
-        const cols = Number.isInteger(col) ? [col - 1, col] : [Math.floor(col)];
-        const rows = Number.isInteger(row) ? [row - 1, row] : [Math.floor(row)];
-        let first = null;
-        for (const r of rows) {
-            for (const c of cols) {
-                const building = byId.get(this.#grid.occupantAt(c, r));
-                if (!building || building === first || this.#gates?.allows(building, axis)) continue;
-                if (!first || buildings.indexOf(building) < buildings.indexOf(first)) first = building;
-            }
-        }
-        return first;
+        return gridBlockerAt(next, buildings, byId, this.#grid, (building) => this.#gates?.allows(building, axis));
     }
 
     /** The tile a mutant is on. One just outside the map counts as on the edge tile. */

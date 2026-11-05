@@ -94,8 +94,10 @@ const menuSlot = (slot) => ({x: MENU_COLUMNS[slot % 2], y: MENU_TOP + Math.floor
  *   - Normal: pointerdown on the grid selects/highlights a cell; outside the
  *     grid clears the selection.
  *   - Placement (a building button was pressed): pointermove previews the
- *     centred footprint, pointerdown attempts placement. Selection is
- *     disabled. Escape or Cancel returns to normal mode.
+ *     centred footprint, pointerdown attempts placement, and walls also follow
+ *     a drag. Selection is disabled. Escape or Cancel returns to normal mode.
+ *   - Road (the Road button was pressed): a press adds or removes a road, and
+ *     a drag only adds.
  *
  * Rules live in core (Grid, BuildingPlacement). The preview colour is
  * derived from the domain validation result, never the reverse.
@@ -104,8 +106,8 @@ const menuSlot = (slot) => ({x: MENU_COLUMNS[slot % 2], y: MENU_TOP + Math.floor
  * input (Phaser passes the hit objects to the scene-level handler).
  *
  * Test Shadow usage:
- *   - addProxy for real buttons: start, build-outpost, build-factory,
- *     cancel-placement. Grid cells deliberately get no proxies.
+ *   - addProxy for real buttons, such as start, build-* and cancel-placement.
+ *     Grid cells deliberately get no proxies.
  *   - markScene()/setBodyState() — coarse `data-phase` on <body>.
  *   - QASurface — grid, selection, placement result, rendered preview and
  *     building views.
@@ -901,6 +903,7 @@ export class GameScene extends Phaser.Scene {
 
     /** `over` = interactive objects under the pointer; UI hits are never grid input. */
     handleGridPointerDown(pointer, over) {
+        this.dragCell = null; // lifting a finger sends no move, so a finished drag ends here
         if (!this.grid || over.length > 0 || this.phase === GamePhase.DEFEATED) return;
         const cell = this.grid.worldToCell(pointer.worldX, pointer.worldY);
 

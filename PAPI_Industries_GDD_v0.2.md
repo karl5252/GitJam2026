@@ -1,7 +1,7 @@
 # PAPI INDUSTRIES: THE GREEN SHIFT
 ## Game Design Document · v0.2 · 4 November 2026
 
-**Status:** Active graybox development · TASK 019 implemented and awaiting review, no next task approved\
+**Status:** Active graybox development · TASK 019 completed, no next task approved\
 **Genre:** Industrial management + survival tower defense + corporate satire  
 **Platform:** Browser (itch.io), desktop and mobile landscape  
 **Engine:** Phaser + Vite · public GitHub game repository  
@@ -281,7 +281,7 @@ window.__qa = {
 
 **Post-jam** — advanced enemy specializations, expanded industries, campaign/scenarios, complex directive sets, more troop roles, environmental simulation depth.
 
-**Current task sequence (implementation authority remains the explicit human-approved task):** TASK 010 Pollution **complete**; TASK 011A basic mutant **complete**; TASK 011B separate Autocannon **complete**; TASK 012A night waves **complete**; TASK 012B soak baseline **complete**; TASK 013 HQ and defeat **complete**; TASK 014 efficient test execution **complete**; TASK 015 combat escalation **complete**; TASK 016 Night speed controls **complete**; TASK 017 roads and connectivity **complete**; TASK 018 logistics **complete**; TASK 019 walls and gates **implemented, awaiting review**; then morning report and balance, subject to explicit reprioritization. Art integration stays near the end after gameplay stabilization.
+**Current task sequence (implementation authority remains the explicit human-approved task):** TASK 010 Pollution **complete**; TASK 011A basic mutant **complete**; TASK 011B separate Autocannon **complete**; TASK 012A night waves **complete**; TASK 012B soak baseline **complete**; TASK 013 HQ and defeat **complete**; TASK 014 efficient test execution **complete**; TASK 015 combat escalation **complete**; TASK 016 Night speed controls **complete**; TASK 017 roads and connectivity **complete**; TASK 018 logistics **complete**; TASK 019 walls and gates **complete**; then morning report and balance, subject to explicit reprioritization. Art integration stays near the end after gameplay stabilization.
 
 **Milestone gates:**
 1. **Graybox:** two building footprints, one resource, one defense and one attack wave work without art.

@@ -31,7 +31,7 @@ This file provides project context, architectural constraints, and working rules
 
 **Target platforms:** Desktop browsers and mobile browsers in landscape orientation.
 
-**Current status:** TASK 019 (Walls & Gates) implemented and awaiting developer review. No next task is approved: only work on tasks the developer explicitly assigns.
+**Current status:** TASK 019.5 (Cleanup & Stabilization) complete. No next task is approved: only work on tasks the developer explicitly assigns.
 
 The project was initialized from the Wee Games Starter Kit Basic. The original demo applications have been removed.
 
@@ -219,7 +219,7 @@ Avoid implementing gameplay rules directly inside Phaser scenes.
   - Positions are world pixels from the Grid. `speed` is 0.5 px per tick. All distances are Manhattan distances to a footprint rectangle (`distanceToFootprint`).
   - **Fortifications:** a step blocked by a fortification runs one breadth-first search (`#planDetour`, N, E, S, W order) to a free tile orthogonally next to the target's footprint, never an occupied one. A mutant that finds a path follows tile centres; one that does not attacks the blocker. **NO PATH never means NO ATTACK:** there is no searching state, a search runs once per block, and everything that blocks can be destroyed. `DETOUR` limits one detour to 12 tiles beyond the direct distance, and a mutant's whole life to 24 extra tiles and 4 plans, spent on success and never refunded. Detour state lives in a `WeakMap`, not on the record, so `snapshot()` and the digests of layouts without walls are unchanged; `detours()` reports it. With no fortifications none of this runs.
   - **Gates:** an OPEN gate lets a step through along its `passageAxis` only; from the side it is solid. OPENING and CLOSING are solid. A gate attacked as an obstacle stops being one as soon as it lets the mutant pass. A gate can close on a mutant in the doorway, which then attacks it like any obstacle.
-  - **Blocker lookup:** `#blockerOf` asks the Grid about the up to four tiles touching the point, so cost does not grow with walls. The exported `blockerAt` is the plain definition it must agree with.
+  - **Blocker lookup:** the Grid is asked about the up to four tiles touching the point, so cost does not grow with walls. It uses `gridBlockerAt`, which a test sweeps against the plain definition, `blockerAt`.
   - **Trucks:** with a `logistics` dependency, a truck within melee range stops a mutant, which counts as stationary, and the attack timer's hit lands on the truck before any building. A truck counts as one road tile for range. Mutants never seek trucks out, and truck hits are not in `effects`.
   - `step()` runs once per tick, **after** `ShiftCycle.onTick()`, and returns `{spawned, attacks, destroyed}` for that tick. Mutants act on night ticks 1..3599; tick 3600 only settles. A retried final tick therefore cannot apply damage twice. Outside Night, `step()` removes survivors with no penalty, which is the dawn cleanup.
   - Records are `{id, x, y, hp, targetId, obstacleId, attackTimer}` and hold building ids only. `hp` starts at `MUTANT.maxHp`.
@@ -389,7 +389,7 @@ Avoid implementing gameplay rules directly inside Phaser scenes.
       - A dry run on throwaway objects rejects anything invalid before the live game is touched. If the live replay still fails, or its export differs from the snapshot, the result has `applied: true` and the scene restarts, so a partial base can never be played. `faultAfter` simulates that failure for tests.
       - The same seed, commands and starting state give identical combat, including when the original ids have gaps. Historical HP, active combat and RNG state are not reconstructed.
       - Walls and gates are ordinary `buildings` entries, so the schema stays at version 1. Gates load CLOSED at full HP.
-      - **Fixtures:** schema compatibility does not mean a layout is still legal, and rules are never relaxed to admit an old one. `tests/unit/gates.test.js` declares every file in `tests/fixtures/layouts/`: `logistics-reference`, `fortress-logistics-v1` and `fortification-reference` load; `fortress-corner-v1` and `fortress22-road-legal` are stale and are rejected with `no-road-access`. `tests/fixtures/legacy/fortress22-exact.js` is a combat benchmark that only builds with no roads.
+      - **Fixtures:** schema compatibility does not mean a layout is still legal, and rules are never relaxed to admit an old one. `tests/unit/gates.test.js` declares every file in `tests/fixtures/layouts/`: `logistics-reference`, `fortress-logistics-v1`, `fortress-checkerboard-v1` and `fortification-reference` load; `fortress-corner-v1` and `fortress22-road-legal` are stale and are rejected with `no-road-access`. `tests/fixtures/legacy/fortress22-exact.js` is a combat benchmark that only builds with no roads.
 
     `window.__qa.perf` (`src/testShadow/PerfProbe.js`) provides `start()`, `stop()`, `counts()` and `renderer()` for the browser soak. It reports simulation, scene update, render callbacks and frame time separately, and classifies the rest as unattributed. Use it for real-time runs only; never derive frame rates from `stepTicks`.
 
@@ -738,7 +738,8 @@ Complete:
 - TASK 016: Night Simulation Speed Controls
 - TASK 017: Roads & Connectivity
 - TASK 018: GOODS, Logistics & Delivery Trucks
-- TASK 019: Walls & Gates (awaiting review)
+- TASK 019: Walls & Gates
+- TASK 019.5: Cleanup & Stabilization
 
 Later, not yet assigned:
 

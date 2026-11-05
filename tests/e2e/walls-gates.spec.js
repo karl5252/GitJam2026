@@ -1,6 +1,6 @@
 import {test, expect} from '@playwright/test';
 import {byAction, clickAction, clickWorld, tapAction, tapWorld, worldToScreen} from '../helpers/canvas.js';
-import {cellCenter, hqFlow, qaSim, stepExactly} from '../helpers/hq.js';
+import {cellCenter, hqFlow, stepExactly} from '../helpers/hq.js';
 import {sample} from '../helpers/qa.js';
 
 /**
@@ -266,6 +266,36 @@ test.describe('walls and gates: mobile landscape', () => {
     });
 });
 
+test.describe('walls and gates: touch drag state', () => {
+    test.use({viewport: {width: 844, height: 390}, hasTouch: true, isMobile: true});
+
+    test('a finished wall drag does not leak into the next tool', async ({page}) => {
+        // Lifting a finger sends no move, so the next press is the first event after a drag.
+        const flow = hqFlow({pressWorld: tapWorld, pressAction: tapAction});
+        const state = await flow.start(page);
+        await flow.buildHq(page, state, HQ);
+        await tapAction(page, 'build-wall');
+        const client = await page.context().newCDPSession(page);
+        const touch = (type, points) => client.send('Input.dispatchTouchEvent', {type, touchPoints: points});
+        const screen = (col, row) => worldToScreen(page, cellCenter(state.grid, {col, row}), state);
+        await touch('touchStart', [await screen(2, 2)]);
+        await touch('touchMove', [await screen(4, 2)]);
+        await touch('touchEnd', []);
+        await expect.poll(async () => (await sample(page)).buildings.filter((b) => b.type === 'wall').length).toBe(3);
+
+        // Press the Outpost button and slide off it onto the grid: that places nothing.
+        const box = await byAction(page, 'build-outpost').boundingBox();
+        await touch('touchStart', [{x: box.x + box.width / 2, y: box.y + box.height / 2}]);
+        await expect.poll(async () => (await sample(page)).placement.selectedType).toBe('outpost');
+        await touch('touchMove', [await screen(8, 12)]);
+        await touch('touchEnd', []);
+        await page.waitForTimeout(100);
+        const s = await sample(page);
+        expect(s.buildings.filter((b) => b.type === 'outpost')).toEqual([]);
+        expect(s.buildings.filter((b) => b.type === 'wall')).toHaveLength(3);
+    });
+});
+
 test('after restart nothing of the walls and gates is left', async ({page}) => {
     const input = {pressWorld: clickWorld, pressAction: clickAction};
     const {start, buildHq, place, stepToDefeat} = hqFlow(input);
@@ -291,5 +321,4 @@ test('after restart nothing of the walls and gates is left', async ({page}) => {
     expect(s.gateViews).toEqual([]);
     expect(s.placement.selectedType).toBeNull();
     await expect(byAction(page, 'demolish')).toHaveCount(0);
-    await qaSim(page, 'pause');
 });

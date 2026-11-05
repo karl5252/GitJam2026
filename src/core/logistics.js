@@ -11,10 +11,11 @@
  * resets at dusk: carrying it over would drift to six loads a Night. Finished
  * loads wait in storage, and production pauses while it is full.
  *
- * Each Factory has one free truck, which carries a load along the shortest road
+ * Each Factory has one free truck, which carries a load along the quickest road
  * route from the Factory's dock to the HQ's receiving dock. Credits are paid on
  * arrival, once, and the truck drives back. Routes are chosen when a truck
- * leaves; roads cannot change during Night.
+ * leaves. Roads cannot change during Night, and a gate falling only adds edges,
+ * so a route in use stays valid.
  *
  * Dawn: every truck goes back to its dock, so Day road edits can never strand
  * one. A carried load returns to storage if there is room; otherwise it stays

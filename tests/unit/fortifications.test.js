@@ -5,7 +5,7 @@ import {CONSTRUCTION_DISABLED, INVALID_STATE, UNKNOWN_BUILDING} from '../../src/
 import {calculateEmissions} from '../../src/core/pollution.js';
 import {calculatePower} from '../../src/core/power.js';
 import {calculateSettlement} from '../../src/core/settlement.js';
-import {DETOUR, MUTANT, blockerAt, borderSpawns, distanceToFootprint, selectTarget} from '../../src/core/mutants.js';
+import {DETOUR, MUTANT, blockerAt, borderSpawns, distanceToFootprint, gridBlockerAt, selectTarget} from '../../src/core/mutants.js';
 import {RoadFailure} from '../../src/core/roads.js';
 import {Shift} from '../../src/core/shiftCycle.js';
 import {canonicalState, checkInvariants, createWorld, digestOf, worldState} from '../soak/harness.js';
@@ -67,7 +67,7 @@ const isWall = (w, id) => w.placement.buildings().find((b) => b.id === id)?.type
  */
 function run(w, ticks, watch = () => {}) {
     const last = new Map();
-    const report = {attacks: [], destroyed: [], firstAttackTick: null, firstBarrierHit: null, firstBuildingHit: null, maxIdle: 0};
+    const report = {attacks: [], destroyed: [], firstAttackTick: null, maxIdle: 0};
     for (let i = 0; i < ticks && w.cycle.shift === Shift.NIGHT; i++) {
         w.cycle.stepTicks(1, (tick) => {
             const {effects} = w.tick(tick);
@@ -203,15 +203,36 @@ test('walls are never targets, however close they are', () => {
     assert.equal(selectTarget(point, onlyWalls, w.grid), null);
 });
 
-test('the grid-based blocker lookup agrees with the plain definition on seams and corners', () => {
+test('the grid lookup agrees with the plain definition, on every seam and corner, in any list order', () => {
     const w = world();
-    walls(w, [[3, 3], [4, 3], [5, 4]]);
+    walls(w, [[3, 3], [4, 3], [5, 4], [4, 5], [4, 4]]);
+    assert.equal(w.place('outpost', 6, 4).ok, true);
+    const placed = w.placement.buildings();
+    const {x: left, y: top} = w.grid.cellToWorld(1, 1);
+    let touching = 0;
+    for (const buildings of [placed, [...placed].reverse()]) {
+        const byId = new Map(buildings.map((b) => [b.id, b]));
+        for (let x = left; x <= left + 8 * 32; x += 0.5) {
+            for (let y = top; y <= top + 8 * 32; y += x % 32 === 0 ? 0.5 : 8) {
+                const plain = blockerAt({x, y}, buildings, w.grid);
+                assert.equal(gridBlockerAt({x, y}, buildings, byId, w.grid)?.id ?? null, plain, `at ${x},${y}`);
+                if (plain) touching++;
+            }
+        }
+    }
+    assert.ok(touching > 1000, 'the sweep really met buildings');
+});
+
+test('the grid lookup skips what passes, and finds what stands behind it on a seam', () => {
+    const w = world();
+    const [a, b] = walls(w, [[3, 3], [4, 3]]);
     const buildings = w.placement.buildings();
+    const byId = new Map(buildings.map((building) => [building.id, building]));
     const {x, y} = w.grid.cellToWorld(4, 3);
-    const mutant = {id: 'probe', x: x - 40, y: y + 16};
-    assert.equal(blockerAt({x, y}, buildings, w.grid), buildings[1].id);
-    assert.equal(blockerAt({x: x + 32, y: y + 32}, buildings, w.grid), buildings[2].id);
-    assert.equal(blockerAt(mutant, buildings, w.grid), null);
+    const seam = {x, y: y + 16};
+    assert.equal(gridBlockerAt(seam, buildings, byId, w.grid).id, a);
+    assert.equal(gridBlockerAt(seam, buildings, byId, w.grid, (building) => building.id === a).id, b);
+    assert.equal(gridBlockerAt(seam, buildings, byId, w.grid, () => true), null);
 });
 
 // ---- Border spawning ------------------------------------------------------------
@@ -249,8 +270,8 @@ for (const [name, {index, cell: [col, row], dx, dy}] of Object.entries(SPAWN_CAS
         const report = run(w, 3000);
         assert.ok(report.attacks.length > 0, 'it reached something to attack');
         assert.ok(report.maxIdle <= 1, `idle for ${report.maxIdle} ticks`);
-        assert.ok(w.mutants.snapshot().length === 1);
-        assert.ok(hp(w, id) <= 100);
+        assert.equal(w.mutants.snapshot().length, 1);
+        assert.ok(report.attacks.some((a) => a.buildingId === id) && hp(w, id) < 100, 'the wall took the hits');
     });
 }
 
@@ -526,11 +547,11 @@ test('scenario 6: a fully enclosed base with nothing outside, under the real wav
             while (w.cycle.shift === Shift.NIGHT) w.cycle.stepTicks(240, w.tick);
         }
         const report = night(w);
-        assert.equal(w.cycle.shift === Shift.DAY || w.cycle.shift === Shift.DEFEATED, true);
         assert.ok(report.maxIdle <= 1, `seed ${seed}: idle ${report.maxIdle}`);
         assert.ok(barrierDamage(w, report, ring) >= 100, `seed ${seed}: ${barrierDamage(w, report, ring)} damage`);
         assert.ok(report.destroyed.some((id) => ring.includes(id)), `seed ${seed}: no breach`);
-        assert.deepEqual(w.mutants.snapshot(), w.cycle.shift === Shift.DAY ? [] : w.mutants.snapshot());
+        if (w.cycle.shift === Shift.DAY) assert.deepEqual(w.mutants.snapshot(), [], 'survivors are gone at dawn');
+        else assert.equal(w.cycle.shift, Shift.DEFEATED);
     }
 });
 
