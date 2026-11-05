@@ -1,0 +1,27 @@
+// testShadow/stressParams.js
+//
+// TEST_MODE-only spawn overrides for the soak suites. The caller must guard
+// this with TEST_MODE, so production never reads these parameters. Both give
+// the real Mutants a fixed schedule; nothing here simulates anything.
+//
+//   ?waveBudget=N  the real waveSchedule(N), for N in 0..WAVE.maxPerNight
+//   ?stressRamp=N  one mutant per tick from tick 1, for N in 1..3599
+
+import {WAVE, waveSchedule} from '../core/waves.js';
+
+const MAX_RAMP = 3599; // spawns must land on a night tick before the last
+
+function parseCount(raw, min, max) {
+    if (raw === null || !/^\d+$/.test(raw)) return null;
+    const value = Number(raw);
+    return value >= min && value <= max ? value : null;
+}
+
+/** @returns {number[]|null} a fixed schedule, or null when no valid override is present */
+export function parseStressSchedule(search) {
+    const params = new URLSearchParams(search);
+    const ramp = parseCount(params.get('stressRamp'), 1, MAX_RAMP);
+    if (ramp !== null) return Array.from({length: ramp}, (_, i) => i + 1);
+    const budget = parseCount(params.get('waveBudget'), 0, WAVE.maxPerNight);
+    return budget === null ? null : [...waveSchedule(budget)];
+}

@@ -15,6 +15,8 @@ import {nightPlan, waveProgress} from '../core/waves.js';
 import {Autocannons} from '../core/autocannons.js';
 import {TEST_MODE} from '../testMode.js';
 import {addProxy, markScene, setBodyState} from '../testShadow/TestProxy.js';
+import {createPerfProbe} from '../testShadow/PerfProbe.js';
+import {parseStressSchedule} from '../testShadow/stressParams.js';
 import {QASurface} from '../testShadow/QASurface.js';
 import {MutantLayer} from './MutantLayer.js';
 import {AutocannonLayer} from './AutocannonLayer.js';
@@ -166,6 +168,7 @@ export class GameScene extends Phaser.Scene {
                     return done;
                 },
             };
+            window.__qa.perf = createPerfProbe(this);
         }
 
         markScene(this, {phase: this.phase});
@@ -219,15 +222,18 @@ export class GameScene extends Phaser.Scene {
             isConstructionAllowed: () => this.cycle.isConstructionAllowed,
         });
         // TEST_MODE only: ?mutants=off gives the real system an empty schedule,
-        // for E2E suites about power, economy and pollution. Otherwise the
-        // formula in core/waves.js plans each night.
+        // for E2E suites about power, economy and pollution, and the soak suites
+        // can set a fixed one. Otherwise the formula in core/waves.js plans each
+        // night.
         const mutantsOff = TEST_MODE && new URLSearchParams(window.location.search).get('mutants') === 'off';
+        const fixedSchedule = TEST_MODE ? (mutantsOff ? [] : parseStressSchedule(window.location.search)) : null;
         this.mutants = new Mutants({
             cycle: this.cycle,
             placement: this.placement,
             grid: this.grid,
             rng: this.rng,
-            planNight: mutantsOff ? null : (day) => nightPlan({
+            schedule: fixedSchedule ?? [],
+            planNight: fixedSchedule ? null : (day) => nightPlan({
                 day,
                 pollution: this.pollution.value,
                 buildings: this.placement.buildings(),

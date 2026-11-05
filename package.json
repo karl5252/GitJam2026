@@ -9,7 +9,9 @@
     "build": "vite build",
     "preview": "vite preview",
     "test": "cd tests/unit && node --test",
-    "test:e2e": "playwright test"
+    "test:e2e": "playwright test",
+    "test:soak": "node --expose-gc tests/soak/domain.soak.js",
+    "test:soak:browser": "playwright test --config playwright.soak.config.js"
   },
   "dependencies": {
     "phaser": "^4.0.0"

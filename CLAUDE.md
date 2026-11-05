@@ -31,7 +31,7 @@ This file provides project context, architectural constraints, and working rules
 
 **Target platforms:** Desktop browsers and mobile browsers in landscape orientation.
 
-**Current status:** TASK 012A (Night Wave Director) complete. No next task is approved: only work on tasks the developer explicitly assigns.
+**Current status:** TASK 012B (Combat Soak & Performance Baseline) complete. No next task is approved: only work on tasks the developer explicitly assigns.
 
 The project was initialized from the Wee Games Starter Kit Basic. The original demo applications have been removed.
 
@@ -113,6 +113,8 @@ npm run build
 npm run preview
 npm run test
 npm run test:e2e
+npm run test:soak
+npm run test:soak:browser
 npx playwright install chromium
 ```
 
@@ -121,7 +123,11 @@ npx playwright install chromium
 - `npm run preview`: Preview production build.
 - `npm run test`: Node unit tests.
 - `npm run test:e2e`: Playwright E2E tests. The dev server starts automatically and is reused outside CI.
+- `npm run test:soak`: Headless combat soak (`tests/soak/domain.soak.js`). Add `-- --quick` for a short subset. Writes `soak-results/domain.json`.
+- `npm run test:soak:browser`: Browser soak (`playwright.soak.config.js`, one worker, own port 5175, no server reuse). Takes a few minutes. Writes `soak-results/browser-*.json`.
 - `npx playwright install chromium`: Install the Chromium browser.
+
+The soak suites are separate from `npm run test` and `npm run test:e2e`. See `docs/performance-baseline.md`.
 
 ### Run individual tests
 
@@ -309,11 +315,14 @@ Avoid implementing gameplay rules directly inside Phaser scenes.
     - `update(time, delta)` calls `clock.advance(delta, stepSimulation)` then `syncShiftUi()`, and ignores Phaser's `time`.
     - `stepSimulation(tick)` counts `stepsExecuted`, calls `cycle.onTick(tick)`, then `autocannons.step()`, then `mutants.step()`. Shots and destroyed buildings are handled from that tick's results: `handleBuildingsDestroyed` removes the views, clears a stale selection and calls `refreshPower()`.
     - The RNG seed is `DEFAULT_SEED`. In TEST_MODE only, `?seed=N` overrides it.
+    - In TEST_MODE only, `?waveBudget=N` and `?stressRamp=N` (`src/testShadow/stressParams.js`) give the real `Mutants` a fixed schedule for the soak suites.
     - In TEST_MODE only, `?mutants=off` gives the real `Mutants` an empty schedule instead of `nightPlan`. `boot(page, {mutants: false})` uses it for suites about power, economy and pollution. Combat tests must not use it, and production ignores it.
   - **TEST_MODE-only controls:** `window.__qa.sim` provides:
     - `pause()` → `clock.pause()`
     - `resume()` → `cycle.resume()`, Night only
     - `stepTicks(n)` → `cycle.stepTicks(n, stepSimulation)` then `syncShiftUi()`. It uses the same callback as `update` and drives real shift transitions, and does nothing during Day.
+
+    `window.__qa.perf` (`src/testShadow/PerfProbe.js`) provides `start()`, `stop()`, `counts()` and `renderer()` for the browser soak. It reports simulation, scene update, render callbacks and frame time separately, and classifies the rest as unattributed. Use it for real-time runs only; never derive frame rates from `stepTicks`.
 
     They can't place or spend. `GameScene` adds them; Test Shadow internals are unchanged. END DAY always resumes the clock, even after a QA pause.
   - Grid cells have no DOM proxies. E2E tests press real canvas points with `clickWorld`/`tapWorld`, and press buttons through their proxies with `clickAction`/`tapAction` (`tests/helpers/canvas.js`).
@@ -600,6 +609,7 @@ Complete:
 - TASK 011A: Basic Mutant Foundation
 - TASK 011B: Autocannon Defense
 - TASK 012A: Night Wave Director
+- TASK 012B: Combat Soak & Performance Baseline
 
 Later, not yet assigned:
 
