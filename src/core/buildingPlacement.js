@@ -15,7 +15,12 @@ import {ROAD_ACCESS_TYPES, RoadFailure, outgoingDock} from './roads.js';
  *
  * Roads are optional: with a RoadNetwork, HQ brings its ring, nothing can be
  * built on a road and a Factory's fixed dock must be a connected road. Without
- * one, as in legacy fixtures and ?hq=off, none of those rules exist.
+ * one, as in legacy fixtures and ?hq=off, none of those rules exist, and there
+ * can be no gates, because a gate stands on a road.
+ *
+ * Fortifications are ordinary buildings here. Walls obey the normal rules. A
+ * gate is the one building that goes ON a road, and only where
+ * RoadNetwork.canAddGate agrees. Only fortifications can be demolished.
  */
 
 export const NO_SELECTION = 'no-selection';
@@ -143,6 +148,7 @@ export class BuildingPlacement {
         this.#nextId++;
         const building = {id, type: type.id, ...footprint, enabled: true, hp: type.maxHp};
         this.#buildings.push(building);
+        if (type.gate) this.#roads.setGate(footprint, type.gate.passageAxis);
         if (type.id === HQ_TYPE) {
             this.#hqBuilt = true;
             this.#roads?.addHqRing(footprint); // validated above, so it cannot fail
@@ -187,9 +193,31 @@ export class BuildingPlacement {
             building.hp = hp;
             return {ok: true, destroyed: false, hp};
         }
-        if (!this.#grid.remove(id)) throw new Error(`Building ${id} has no grid occupancy`);
-        this.#buildings.splice(index, 1);
+        this.#removeAt(index);
         return {ok: true, destroyed: true, hp};
+    }
+
+    /**
+     * Take down a wall or gate. Day only, free and with no refund. Always
+     * possible, because losing a barrier can only add road connections.
+     * Rebuilding is the only way to restore a damaged one.
+     * @returns {{ok: true} | {ok: false, reason: string}}
+     */
+    demolish(id) {
+        if (!this.#isConstructionAllowed()) return {ok: false, reason: CONSTRUCTION_DISABLED};
+        const index = this.#buildings.findIndex((b) => b.id === id);
+        if (index === -1) return {ok: false, reason: UNKNOWN_BUILDING};
+        if (!getBuildingType(this.#buildings[index].type).fortification) return {ok: false, reason: INVALID_STATE};
+        this.#removeAt(index);
+        return {ok: true};
+    }
+
+    /** Grid cells, record and any gate go together, so a building leaves exactly once. */
+    #removeAt(index) {
+        const building = this.#buildings[index];
+        if (!this.#grid.remove(building.id)) throw new Error(`Building ${building.id} has no grid occupancy`);
+        this.#buildings.splice(index, 1);
+        if (getBuildingType(building.type).gate) this.#roads.clearGate(building);
     }
 
     /** Docks that must stay connected to the HQ network. */
@@ -223,14 +251,17 @@ export class BuildingPlacement {
 
     /** Road rules for a footprint the grid has already accepted. Never mutates. */
     #validateRoads(type, footprint) {
-        if (!this.#roads) return {ok: true};
+        if (!this.#roads) return type.gate ? {ok: false, reason: RoadFailure.GATE_NEEDS_ROAD} : {ok: true};
+        if (type.gate) return this.#roads.canAddGate(footprint, type.gate.passageAxis, this.#roadDependents());
         if (type.id === HQ_TYPE) {
             const ring = this.#roads.canAddHqRing(footprint);
             if (!ring.ok) return ring;
         }
         if (this.#roads.overlaps(footprint)) return {ok: false, reason: RoadFailure.ROAD_OCCUPIED};
-        if (ROAD_ACCESS_TYPES.includes(type.id) && !this.#roads.isConnected(outgoingDock(footprint))) {
-            return {ok: false, reason: RoadFailure.NO_ROAD_ACCESS};
+        if (ROAD_ACCESS_TYPES.includes(type.id)) {
+            const dock = outgoingDock(footprint);
+            if (!this.#roads.isConnected(dock)) return {ok: false, reason: RoadFailure.NO_ROAD_ACCESS};
+            if (this.#roads.gateAt(dock) !== null) return {ok: false, reason: RoadFailure.GATE_ON_DOCK};
         }
         return {ok: true};
     }
@@ -245,6 +276,11 @@ export class BuildingPlacement {
         const roads = this.#validateRoads(type, footprint);
         if (!roads.ok) return roads;
         return this.#economy.canAfford(type.cost);
+    }
+
+    /** Detached records of the standing gates, without copying every wall. */
+    gates() {
+        return this.#buildings.filter((b) => getBuildingType(b.type).gate).map((b) => ({...b}));
     }
 
     /** Detached, JSON-serializable list of placed buildings. */

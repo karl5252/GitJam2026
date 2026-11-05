@@ -108,8 +108,9 @@ function autocannonSuite({pressWorld, pressAction}) {
         const cancel = await byAction(page, 'cancel-placement').boundingBox();
         const endDay = await byAction(page, 'end-day').boundingBox();
         const lastBuild = await byAction(page, 'build-autocannon').boundingBox();
-        expect(cancel.y + cancel.height).toBeLessThanOrEqual(endDay.y);
-        expect(lastBuild.y + lastBuild.height).toBeLessThanOrEqual(cancel.y);
+        const overlaps = (p, q) => p.x < q.x + q.width && q.x < p.x + p.width && p.y < q.y + q.height && q.y < p.y + p.height;
+        expect(overlaps(cancel, endDay)).toBe(false);
+        expect(overlaps(cancel, lastBuild)).toBe(false);
 
         await pressWorld(page, cellCenter(state.grid, CANNON.col, CANNON.row), state);
         await expect.poll(async () => (await sample(page)).buildings.length).toBe(1);
@@ -280,7 +281,7 @@ function autocannonSuite({pressWorld, pressAction}) {
         await finishNight(page);
         const s = await sample(page);
         expect(s.settlement).toMatchObject({gross: 0, upkeep: 0, net: 0, pollution: {emitted: 12}});
-        expect(s.settlement.counts).toEqual({hq: 0, outpost: 0, factory: 0, powerPlant: 1, autocannon: 1});
+        expect(s.settlement.counts).toEqual({hq: 0, outpost: 0, factory: 0, powerPlant: 1, autocannon: 1, wall: 0, gateVertical: 0, gateHorizontal: 0});
         expect(s.resources).toEqual({credits: START - 750, ap: 5});
     });
 

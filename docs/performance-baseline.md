@@ -131,6 +131,9 @@ Measured on 5 November 2026, wall clock, including dev server startup. Regular E
 | Unit | 418 | About 2 s |
 | Smoke, first run of a session | 13 | 27.7 s (includes a cold Vite start) |
 | Smoke, repeat runs | 13 | 14.2 s |
+
+Measured when 13 tests carried the tag. There are 19 since TASK 019.
+
 | Unit + smoke | 431 | 17.0 s |
 | Full regular E2E | 199 | 175.5 s before TASK 014, 180.4 s after |
 | `npm run test:full` | 617 | 177.6 s |
@@ -186,6 +189,20 @@ Frame pacing varied between 0% and 15% slow frames, and the same stress Night ga
 ## Fortress benchmarks (TASK 017)
 
 `npm run test:soak:fortress` runs separate references from Night 22 at full HP with no player input: the original FORTRESS 22 and the TASK 017 road-legal variant, both historical in worlds without roads since TASK 018 added fixed docks, and the technical logistics reference with real roads and trucks. They measure combat. Survival is report-only and is not a target. A player-derived fortress will replace the historical ones.
+
+## Walls at 4x (TASK 019)
+
+`npm run test:soak:fortification` runs `fortification-reference.json`, a base inside 199 walls and one gate, under 40 mutants ending on tick 1200. Node, after warm-up, seeds 98 and 1:
+
+| Layout | Tick p50 ms | Tick p99 ms | 24 ticks at p99 ms |
+|---|---:|---:|---:|
+| No walls | 0.008 | 0.03 | 0.7 |
+| 199 walls | 0.07 | 0.24 | 5.9 |
+| 177 walls, with gaps | 0.06 | 0.23 | 5.4 |
+
+The first case of a run is slower (0.8 ms p99), which looks like JIT warm-up. Part of the difference is workload rather than walls: without them mutants reach the cannons sooner and die. The 24-tick column assumes every tick of a frame is a p99 tick, so it is an upper bound.
+
+In Chromium with software rendering, the 4x walled Night ran at 237.5 ticks per second, with a simulation mean of 0.11 ms, against 236.9 and 0.033 ms for the logistics reference. One run on one machine, with no mobile hardware.
 
 ## Known gaps
 

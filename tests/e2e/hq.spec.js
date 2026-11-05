@@ -22,7 +22,7 @@ function hqSuite(input) {
         await start(page);
         const s = await sample(page);
         expect(s.buildings).toEqual([]);
-        expect(s.menuState).toEqual({hq: 'available', outpost: 'locked', factory: 'locked', powerPlant: 'locked', autocannon: 'locked'});
+        expect(s.menuState).toEqual({hq: 'available', outpost: 'locked', factory: 'locked', powerPlant: 'locked', autocannon: 'locked', wall: 'locked', gateVertical: 'locked', gateHorizontal: 'locked'});
         expect(s.menuLabels.hq).toBe('HQ 3x3\n0c · 0 AP');
         expect(s.ui).toMatchObject({endDayVisible: true, endDayEnabled: false, buildMenuVisible: true});
         for (const type of LOCKED_TYPES) await expect(byAction(page, `build-${type}`)).toHaveAttribute('data-state', 'locked');
@@ -82,7 +82,7 @@ function hqSuite(input) {
         expect(s.buildings).toEqual([{id: 'hq-1', type: 'hq', col: 11, row: 7, width: 3, height: 3, enabled: true, hp: 600}]);
         expect(s.buildingViews).toHaveLength(1);
         expect(s.resources).toEqual({credits: START, ap: 5});
-        expect(s.menuState).toEqual({hq: 'built', outpost: 'available', factory: 'available', powerPlant: 'available', autocannon: 'available'});
+        expect(s.menuState).toEqual({hq: 'built', outpost: 'available', factory: 'available', powerPlant: 'available', autocannon: 'available', wall: 'available', gateVertical: 'available', gateHorizontal: 'available'});
         expect(s.menuLabels.hq).toBe('HQ 3x3\nBUILT');
         expect(s.placement.selectedType).toBeNull();
         expect(s.ui).toMatchObject({cancelVisible: false, endDayEnabled: true});
@@ -118,16 +118,17 @@ function hqSuite(input) {
         await expect(byAction(page, 'toggle-power')).toHaveCount(1);
     });
 
-    test('the five-button menu keeps Cancel clear of the other buttons', async ({page}) => {
+    test('the build menu keeps Cancel clear of the other buttons', async ({page}) => {
         await start(page);
         await pressAction(page, 'build-hq');
         await expect(byAction(page, 'cancel-placement')).toHaveCount(1);
         const box = (action) => byAction(page, action).boundingBox();
         const boxes = [];
         for (const action of ['build-hq', ...LOCKED_TYPES.map((t) => `build-${t}`), 'cancel-placement', 'end-day']) boxes.push(await box(action));
-        for (let i = 1; i < boxes.length; i++) {
-            expect(boxes[i - 1].y + boxes[i - 1].height).toBeLessThanOrEqual(boxes[i].y);
-        }
+        const overlaps = (p, q) => p.x < q.x + q.width && q.x < p.x + p.width && p.y < q.y + q.height && q.y < p.y + p.height;
+        boxes.forEach((first, i) => {
+            for (const second of boxes.slice(i + 1)) expect(overlaps(first, second)).toBe(false);
+        });
     });
 
     test('Day and Night keep the unlocked menu state', async ({page}) => {

@@ -13,12 +13,55 @@
  *               powered (see core/pollution.js)
  *   maxHp:      starting and maximum hit points
  *   switchable: false means setEnabled rejects it; otherwise it can be toggled
+ *   fortification: a passive barrier. It blocks mutants, who attack it only when
+ *               it is in their way: it is never a target and does not displace
+ *               a spawn. It can be demolished during Day.
+ *   gate:       {tier, orientation, passageAxis}, on gate types only. A gate
+ *               stands on a road. passageAxis is the direction of travel it
+ *               lets through ('x' is east-west); core/gates.js runs every gate
+ *               with one state machine
  *
  * HQ comes first, because it is the first thing built. It is an ordinary
  * building to power, settlement and pollution, with extra rules in
  * BuildingPlacement, and losing it ends the run (see ShiftCycle.defeat).
  */
 export const HQ_TYPE = 'hq';
+export const WALL_TYPE = 'wall';
+
+const NO_OPERATIONS = Object.freeze({income: 0, upkeep: 0});
+const NO_POWER = Object.freeze({supply: 0, demand: 0});
+
+/** Everything that differs between gate tiers. A new tier is one more row here. */
+const GATE_TIERS = Object.freeze({
+    standard: Object.freeze({idPrefix: 'gate', namePrefix: '', cost: Object.freeze({credits: 100, ap: 1}), maxHp: 150}),
+});
+
+/** A Vertical Gate is a vertical barrier: it crosses an east-west road. */
+const GATE_ORIENTATIONS = Object.freeze({
+    Vertical: Object.freeze({orientation: 'vertical', passageAxis: 'x'}),
+    Horizontal: Object.freeze({orientation: 'horizontal', passageAxis: 'y'}),
+});
+
+function gateTypes() {
+    const types = {};
+    for (const [tier, {idPrefix, namePrefix, cost, maxHp}] of Object.entries(GATE_TIERS)) {
+        for (const [suffix, {orientation, passageAxis}] of Object.entries(GATE_ORIENTATIONS)) {
+            const id = `${idPrefix}${suffix}`;
+            types[id] = Object.freeze({
+                id, name: `${namePrefix}${suffix} Gate`, width: 1, height: 1,
+                cost,
+                operations: NO_OPERATIONS,
+                power: NO_POWER,
+                pollutionPerNight: 0,
+                maxHp,
+                switchable: false,
+                fortification: true,
+                gate: Object.freeze({tier, orientation, passageAxis}),
+            });
+        }
+    }
+    return types;
+}
 
 export const BUILDING_TYPES = Object.freeze({
     hq: Object.freeze({
@@ -62,6 +105,17 @@ export const BUILDING_TYPES = Object.freeze({
         pollutionPerNight: 0,
         maxHp: 150,
     }),
+    wall: Object.freeze({
+        id: WALL_TYPE, name: 'Wall', width: 1, height: 1,
+        cost: Object.freeze({credits: 25, ap: 0}),
+        operations: NO_OPERATIONS,
+        power: NO_POWER,
+        pollutionPerNight: 0,
+        maxHp: 100,
+        switchable: false,
+        fortification: true,
+    }),
+    ...gateTypes(),
 });
 
 /** Definition for a type id, or null if unknown. */

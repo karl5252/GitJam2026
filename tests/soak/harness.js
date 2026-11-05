@@ -13,7 +13,9 @@
 import {createHash} from 'node:crypto';
 import {Autocannons} from '../../src/core/autocannons.js';
 import {BuildingPlacement} from '../../src/core/buildingPlacement.js';
+import {getBuildingType} from '../../src/core/buildingTypes.js';
 import {Economy, STARTING_RESOURCES} from '../../src/core/economy.js';
+import {Gates} from '../../src/core/gates.js';
 import {Grid} from '../../src/core/grid.js';
 import {Logistics} from '../../src/core/logistics.js';
 import {Mutants, MUTANT, distanceToFootprint} from '../../src/core/mutants.js';
@@ -31,7 +33,7 @@ const GRID = {cols: 24, rows: 16, tileSize: 32, originX: 256, originY: 104};
 /**
  * @param {{seed?: number, schedule?: readonly number[]|null, resources?: {credits: number, ap: number},
  *          openConstruction?: boolean, requireHq?: boolean, roads?: boolean, pollution?: number,
- *          firstNight?: number}} options
+ *          firstNight?: number, rng?: {nextInt: Function, snapshot: Function}}} options
  *   schedule - fixed spawn ticks; null uses the real nightPlan
  *   requireHq - the real HQ-first rules, as GameScene uses them
  *   roads - the real road rules, as GameScene uses them. Off by default, which
@@ -39,13 +41,14 @@ const GRID = {cols: 24, rows: 16, tileSize: 32, originX: 256, originY: 104};
  *   pollution - the starting value
  *   firstNight - earlier nights spawn nothing and settle nothing, so a benchmark
  *   can start late on the real calendar
+ *   rng - replaces the seeded RNG, so a test can choose spawn positions
  */
-export function createWorld({seed = 731, schedule = null, resources = STARTING_RESOURCES, openConstruction = false, requireHq = false, roads: useRoads = false, pollution: startingPollution = 0, firstNight = 1} = {}) {
+export function createWorld({seed = 731, schedule = null, resources = STARTING_RESOURCES, openConstruction = false, requireHq = false, roads: useRoads = false, pollution: startingPollution = 0, firstNight = 1, rng: fixedRng = null} = {}) {
     const clock = new SimulationClock();
     const economy = new Economy(resources);
     const pollution = new Pollution(startingPollution);
     const grid = new Grid(GRID);
-    const rng = new SeededRandom(seed);
+    const rng = fixedRng ?? new SeededRandom(seed);
     const roads = useRoads ? new RoadNetwork({grid}) : null;
     let cycle;
     const placement = new BuildingPlacement(grid, economy, openConstruction ? {requireHq, roads} : {isConstructionAllowed: () => cycle.isConstructionAllowed, requireHq, roads});
@@ -55,13 +58,15 @@ export function createWorld({seed = 731, schedule = null, resources = STARTING_R
         canEndDay: () => !requireHq || placement.hqBuilt,
         settleNight: (day) => (day < firstNight ? null : settleNight({day, buildings: placement.buildings(), economy, pollution})),
     });
-    const logistics = roads ? new Logistics({cycle, placement, grid, roads, economy}) : null;
+    const gates = new Gates({cycle, placement, grid});
+    const logistics = roads ? new Logistics({cycle, placement, grid, roads, economy, gates}) : null;
     const mutants = new Mutants({
         cycle,
         placement,
         grid,
         rng,
         logistics,
+        gates,
         schedule: schedule ?? [],
         planNight: schedule ? null : (day) => (day < firstNight
             ? {schedule: []}
@@ -74,6 +79,7 @@ export function createWorld({seed = 731, schedule = null, resources = STARTING_R
     const tick = (t) => {
         cycle.onTick(t);
         const defense = autocannons.step();
+        gates.step(logistics?.gateDemands());
         const effects = mutants.step();
         const deliveries = logistics?.step().deliveries ?? 0;
         return {defense, effects, deliveries};
@@ -87,7 +93,7 @@ export function createWorld({seed = 731, schedule = null, resources = STARTING_R
         return result;
     };
 
-    return {clock, economy, pollution, grid, rng, placement, roads, logistics, cycle, mutants, autocannons, tick, place};
+    return {clock, economy, pollution, grid, rng, placement, roads, logistics, gates, cycle, mutants, autocannons, tick, place};
 }
 
 /** The state compared between runs and between Node and Chromium. */
@@ -125,12 +131,14 @@ export function checkInvariants(world) {
     }
 
     const bounds = grid.footprintRect({col: 0, row: 0, width: grid.cols, height: grid.rows});
-    const rects = buildings.map((b) => [b.id, grid.footprintRect(b)]);
+    // A gate can close on a mutant in the doorway, so only gates are exempt.
+    const rects = buildings.filter((b) => !getBuildingType(b.type).gate).map((b) => [b.id, grid.footprintRect(b)]);
     if (new Set(living.map((m) => m.id)).size !== living.length) problems.push('duplicate mutant ids');
     for (const mutant of living) {
         if (!Number.isInteger(mutant.hp) || mutant.hp < 1 || mutant.hp > MUTANT.maxHp) problems.push(`${mutant.id} has hp ${mutant.hp}`);
         if (mutant.attackTimer < 1 || mutant.attackTimer > MUTANT.attackCooldownTicks) problems.push(`${mutant.id} has attackTimer ${mutant.attackTimer}`);
-        if (distanceToFootprint(mutant, bounds) !== 0) problems.push(`${mutant.id} left the grid at ${mutant.x},${mutant.y}`);
+        // One step outside is where a mutant arrives at a fortified border cell.
+        if (distanceToFootprint(mutant, bounds) > MUTANT.speed) problems.push(`${mutant.id} left the grid at ${mutant.x},${mutant.y}`);
         for (const [id, rect] of rects) {
             if (distanceToFootprint(mutant, rect) === 0) problems.push(`${mutant.id} is inside ${id}`);
         }

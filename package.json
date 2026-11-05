@@ -15,6 +15,7 @@
     "test:soak": "node --expose-gc tests/soak/domain.soak.js",
     "test:soak:fortress": "node tests/soak/fortress.soak.js",
     "test:soak:logistics": "node tests/soak/logistics.soak.js",
+    "test:soak:fortification": "node tests/soak/fortification.soak.js",
     "test:soak:browser": "playwright test --config playwright.soak.config.js"
   },
   "dependencies": {

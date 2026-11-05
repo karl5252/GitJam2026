@@ -115,7 +115,7 @@ function gameOverSuite(input) {
         expect(s.mutants).toEqual([]);
         expect(s.autocannons).toEqual([]);
         expect(s.selectedBuilding).toBeNull();
-        expect(s.menuState).toEqual({hq: 'available', outpost: 'locked', factory: 'locked', powerPlant: 'locked', autocannon: 'locked'});
+        expect(s.menuState).toEqual({hq: 'available', outpost: 'locked', factory: 'locked', powerPlant: 'locked', autocannon: 'locked', wall: 'locked', gateVertical: 'locked', gateHorizontal: 'locked'});
         expect(s.menuLabels.hq).toBe('HQ 3x3\n0c · 0 AP');
         expect(s.ui.endDayEnabled).toBe(false);
         expect(s.powerView.text).toBe('Power 0 / 0\nNORMAL');

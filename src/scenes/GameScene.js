@@ -1,12 +1,13 @@
 import Phaser from 'phaser';
 import {GamePhase, defeatGame, startGame} from '../core/gamePhase.js';
 import {Grid} from '../core/grid.js';
-import {BUILDING_TYPES, HQ_TYPE, getBuildingType} from '../core/buildingTypes.js';
+import {BUILDING_TYPES, HQ_TYPE, WALL_TYPE, getBuildingType} from '../core/buildingTypes.js';
 import {BuildingPlacement, HQ_ALREADY_BUILT} from '../core/buildingPlacement.js';
 import {Economy} from '../core/economy.js';
 import {SimulationClock} from '../core/simulationClock.js';
 import {SeededRandom, DEFAULT_SEED, parseSeed} from '../core/seededRandom.js';
 import {ShiftCycle, Shift} from '../core/shiftCycle.js';
+import {Gates} from '../core/gates.js';
 import {Logistics} from '../core/logistics.js';
 import {ROAD_ACCESS_TYPES, RoadFailure, RoadNetwork, outgoingDock, receivingDock} from '../core/roads.js';
 import {settleNight} from '../core/settlement.js';
@@ -17,6 +18,7 @@ import {nightPlan, waveProgress} from '../core/waves.js';
 import {Autocannons} from '../core/autocannons.js';
 import {TEST_MODE} from '../testMode.js';
 import {addProxy, markScene, setBodyState} from '../testShadow/TestProxy.js';
+import {createEconomyQa} from '../testShadow/economyQa.js';
 import {createLayoutQa} from '../testShadow/layoutSnapshot.js';
 import {createPerfProbe} from '../testShadow/PerfProbe.js';
 import {parseStressSchedule} from '../testShadow/stressParams.js';
@@ -27,6 +29,7 @@ import {GameOverLayer} from './GameOverLayer.js';
 import {SpeedControls} from './SpeedControls.js';
 import {RoadLayer} from './RoadLayer.js';
 import {TruckLayer} from './TruckLayer.js';
+import {GateLayer} from './GateLayer.js';
 
 const GRID_COLS = 24;
 const GRID_ROWS = 16;
@@ -36,7 +39,11 @@ const GRID_LINE_COLOR = 0x78909c;
 const HIGHLIGHT_COLOR = 0xffeb3b;
 export const PREVIEW_VALID_COLOR = 0x4caf50;
 export const PREVIEW_INVALID_COLOR = 0xe53935;
-const BUILDING_COLORS = {hq: 0xc9a227, outpost: 0x9e9e9e, factory: 0x616161, powerPlant: 0x5c6bc0, autocannon: 0x00897b};
+const ROAD_TILE_COLOR = 0x455a64; // a gate's barrier is drawn over its road
+const BUILDING_COLORS = {
+    hq: 0xc9a227, outpost: 0x9e9e9e, factory: 0x616161, powerPlant: 0x5c6bc0, autocannon: 0x00897b,
+    wall: 0xa1887f, gateVertical: ROAD_TILE_COLOR, gateHorizontal: ROAD_TILE_COLOR,
+};
 const BUILDING_STROKE = 0x212121;
 export const UNPOWERED_STROKE = 0xe53935; // enabled but not operating (low power / blackout)
 export const DISABLED_ALPHA = 0.35; // switched OFF by the player
@@ -48,6 +55,11 @@ const PLACEMENT_HINTS = {
     [RoadFailure.ROAD_REQUIRED]: 'A Factory dock depends on this road',
     [RoadFailure.HQ_RING_PERMANENT]: 'The HQ road ring is permanent',
     [RoadFailure.NOT_CONNECTED]: 'Roads must extend the connected network',
+    [RoadFailure.GATE_NEEDS_ROAD]: 'Gates go on a road',
+    [RoadFailure.GATE_NEEDS_STRAIGHT_ROAD]: 'This gate needs a straight road through it',
+    [RoadFailure.GATE_ON_HQ_RING]: 'No gates on the HQ road ring',
+    [RoadFailure.GATE_ON_DOCK]: 'No gates on a dock tile',
+    [RoadFailure.GATE_DEPENDS_ON_ROAD]: 'A gate depends on this road',
 };
 
 const POWER_STATUS_LABELS = {
@@ -60,11 +72,19 @@ const BUTTON_IDLE_STROKE = 0x90a4ae;
 const BUTTON_SELECTED_STROKE = 0xffeb3b;
 const BUTTON_DISABLED_ALPHA = 0.45;
 
-// Build menu lives in the band left of the grid (grid x starts at 256).
+// Build menu lives in the band left of the grid (grid x starts at 256), in two
+// columns. Every button is at least 82 logical pixels on each side, which is 44
+// CSS pixels at 844x390. Road, Wall and the gates fill the slots below the
+// buildings; slots run left to right, top to bottom.
 const MENU_X = 128;
-const MENU_BUTTON = {width: 192, height: 64};
-const MENU_TOP = 108;
-const MENU_STEP = 68;
+const MENU_BUTTON = {width: 192, height: 84};
+const MENU_CELL = {width: 120, height: 84};
+const MENU_COLUMNS = [66, 190];
+const MENU_TOP = 122;
+const MENU_STEP = 88;
+const MENU_SLOTS = {road: 5, wall: 6, gateVertical: 8, gateHorizontal: 9};
+const RIGHT_ACTION = {x: 1152, y: 560}; // Cancel and the selection button share it: placing clears selection
+const menuSlot = (slot) => ({x: MENU_COLUMNS[slot % 2], y: MENU_TOP + Math.floor(slot / 2) * MENU_STEP});
 
 /**
  * Title + Start button. Start (READY -> STARTED) hides both, creates a 24x16
@@ -134,6 +154,10 @@ export class GameScene extends Phaser.Scene {
         this.roadLayer = null;
         this.logistics = null;
         this.truckLayer = null;
+        this.gates = null;
+        this.gateLayer = null;
+        this.dragCell = null;
+        this.demolishProxy = null;
         this.roadButton = null;
         this.roadProxy = null;
         this.roadMode = false;
@@ -177,7 +201,8 @@ export class GameScene extends Phaser.Scene {
         // Game-specific, TEST_MODE-only simulation controls. They call the
         // real clock / shift-cycle methods; stepTicks uses the same callback
         // as update() and drives real shift transitions. resume and stepTicks
-        // never tick during Day Shift. They cannot place or spend anything.
+        // never tick during Day Shift. They cannot place or spend anything;
+        // only __qa.economy, a manual testing aid, changes a balance.
         // window.__qa (and these controls) are removed with the QASurface on
         // shutdown and never exist in production builds.
         if (TEST_MODE && window.__qa) {
@@ -202,6 +227,7 @@ export class GameScene extends Phaser.Scene {
             };
             window.__qa.perf = createPerfProbe(this);
             window.__qa.layout = createLayoutQa(this);
+            window.__qa.economy = createEconomyQa(this);
         }
 
         markScene(this, {phase: this.phase});
@@ -264,12 +290,15 @@ export class GameScene extends Phaser.Scene {
             roads: this.roads,
         });
         this.roadLayer = new RoadLayer(this, this.grid);
+        this.gates = new Gates({cycle: this.cycle, placement: this.placement, grid: this.grid});
+        this.gateLayer = new GateLayer(this, this.grid);
         this.logistics = this.roads ? new Logistics({
             cycle: this.cycle,
             placement: this.placement,
             grid: this.grid,
             roads: this.roads,
             economy: this.economy,
+            gates: this.gates,
         }) : null;
         this.truckLayer = new TruckLayer(this, this.grid);
         // TEST_MODE only: ?mutants=off gives the real system an empty schedule,
@@ -285,6 +314,7 @@ export class GameScene extends Phaser.Scene {
             rng: this.rng,
             schedule: fixedSchedule ?? [],
             logistics: this.logistics,
+            gates: this.gates,
             planNight: fixedSchedule ? null : (day) => nightPlan({
                 day,
                 pollution: this.pollution.value,
@@ -466,6 +496,7 @@ export class GameScene extends Phaser.Scene {
             this.updatePollutionHud();
             if (isDay && this.cycle.lastSettlement) this.showSettlement(this.cycle.lastSettlement);
             if (this.cycle.shift === Shift.DEFEATED) this.enterDefeat();
+            this.updateToggleButton(); // Demolish is for Day
         }
         this.updateShiftHud();
         const mutants = this.mutants.snapshot();
@@ -473,6 +504,7 @@ export class GameScene extends Phaser.Scene {
         this.mutantLayer.sync(mutants, buildings);
         this.updateWaveHud(mutants);
         if (this.logistics) this.truckLayer.sync(this.logistics.snapshot());
+        this.gateLayer.sync(this.gates.snapshot());
         this.autocannonLayer.sync({
             cannons: this.autocannons.snapshot(),
             mutants,
@@ -499,8 +531,8 @@ export class GameScene extends Phaser.Scene {
 
     // ---- Build menu --------------------------------------------------------
 
-    createButton(y, label, fill, x = MENU_X) {
-        const rect = this.add.rectangle(x, y, MENU_BUTTON.width, MENU_BUTTON.height, fill)
+    createButton(y, label, fill, x = MENU_X, size = MENU_BUTTON) {
+        const rect = this.add.rectangle(x, y, size.width, size.height, fill)
             .setStrokeStyle(3, BUTTON_IDLE_STROKE)
             .setInteractive({useHandCursor: true})
             .setDepth(4);
@@ -513,25 +545,39 @@ export class GameScene extends Phaser.Scene {
         return {rect, text};
     }
 
+    /** A half-width menu button, in one of the two columns. */
+    createMenuCell(slot, label) {
+        const {x, y} = menuSlot(slot);
+        const button = this.createButton(y, label, 0x37474f, x, MENU_CELL);
+        button.text.setStyle({fontSize: '17px', wordWrap: {width: MENU_CELL.width - 6}});
+        return button;
+    }
+
+    addBuildButton(slot, type, label) {
+        const button = this.createMenuCell(slot, label);
+        button.rect.on('pointerdown', () => this.enterPlacementMode(type.id));
+        button.type = type;
+        button.proxy = null;
+        this.buildButtons[type.id] = button;
+    }
+
     createBuildMenu() {
-        let y = MENU_TOP;
-        for (const type of Object.values(BUILDING_TYPES).filter((t) => this.hqRequired || t.id !== HQ_TYPE)) {
-            const label = `${type.name} ${type.width}x${type.height}\n${type.cost.credits}c · ${type.cost.ap} AP`;
-            const button = this.createButton(y, label, 0x37474f);
-            button.rect.on('pointerdown', () => this.enterPlacementMode(type.id));
-            button.type = type;
-            button.proxy = null;
-            this.buildButtons[type.id] = button;
-            y += MENU_STEP;
-        }
+        const buildings = Object.values(BUILDING_TYPES).filter((t) => !t.fortification && (this.hqRequired || t.id !== HQ_TYPE));
+        buildings.forEach((type, slot) => {
+            this.addBuildButton(slot, type, `${type.name} ${type.width}x${type.height}\n${type.cost.credits}c · ${type.cost.ap} AP`);
+        });
 
         if (this.roads) {
-            this.roadButton = this.createButton(y, 'Road\nfree', 0x37474f);
+            this.roadButton = this.createMenuCell(MENU_SLOTS.road, 'Road\nfree');
             this.roadButton.rect.on('pointerdown', () => this.enterRoadMode());
-            y += MENU_STEP;
+            const cost = ({cost: {credits, ap}}) => (ap ? `${credits}c · ${ap} AP` : `${credits}c`);
+            const {wall, gateVertical, gateHorizontal} = BUILDING_TYPES;
+            this.addBuildButton(MENU_SLOTS.wall, wall, `Wall\n${cost(wall)}`);
+            this.addBuildButton(MENU_SLOTS.gateVertical, gateVertical, `Gate |\n${cost(gateVertical)}`);
+            this.addBuildButton(MENU_SLOTS.gateHorizontal, gateHorizontal, `Gate —\n${cost(gateHorizontal)}`);
         }
 
-        this.cancelButton = this.createButton(y, 'Cancel', 0x8e2b2b);
+        this.cancelButton = this.createButton(RIGHT_ACTION.y, 'Cancel', 0x8e2b2b, RIGHT_ACTION.x);
         this.cancelButton.rect.on('pointerdown', () => this.exitPlacementMode());
         this.setCancelVisible(false);
 
@@ -539,39 +585,64 @@ export class GameScene extends Phaser.Scene {
         this.endDayButton = this.createButton(620, 'END DAY', 0x6d4c41);
         this.endDayButton.rect.on('pointerdown', () => this.handleEndDay());
 
-        // Power switch for the selected building, right band. Day AND Night.
-        this.toggleButton = this.createButton(560, '', 0x37474f, 1152);
-        this.toggleButton.rect.on('pointerdown', () => this.handleTogglePower());
+        // What can be done to the selected building, right band: its power
+        // switch in Day AND Night, or Demolish for a fortification during Day.
+        this.toggleButton = this.createButton(RIGHT_ACTION.y, '', 0x37474f, RIGHT_ACTION.x);
+        this.toggleButton.rect.on('pointerdown', () => this.handleSelectionAction());
         this.updateToggleButton();
     }
 
     // ---- Building selection / power switch ---------------------------------
 
-    /** Visible whenever an existing building is selected (both shifts). */
-    updateToggleButton() {
+    /** The selected building, and whether Demolish applies to it right now. */
+    selection() {
         const building = this.selectedBuildingId
             ? this.placement.buildings().find((b) => b.id === this.selectedBuildingId)
             : null;
+        const type = building ? getBuildingType(building.type) : null;
+        return {building, type, demolishable: Boolean(type?.fortification) && this.cycle.isConstructionAllowed};
+    }
+
+    /** Visible whenever a switchable building is selected, or a fortification during Day. */
+    updateToggleButton() {
+        const {building, type, demolishable} = this.selection();
         const {rect, text} = this.toggleButton;
-        const visible = Boolean(building) && getBuildingType(building.type).switchable !== false;
+        const switchable = Boolean(type) && type.switchable !== false;
+        const visible = switchable || demolishable;
         rect.setVisible(visible);
         text.setVisible(visible);
-        if (!visible) {
-            rect.disableInteractive();
+        if (!switchable) {
             this.toggleProxy?.destroy();
             this.toggleProxy = null;
+        }
+        if (!demolishable) {
+            this.demolishProxy?.destroy();
+            this.demolishProxy = null;
+        }
+        if (!visible) {
+            rect.disableInteractive();
+            return;
+        }
+        rect.setInteractive({useHandCursor: true});
+        if (demolishable) {
+            text.setText(`${building.id}\nDemolish`);
+            this.demolishProxy ??= addProxy(this, rect, 'demolish', {label: 'Demolish'});
+            this.demolishProxy.set({target: building.id});
             return;
         }
         text.setText(`${building.id}\n${building.enabled ? 'Switch OFF' : 'Switch ON'}`);
-        rect.setInteractive({useHandCursor: true});
         this.toggleProxy ??= addProxy(this, rect, 'toggle-power', {label: 'Toggle power'});
         this.toggleProxy.set({target: building.id, enabled: building.enabled});
     }
 
-    /** Flip the selected building through the real domain method. */
-    handleTogglePower() {
-        const building = this.placement.buildings().find((b) => b.id === this.selectedBuildingId);
+    /** Act on the selected building through the real domain methods. */
+    handleSelectionAction() {
+        const {building, demolishable} = this.selection();
         if (!building) return;
+        if (demolishable) {
+            if (this.placement.demolish(building.id).ok) this.handleBuildingsDestroyed([building.id]);
+            return;
+        }
         this.placement.setEnabled(building.id, !building.enabled);
         this.refreshPower();
     }
@@ -784,6 +855,7 @@ export class GameScene extends Phaser.Scene {
             this.previewRect.setVisible(false);
             this.roadLayer.showRing(null);
             this.roadLayer.showDock(null);
+            this.gateLayer.showPreview(null);
             return;
         }
         this.drawPreview();
@@ -801,6 +873,8 @@ export class GameScene extends Phaser.Scene {
         const hqRing = this.roads && this.placement.selectedType === HQ_TYPE;
         this.roadLayer.showRing(hqRing ? this.previewResult.footprint : null, color);
         this.roadLayer.showDock(this.previewResult.dock ?? null, color);
+        const gate = this.placement.selectedType ? getBuildingType(this.placement.selectedType).gate : null;
+        this.gateLayer.showPreview(gate ? this.previewResult.footprint : null, gate?.orientation, color);
     }
 
     addBuildingView(building) {
@@ -841,26 +915,46 @@ export class GameScene extends Phaser.Scene {
         if (this.placement.isPlacing) {
             this.updatePreview(cell); // touch has no hover: show where the tap landed
             if (!cell) return;
-            const {building, ...result} = this.placement.placeAt(cell);
-            this.lastResult = result;
-            this.showHint(result.ok ? null : result.reason);
-            if (result.ok) {
-                this.addBuildingView(building);
-                this.refreshRoads();
-                this.updateHud();
-                this.refreshPower(); // new supply/demand takes effect immediately
-                this.updatePreview(cell); // re-validate: cell now occupied, balances lower
-                if (building.type === HQ_TYPE) { // the domain ended placement; the rest unlocks
-                    this.resetPlacementUi();
-                    this.refreshBuildMenu();
-                    this.refreshEndDay();
-                }
-            }
+            this.dragCell = this.placement.selectedType === WALL_TYPE ? cell : null;
+            this.placeOnCell(cell);
             return;
         }
 
         // Normal mode: never places. An occupied cell selects its building.
         this.selectAt(cell);
+    }
+
+    /** One real placement attempt, from a press or a drag. */
+    placeOnCell(cell) {
+        const {building, ...result} = this.placement.placeAt(cell);
+        this.lastResult = result;
+        this.showHint(result.ok ? null : result.reason);
+        if (!result.ok) return;
+        this.addBuildingView(building);
+        this.refreshRoads();
+        this.updateHud();
+        this.refreshPower(); // new supply/demand takes effect immediately
+        this.updatePreview(cell); // re-validate: cell now occupied, balances lower
+        if (building.type === HQ_TYPE) { // the domain ended placement; the rest unlocks
+            this.resetPlacementUi();
+            this.refreshBuildMenu();
+            this.refreshEndDay();
+        }
+    }
+
+    /**
+     * Walls follow a drag. Every tile between two pointer samples is visited, so
+     * a fast drag leaves no gap, and each is an ordinary placement with its own
+     * validation and cost.
+     */
+    dragWallsTo(cell) {
+        let {col, row} = this.dragCell;
+        while (col !== cell.col || row !== cell.row) {
+            if (Math.abs(cell.col - col) >= Math.abs(cell.row - row)) col += Math.sign(cell.col - col);
+            else row += Math.sign(cell.row - row);
+            this.placeOnCell({col, row});
+        }
+        this.dragCell = cell;
     }
 
     handleGridPointerMove(pointer, over) {
@@ -872,6 +966,8 @@ export class GameScene extends Phaser.Scene {
         }
         if (!this.placement?.isPlacing || this.phase === GamePhase.DEFEATED) return;
         const cell = over.length > 0 ? null : this.grid.worldToCell(pointer.worldX, pointer.worldY);
+        if (!pointer.isDown) this.dragCell = null;
+        if (cell && this.dragCell) this.dragWallsTo(cell);
         this.updatePreview(cell);
     }
 
@@ -906,8 +1002,8 @@ export class GameScene extends Phaser.Scene {
     /**
      * One fixed 1/60 s simulation step. Called by both update() and manual
      * QA stepping. Drives the shift cycle (night countdown and the automatic
-     * Night -> Day transition), then turrets, then the surviving mutants. The
-     * order matters: a mutant killed this tick cannot act, and if settlement
+     * Night -> Day transition), then turrets, gates, the surviving mutants and
+     * trucks. The order matters: a mutant killed this tick cannot act, and if settlement
      * throws on the final tick nothing else steps, so the retried tick cannot
      * apply anything twice. The counter lets QA verify that every tick ran
      * this path.
@@ -917,12 +1013,13 @@ export class GameScene extends Phaser.Scene {
         this.cycle?.onTick(tick);
         const defense = this.autocannons?.step();
         if (defense?.shots.length) this.autocannonLayer.recordShots(defense.shots, this.clock.tick);
+        this.gates?.step(this.logistics?.gateDemands());
         const effects = this.mutants?.step();
         if (effects?.destroyed.length) this.handleBuildingsDestroyed(effects.destroyed);
         if (this.logistics?.step().deliveries) this.updateHud();
     }
 
-    /** Domain already removed these buildings; bring the presentation in line. */
+    /** Domain already removed these buildings, destroyed or demolished; bring the presentation in line. */
     handleBuildingsDestroyed(ids) {
         for (const id of ids) {
             this.buildingViews.get(id).destroy();
@@ -1019,6 +1116,10 @@ export class GameScene extends Phaser.Scene {
             dockPreviewView: this.roadLayer ? this.roadLayer.dockPreviewView() : null,
             logistics: this.logistics ? this.logistics.snapshot() : null,
             truckViews: this.truckLayer ? this.truckLayer.views() : null,
+            // Domain gate state, then the rendered barriers and the placement preview.
+            gates: this.gates ? this.gates.snapshot() : null,
+            gateViews: this.gateLayer ? this.gateLayer.views() : null,
+            gatePreviewView: this.gateLayer ? this.gateLayer.previewView() : null,
             roadMode: this.roadMode,
             ringPreviewView: this.roadLayer ? this.roadLayer.ringPreviewView() : null,
             placementHint: this.placementHint ? this.placementHint.text : null,

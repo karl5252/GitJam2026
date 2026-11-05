@@ -24,6 +24,11 @@
  *
  * A truck whose Factory is destroyed finishes a delivery in progress and is
  * then removed. All values are provisional.
+ *
+ * A truck stops at the centre of the tile before a gate until it is OPEN, then
+ * crosses. gateDemands() reports what every truck needs right now, so a gate
+ * stays open until the last one has reached the tile beyond it. A gate lost
+ * while a truck waits simply stops being in the way.
  */
 import {calculatePower} from './power.js';
 import {HQ_TYPE} from './buildingTypes.js';
@@ -59,6 +64,7 @@ export class Logistics {
     #grid;
     #roads;
     #economy;
+    #gates;
     #factories = new Map(); // Factory id -> {progress, stored, noRoute}
     #trucks = new Map(); // Factory id -> truck
     #inNight = false;
@@ -71,14 +77,16 @@ export class Logistics {
      *          placement: import('./buildingPlacement.js').BuildingPlacement,
      *          grid: import('./grid.js').Grid,
      *          roads: import('./roads.js').RoadNetwork,
-     *          economy: import('./economy.js').Economy}} deps
+     *          economy: import('./economy.js').Economy,
+     *          gates?: import('./gates.js').Gates | null}} deps
      */
-    constructor({cycle, placement, grid, roads, economy}) {
+    constructor({cycle, placement, grid, roads, economy, gates = null}) {
         this.#cycle = cycle;
         this.#placement = placement;
         this.#grid = grid;
         this.#roads = roads;
         this.#economy = economy;
+        this.#gates = gates;
     }
 
     /** The completed Night's {loads, credits, cargoLost}, or null before the first. */
@@ -127,6 +135,25 @@ export class Logistics {
         truck.respawn = LOGISTICS.respawnTicks;
         if (truck.orphaned) this.#trucks.delete(truck.factoryId);
         return {ok: true, destroyed: true, hp: 0};
+    }
+
+    /**
+     * Gates that trucks are waiting at or crossing, derived afresh each tick.
+     * The tile a truck stands on or is leaving, and the one it is heading for.
+     * @returns {Set<string>} gate ids
+     */
+    gateDemands() {
+        const demands = new Set();
+        if (!this.#gates) return demands;
+        for (const truck of this.#trucks.values()) {
+            if (!truck.route) continue;
+            const index = Math.floor(truck.travelled / this.#grid.tileSize);
+            for (const cell of [truck.route[index], truck.route[index + 1]]) {
+                const id = cell ? this.#gates.idAt(cell) : null;
+                if (id !== null) demands.add(id);
+            }
+        }
+        return demands;
     }
 
     /** Trucks on the map, in a stable order, for mutants in melee range. */
@@ -233,7 +260,7 @@ export class Logistics {
             }
             return 0;
         }
-        if (truck.state === TruckState.IDLE) return 0;
+        if (truck.state === TruckState.IDLE || this.#heldAtGate(truck)) return 0;
 
         const length = (truck.route.length - 1) * this.#grid.tileSize;
         truck.travelled = Math.min(length, truck.travelled + LOGISTICS.truckSpeed);
@@ -244,6 +271,15 @@ export class Logistics {
             return 0;
         }
         return this.#deliver(truck);
+    }
+
+    /** Only a truck at the centre of a tile can be held: never one already crossing. */
+    #heldAtGate(truck) {
+        const {tileSize} = this.#grid;
+        if (!this.#gates || truck.travelled % tileSize !== 0) return false;
+        const next = truck.route[truck.travelled / tileSize + 1];
+        const id = next ? this.#gates.idAt(next) : null;
+        return id !== null && !this.#gates.isOpen(id);
     }
 
     #place(truck) {

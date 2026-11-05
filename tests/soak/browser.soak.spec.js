@@ -423,6 +423,7 @@ test('stepped: Chromium and the Node harness reach identical state', async ({pag
 });
 
 const LOGISTICS_FIXTURE = JSON.parse(readFileSync(new URL('../fixtures/layouts/logistics-reference.json', import.meta.url), 'utf8'));
+const FORTIFICATION = JSON.parse(readFileSync(new URL('../fixtures/layouts/fortification-reference.json', import.meta.url), 'utf8'));
 
 async function loadedBase(page, query, layout = LOGISTICS_FIXTURE) {
     await boot(page, {scene: 'game', waitForQA: true, query});
@@ -446,6 +447,25 @@ test('real time 4x: trucks on the road during the heaviest approved wave', async
     });
     expect(dawn.simulation.tick).toBe(3600);
     expect(dawn.logistics.lastNight.loads).toBeGreaterThan(0);
+    expect(perf.ticksPerSecond).toBeGreaterThanOrEqual(MIN_TICKS_PER_SECOND_AT_4X);
+    expect(errors).toEqual([]);
+});
+
+test('real time 4x: the heaviest approved wave against about 200 walls', async ({page}) => {
+    const errors = watchErrors(page);
+    await loadedBase(page, `waveBudget=40&waveLastTick=${WAVE.minLastTick}`, FORTIFICATION);
+    const walls = (await sample(page)).buildings.filter((b) => b.type === 'wall').length;
+    const label = await beginRealTimeNight(page);
+    await clickAction(page, 'speed-4');
+    await page.waitForFunction(() => window.__qa.getState().shiftCycle.shift === 'day', null, {timeout: 30_000, polling: 50});
+    const perf = await stopProbe(page);
+    const dawn = await sample(page);
+    writeResult('speed-4x-walls', {
+        scenario: 'fortification fixture, 40 mutants ending on tick 1200, 4x', ...label,
+        workload: {walls, wallsAtDawn: dawn.buildings.filter((b) => b.type === 'wall').length, lastNight: dawn.logistics.lastNight}, perf,
+    });
+    expect(walls).toBeGreaterThan(150);
+    expect(dawn.simulation.tick).toBe(3600);
     expect(perf.ticksPerSecond).toBeGreaterThanOrEqual(MIN_TICKS_PER_SECOND_AT_4X);
     expect(errors).toEqual([]);
 });

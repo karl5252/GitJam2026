@@ -115,7 +115,8 @@ test('graybox values are the approved ones', () => {
 });
 
 test('every building type has an explicit target bias', () => {
-    assert.deepEqual(Object.keys(TARGET_BIAS).sort(), Object.keys(BUILDING_TYPES).sort());
+    const targets = Object.values(BUILDING_TYPES).filter((type) => !type.fortification).map((type) => type.id);
+    assert.deepEqual(Object.keys(TARGET_BIAS).sort(), targets.sort());
 });
 
 test('invalid schedules are rejected', () => {
