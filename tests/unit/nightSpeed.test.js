@@ -17,7 +17,7 @@ const MAX_FRAMES = 40000;
 
 function base(world) {
     for (const [type, col, row] of [
-        ['hq', 12, 8], ['powerPlant', 12, 4], ['factory', 8, 8], ['autocannon', 10, 6], ['autocannon', 14, 6],
+        ['hq', 12, 8], ['powerPlant', 12, 4], ['factory', 8, 8], ['autocannon', 9, 5], ['autocannon', 15, 5],
     ]) assert.equal(world.place(type, col, row).ok, true, type);
 }
 
@@ -38,7 +38,7 @@ function runNight(world, {speed, frames = UNEVEN_FRAMES, onNightTick = () => {},
 
 /** Four Nights with player commands issued on fixed simulation ticks. */
 function playedRun({seed, speed, manual = false, switchSpeeds = false}) {
-    const world = createWorld({seed, resources: RESOURCES, requireHq: true});
+    const world = createWorld({seed, resources: RESOURCES, requireHq: true, roads: true});
     base(world);
     const [factory] = world.placement.buildings().filter((b) => b.type === 'factory').map((b) => b.id);
     const reports = [];
@@ -57,13 +57,14 @@ function playedRun({seed, speed, manual = false, switchSpeeds = false}) {
         reports,
         resources: world.economy.snapshot(),
         pollution: world.pollution.value,
+        logistics: world.logistics.snapshot(),
     };
 }
 
 test('the same seed and commands give identical outcomes at 1x, 2x and 4x', () => {
     for (const seed of [731, 98, 1]) {
         const stepped = playedRun({seed, speed: 1, manual: true});
-        assert.ok(stepped.reports.every((r) => r.gross === 150));
+        assert.ok(stepped.logistics.totals.loads >= 4, 'trucks must really deliver');
         for (const speed of SIMULATION_SPEEDS) assert.deepEqual(playedRun({seed, speed}), stepped, `seed ${seed}, ${speed}x`);
     }
 });
@@ -76,7 +77,7 @@ test('switching speed during a Night changes nothing but pacing', () => {
 test('a Night runs exactly 3600 ticks and settles once at every speed, whatever the frames', () => {
     for (const speed of SIMULATION_SPEEDS) {
         for (const frames of [[1000 / 60], [97], UNEVEN_FRAMES, [100]]) {
-            const world = createWorld({resources: RESOURCES, requireHq: true});
+            const world = createWorld({resources: RESOURCES, requireHq: true, roads: true});
             base(world);
             const before = world.economy.credits;
             runNight(world, {
@@ -86,7 +87,7 @@ test('a Night runs exactly 3600 ticks and settles once at every speed, whatever 
             });
             assert.equal(world.clock.tick, NIGHT_TICKS, `${speed}x`);
             assert.equal(world.cycle.lastSettlement.day, 1);
-            assert.equal(world.economy.credits, before + 150, 'one settlement');
+            assert.equal(world.economy.credits, before + 150, 'five deliveries');
             assert.equal(world.pollution.value, 20, 'one settlement');
             assert.equal(world.cycle.shift, Shift.DAY);
             assert.equal(world.cycle.day, 2);

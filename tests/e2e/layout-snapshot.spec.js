@@ -9,7 +9,7 @@ import {sample} from '../helpers/qa.js';
  * check what is actually rendered and that the base plays.
  */
 
-const FIXTURE = JSON.parse(readFileSync(new URL('../fixtures/layouts/fortress22-road-legal.json', import.meta.url), 'utf8'));
+const FIXTURE = JSON.parse(readFileSync(new URL('../fixtures/layouts/logistics-reference.json', import.meta.url), 'utf8'));
 
 const load = (page, snapshot, options) => page.evaluate(([s, o]) => window.__qa.layout.load(s, o), [snapshot, options]);
 const exported = (page) => page.evaluate(() => window.__qa.layout.export());
@@ -21,7 +21,7 @@ function snapshotSuite(input) {
     test('a fixture loads with real rendered positions, Power and UI', async ({page}) => {
         const state = await start(page);
         const before = (await sample(page)).resources;
-        expect(await load(page, FIXTURE)).toEqual({ok: true, buildings: 15, roads: 17});
+        expect(await load(page, FIXTURE)).toEqual({ok: true, buildings: 15, roads: 18});
 
         const s = await sample(page);
         expect(s.buildings.map(({type, col, row}) => ({type, col, row}))).toEqual(
@@ -37,8 +37,10 @@ function snapshotSuite(input) {
                 height: building.height * state.grid.tileSize,
             });
         }
-        expect(s.roadViews).toHaveLength(17);
-        expect(s.roads.connected).toBe(17);
+        expect(s.roadViews).toHaveLength(18);
+        expect(s.roads.connected).toBe(18);
+        expect(s.dockViews).toHaveLength(3);
+        expect(s.truckViews.trucks).toHaveLength(2);
         expect(s.power).toMatchObject({generation: 320, demand: 260, status: 'normal'});
         expect(s.powerView.text).toBe('Power 320 / 260\nNORMAL');
         expect(s.resources).toEqual(before);
@@ -59,7 +61,8 @@ function snapshotSuite(input) {
         await nightTo(page, 1);
         await finishNight(page);
         const s = await sample(page);
-        expect(s.settlement).toMatchObject({day: 1, gross: 300, upkeep: 0, power: {generation: 320, demand: 260, status: 'normal'}});
+        expect(s.settlement).toMatchObject({day: 1, gross: 0, upkeep: 0, power: {generation: 320, demand: 260, status: 'normal'}});
+        expect(s.logistics.lastNight).toEqual({loads: 10, credits: 300, cargoLost: 0});
         expect(s.shiftCycle.day).toBe(2);
     });
 
@@ -112,14 +115,15 @@ function snapshotSuite(input) {
     test('combat from a loaded base repeats exactly for the same seed', async ({page}) => {
         const night = async () => {
             await nightTo(page, 1500); // an exact Night tick, whatever real frames ran first
-            const {mutants, autocannons, simulation, shiftCycle} = await sample(page);
+            const {mutants, autocannons, simulation, shiftCycle, logistics, buildings} = await sample(page);
             expect(shiftCycle.elapsedNightTicks).toBe(1500);
-            return {mutants, autocannons, rng: simulation.rng};
+            return {mutants, autocannons, rng: simulation.rng, logistics, buildings};
         };
         await start(page, 'seed=98&waveBudget=20');
         await load(page, FIXTURE);
         const first = await night();
-        expect(first.mutants.length).toBeGreaterThan(0);
+        expect(first.rng.state).not.toBe(98); // spawns really happened
+        expect(first.logistics.totals.loads).toBeGreaterThan(0);
         await page.reload();
         await expect(body(page)).toHaveAttribute('data-scene', 'game');
         await page.waitForFunction(() => typeof window.__qa?.layout?.load === 'function');

@@ -55,10 +55,10 @@ function pollutionSuite(input) {
         await pressAction(page, 'cancel-placement');
     }
 
-    /** Plant (centre 17,8) and Factory (20,7), which touches the ring of HQ at 20,3: 900 Credits, 20 pollution per night. */
+    /** Plant (centre 17,8) and Factory (16,3), whose dock 18,3 is on the ring of HQ at 20,3: 900 Credits, 20 pollution per night. */
     async function poweredBase(page, state) {
         await place(page, state, 'powerPlant', 17, 8);
-        await place(page, state, 'factory', 20, 7);
+        await place(page, state, 'factory', 16, 3);
     }
 
     async function select(page, state, col, row, expectedId) {
@@ -155,14 +155,14 @@ function pollutionSuite(input) {
         const [plant, factory] = (await sample(page)).buildings;
 
         // Factory off: only the Plant emits.
-        await select(page, state, 20, 7, factory.id);
+        await select(page, state, 16, 3, factory.id);
         await toggle(page, false);
         expect((await sample(page)).pollution.emissionsPerNight).toBe(12);
         await completeNight(page);
         expect((await sample(page)).pollution.value).toBe(12);
 
         // Factory on, Plant off: blackout, so nothing emits.
-        await select(page, state, 20, 7, factory.id);
+        await select(page, state, 16, 3, factory.id);
         await toggle(page, true);
         await select(page, state, 17, 8, plant.id);
         await toggle(page, false);
@@ -189,7 +189,7 @@ function pollutionSuite(input) {
         const factory = (await sample(page)).buildings.find((b) => b.type === 'factory');
 
         await nightTo(page, 1800);
-        await select(page, state, 20, 7, factory.id);
+        await select(page, state, 16, 3, factory.id);
         await toggle(page, false);
         await stepExactly(page, 1800);
         await expect.poll(async () => (await sample(page)).shiftCycle.shift).toBe('day');

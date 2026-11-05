@@ -7,7 +7,8 @@ import {Economy} from '../core/economy.js';
 import {SimulationClock} from '../core/simulationClock.js';
 import {SeededRandom, DEFAULT_SEED, parseSeed} from '../core/seededRandom.js';
 import {ShiftCycle, Shift} from '../core/shiftCycle.js';
-import {RoadFailure, RoadNetwork} from '../core/roads.js';
+import {Logistics} from '../core/logistics.js';
+import {ROAD_ACCESS_TYPES, RoadFailure, RoadNetwork, outgoingDock, receivingDock} from '../core/roads.js';
 import {settleNight} from '../core/settlement.js';
 import {calculatePower, PowerStatus} from '../core/power.js';
 import {Pollution, calculateEmissions, threatLevel} from '../core/pollution.js';
@@ -25,6 +26,7 @@ import {AutocannonLayer} from './AutocannonLayer.js';
 import {GameOverLayer} from './GameOverLayer.js';
 import {SpeedControls} from './SpeedControls.js';
 import {RoadLayer} from './RoadLayer.js';
+import {TruckLayer} from './TruckLayer.js';
 
 const GRID_COLS = 24;
 const GRID_ROWS = 16;
@@ -40,10 +42,10 @@ export const UNPOWERED_STROKE = 0xe53935; // enabled but not operating (low powe
 export const DISABLED_ALPHA = 0.35; // switched OFF by the player
 
 const PLACEMENT_HINTS = {
-    [RoadFailure.NO_ROAD_ACCESS]: 'Factory needs a connected road',
+    [RoadFailure.NO_ROAD_ACCESS]: 'Factory dock (right side) needs a connected road',
     [RoadFailure.ROAD_OCCUPIED]: 'Buildings cannot go on roads',
     [RoadFailure.HQ_RING_OUT_OF_BOUNDS]: 'The HQ road ring must fit on the map',
-    [RoadFailure.ROAD_REQUIRED]: 'A Factory depends on this road',
+    [RoadFailure.ROAD_REQUIRED]: 'A Factory dock depends on this road',
     [RoadFailure.HQ_RING_PERMANENT]: 'The HQ road ring is permanent',
     [RoadFailure.NOT_CONNECTED]: 'Roads must extend the connected network',
 };
@@ -130,6 +132,8 @@ export class GameScene extends Phaser.Scene {
         this.speedControls = null;
         this.roads = null;
         this.roadLayer = null;
+        this.logistics = null;
+        this.truckLayer = null;
         this.roadButton = null;
         this.roadProxy = null;
         this.roadMode = false;
@@ -260,6 +264,14 @@ export class GameScene extends Phaser.Scene {
             roads: this.roads,
         });
         this.roadLayer = new RoadLayer(this, this.grid);
+        this.logistics = this.roads ? new Logistics({
+            cycle: this.cycle,
+            placement: this.placement,
+            grid: this.grid,
+            roads: this.roads,
+            economy: this.economy,
+        }) : null;
+        this.truckLayer = new TruckLayer(this, this.grid);
         // TEST_MODE only: ?mutants=off gives the real system an empty schedule,
         // for E2E suites about power, economy and pollution, and the soak suites
         // can set a fixed one. Otherwise the formula in core/waves.js plans each
@@ -272,6 +284,7 @@ export class GameScene extends Phaser.Scene {
             grid: this.grid,
             rng: this.rng,
             schedule: fixedSchedule ?? [],
+            logistics: this.logistics,
             planNight: fixedSchedule ? null : (day) => nightPlan({
                 day,
                 pollution: this.pollution.value,
@@ -373,11 +386,12 @@ export class GameScene extends Phaser.Scene {
     /** Render a settlement report (already calculated in core). */
     showSettlement(report) {
         const signed = (n) => (n > 0 ? `+${n}` : `${n}`);
+        const delivered = this.logistics?.lastNight?.credits ?? 0; // paid on delivery, shown here
         this.settlementPanel.setText([
             `Night ${report.day} settlement`,
-            `Income  ${signed(report.gross)}`,
+            `Income  ${signed(report.gross + delivered)}`,
             `Upkeep  ${signed(-report.upkeep)}`,
-            `Net     ${signed(report.net)}`,
+            `Net     ${signed(report.net + delivered)}`,
             `Credits ${report.creditsAfter}`,
             `Power   ${POWER_STATUS_LABELS[report.power.status]}`,
         ].join('\n')).setVisible(true);
@@ -458,6 +472,7 @@ export class GameScene extends Phaser.Scene {
         const buildings = this.placement.buildings();
         this.mutantLayer.sync(mutants, buildings);
         this.updateWaveHud(mutants);
+        if (this.logistics) this.truckLayer.sync(this.logistics.snapshot());
         this.autocannonLayer.sync({
             cannons: this.autocannons.snapshot(),
             mutants,
@@ -721,7 +736,7 @@ export class GameScene extends Phaser.Scene {
         const result = removing ? this.placement.removeRoad(cell) : this.placement.placeRoad(cell);
         this.lastResult = result;
         this.showHint(result.ok ? null : result.reason);
-        if (result.ok) this.roadLayer.sync(this.roads.tiles());
+        if (result.ok) this.refreshRoads();
         this.updateRoadPreview(cell);
     }
 
@@ -734,6 +749,17 @@ export class GameScene extends Phaser.Scene {
         const check = this.roads.has(cell) ? this.placement.previewRoadRemoval(cell) : this.placement.previewRoad(cell);
         this.previewResult = {footprint: {...cell, width: 1, height: 1}, ...check};
         this.drawPreview();
+    }
+
+    /** Redraw roads and every dock on them. Only called when they change. */
+    refreshRoads() {
+        if (!this.roads) return;
+        const buildings = this.placement.buildings();
+        const docks = buildings.flatMap((building) => {
+            if (building.type === HQ_TYPE) return [{...receivingDock(building), kind: 'hq'}];
+            return ROAD_ACCESS_TYPES.includes(building.type) ? [{...outgoingDock(building), kind: 'factory'}] : [];
+        });
+        this.roadLayer.sync(this.roads.tiles(), docks);
     }
 
     /** One short reason after a rejection, because touch has no hover. */
@@ -757,6 +783,7 @@ export class GameScene extends Phaser.Scene {
         if (!this.previewResult) {
             this.previewRect.setVisible(false);
             this.roadLayer.showRing(null);
+            this.roadLayer.showDock(null);
             return;
         }
         this.drawPreview();
@@ -773,6 +800,7 @@ export class GameScene extends Phaser.Scene {
             .setVisible(true);
         const hqRing = this.roads && this.placement.selectedType === HQ_TYPE;
         this.roadLayer.showRing(hqRing ? this.previewResult.footprint : null, color);
+        this.roadLayer.showDock(this.previewResult.dock ?? null, color);
     }
 
     addBuildingView(building) {
@@ -787,7 +815,7 @@ export class GameScene extends Phaser.Scene {
     /** Every view that follows the buildings and roads, after a QA layout load. */
     handleLayoutLoaded() {
         for (const building of this.placement.buildings()) this.addBuildingView(building);
-        this.roadLayer.sync(this.roads.tiles());
+        this.refreshRoads();
         this.selectAt(null);
         this.updateHud();
         this.refreshPower();
@@ -818,7 +846,7 @@ export class GameScene extends Phaser.Scene {
             this.showHint(result.ok ? null : result.reason);
             if (result.ok) {
                 this.addBuildingView(building);
-                this.roadLayer.sync(this.roads?.tiles() ?? []);
+                this.refreshRoads();
                 this.updateHud();
                 this.refreshPower(); // new supply/demand takes effect immediately
                 this.updatePreview(cell); // re-validate: cell now occupied, balances lower
@@ -891,6 +919,7 @@ export class GameScene extends Phaser.Scene {
         if (defense?.shots.length) this.autocannonLayer.recordShots(defense.shots, this.clock.tick);
         const effects = this.mutants?.step();
         if (effects?.destroyed.length) this.handleBuildingsDestroyed(effects.destroyed);
+        if (this.logistics?.step().deliveries) this.updateHud();
     }
 
     /** Domain already removed these buildings; bring the presentation in line. */
@@ -902,6 +931,7 @@ export class GameScene extends Phaser.Scene {
         }
         if (ids.includes(this.selectedBuildingId)) this.selectAt(null);
         this.refreshPower();
+        this.refreshRoads();
     }
 
     // ---- QA ----------------------------------------------------------------
@@ -985,6 +1015,10 @@ export class GameScene extends Phaser.Scene {
             speedView: this.speedControls ? this.speedControls.view() : null,
             roads: this.roads ? this.roads.snapshot() : null,
             roadViews: this.roadLayer ? this.roadLayer.views() : null,
+            dockViews: this.roadLayer ? this.roadLayer.dockViews() : null,
+            dockPreviewView: this.roadLayer ? this.roadLayer.dockPreviewView() : null,
+            logistics: this.logistics ? this.logistics.snapshot() : null,
+            truckViews: this.truckLayer ? this.truckLayer.views() : null,
             roadMode: this.roadMode,
             ringPreviewView: this.roadLayer ? this.roadLayer.ringPreviewView() : null,
             placementHint: this.placementHint ? this.placementHint.text : null,

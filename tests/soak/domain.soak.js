@@ -76,7 +76,7 @@ function legalSteady(world, cells, night) {
             const [col, row] = cells[list].shift();
             const result = world.place(type, col, row);
             if (result.ok) return true;
-            if (result.reason !== 'occupied') {
+            if (!['occupied', 'road-occupied', 'no-road-access'].includes(result.reason)) {
                 cells[list].unshift([col, row]);
                 return false;
             }
@@ -102,14 +102,17 @@ function legalSteady(world, cells, night) {
 
 const legalCells = () => ({
     plants: [[12, 8], [12, 4], [12, 12]],
-    factories: [[8, 8], [16, 8], [8, 4], [16, 4], [8, 12], [16, 12]],
-    cannons: [[10, 6], [14, 6], [10, 10], [14, 10], [10, 8], [14, 8], [12, 6], [12, 10], [6, 6], [18, 6], [6, 10], [18, 10]],
+    factories: [[8, 8], [8, 12], [12, 12]], // docks 10,8 on the ring, then 10,12 and 14,12
+    cannons: [[9, 5], [15, 5], [9, 11], [15, 11], [15, 7], [6, 6], [18, 6], [6, 10], [18, 10], [12, 2], [4, 8], [20, 12]],
 });
 
 function legalDay(strategy, hq) {
     const cells = legalCells();
     return (world, night) => {
-        if (hq && night === 1) world.place('hq', 12, 8);
+        if (hq && night === 1) {
+            world.place('hq', 12, 8);
+            for (const [col, row] of [[10, 11], [10, 12], [14, 11], [14, 12]]) world.roads?.add({col, row});
+        }
         if (strategy === 'steady') legalSteady(world, cells, night);
         else if (night === 1) {
             world.place('powerPlant', 12, 8);
@@ -131,12 +134,12 @@ const SCENARIOS = [
     synthetic('synthetic-2000-many-turrets', 2000, 36, 8, {extreme: true, expect: ['shots', 'kills', 'attacks', 'destroyed']}),
     synthetic('synthetic-20-mutants-20-nights', 20, 4, 2, {nights: 20, expect: ['shots', 'kills', 'attacks', 'destroyed']}),
     // Scripted openings split into two groups. On seed 98 the base survives all 20
-    // nights and fights; on seed 1 its Plant falls early and it collapses. Seed 731
+    // nights and fights; on seed 195 its Plant falls early and it collapses. Seed 731
     // is also in the fragile group, so neither scenario uses the default seed.
     // The collapse needs the tighter 1000-Credit opening, so it states that budget:
-    // at the 1250-Credit start, seed 1 survives too.
-    {name: 'legal-survives-20-nights', workload: 'legal', nights: 20, strategy: 'steady', seed: 98, expect: ['shots', 'kills', 'attacks'], atLeast: {shots: 500, kills: 100}},
-    {name: 'legal-collapses-20-nights', workload: 'legal', nights: 20, strategy: 'steady', seed: 1, resources: {credits: 1000, ap: 5}, expect: ['attacks', 'destroyed']},
+    // at the 1250-Credit start, every tested seed survives.
+    {name: 'legal-survives-20-nights', workload: 'legal', hq: true, nights: 20, strategy: 'steady', seed: 98, expect: ['shots', 'kills', 'attacks'], atLeast: {shots: 500, kills: 100}},
+    {name: 'legal-collapses-20-nights', workload: 'legal', hq: true, nights: 20, strategy: 'steady', seed: 195, resources: {credits: 1000, ap: 5}, expect: ['attacks', 'destroyed']},
     {name: 'legal-no-defense-20-nights', workload: 'legal', nights: 20, strategy: 'none', expect: ['attacks', 'destroyed']},
     {name: 'legal-hq-survives-20-nights', workload: 'legal', hq: true, nights: 20, strategy: 'steady', seed: 98, expect: ['shots', 'kills', 'attacks'], atLeast: {shots: 500, kills: 100}},
     {name: 'legal-hq-undefended-defeat', workload: 'legal', hq: true, nights: 20, strategy: 'none', expect: ['attacks', 'destroyed', 'defeats']},
@@ -156,6 +159,7 @@ async function runScenario(scenario, {seed, driver}) {
         resources: isSynthetic ? SYNTHETIC_RESOURCES : scenario.resources,
         openConstruction: isSynthetic,
         requireHq: Boolean(scenario.hq),
+        roads: Boolean(scenario.hq), // Factories only earn through real roads and docks
     });
     const slots = isSynthetic ? syntheticLayout(scenario) : null;
     const planDay = isSynthetic ? null : legalDay(scenario.strategy, scenario.hq); // fresh command script per run
@@ -181,6 +185,7 @@ async function runScenario(scenario, {seed, driver}) {
         const defense = world.autocannons.step();
         const c = performance.now();
         const effects = world.mutants.step();
+        world.logistics?.step(); // same order as GameScene.stepSimulation
         const d = performance.now();
 
         const alive = world.mutants.snapshot().length;

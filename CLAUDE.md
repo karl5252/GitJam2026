@@ -31,11 +31,11 @@ This file provides project context, architectural constraints, and working rules
 
 **Target platforms:** Desktop browsers and mobile browsers in landscape orientation.
 
-**Current status:** TASK 017 (Roads & Connectivity) complete. No next task is approved: only work on tasks the developer explicitly assigns.
+**Current status:** TASK 018 (GOODS, Logistics & Delivery Trucks) complete. No next task is approved: only work on tasks the developer explicitly assigns.
 
 The project was initialized from the Wee Games Starter Kit Basic. The original demo applications have been removed.
 
-Implemented so far: grid placement, Credits and AP, the Day/Night cycle, global power, nightly settlement, pollution and derived threat, one basic mutant type that damages and destroys buildings, the Autocannon, which kills mutants, and nightly waves that scale with the night, Threat Level and Autocannon count, a player-built HQ whose destruction ends the run, Night speed controls, and a road network that Factories must connect to. There are no repairs yet.
+Implemented so far: grid placement, Credits and AP, the Day/Night cycle, global power, nightly settlement, pollution and derived threat, one basic mutant type that damages and destroys buildings, the Autocannon, which kills mutants, and nightly waves that scale with the night, Threat Level and Autocannon count, a player-built HQ whose destruction ends the run, Night speed controls, a road network, and Factories that earn only when trucks deliver GOODS to HQ. There are no repairs yet.
 
 ### Game concept
 
@@ -118,6 +118,7 @@ npm run test:full
 npm run test:soak
 npm run test:soak:browser
 npm run test:soak:fortress
+npm run test:soak:logistics
 npx playwright install chromium
 ```
 
@@ -130,7 +131,8 @@ npx playwright install chromium
 - `npm run test:full`: the full unit suite, then the full regular E2E suite.
 - `npm run test:soak`: Headless combat soak (`tests/soak/domain.soak.js`). Add `-- --quick` for a short subset. Writes `soak-results/domain.json`.
 - `npm run test:soak:browser`: Browser soak (`playwright.soak.config.js`, one worker, own port 5175, no server reuse). Takes a few minutes. Writes `soak-results/browser-*.json`.
-- `npm run test:soak:fortress`: The two FORTRESS 22 combat benchmarks (`tests/soak/fortress.soak.js`). Survival is report-only and never a target. Writes `soak-results/fortress.json`.
+- `npm run test:soak:fortress`: The fortress combat benchmarks (`tests/soak/fortress.soak.js`): both FORTRESS 22 variants, historical in worlds with no roads, and the logistics reference. Survival is report-only and never a target. Writes `soak-results/fortress.json`.
+- `npm run test:soak:logistics`: Bounded multi-Factory soak with repeated truck losses (`tests/soak/logistics.soak.js`). Writes `soak-results/logistics.json`.
 - `npx playwright install chromium`: Install the Chromium browser.
 
 The soak suites are separate from `npm run test` and `npm run test:e2e`. See `docs/performance-baseline.md`.
@@ -186,7 +188,7 @@ Avoid implementing gameplay rules directly inside Phaser scenes.
 - `src/core/buildingTypes.js`: frozen plain data, with temporary graybox values. `getBuildingType(id)` returns the type or `null`.
   - `hq`: 3×3, costs `{credits: 0, ap: 0}`, operations `{income: 0, upkeep: 0}`, power `{supply: 20, demand: 0}`, `pollutionPerNight: 0`, `maxHp: 600`, `switchable: false`. Its power joins the global pool, so `power.js` has no special case. Generation never reaches 0 while HQ stands, so BLACKOUT does not occur in normal play.
   - `outpost`: 1×1, costs `{credits: 100, ap: 1}`, operations `{income: 0, upkeep: 20}` per completed night, power `{supply: 0, demand: 10}`, `pollutionPerNight: 0`, `maxHp: 100`.
-  - `factory`: 3×3, costs `{credits: 400, ap: 1}`, operations `{income: 150, upkeep: 0}` per completed night, power `{supply: 0, demand: 40}`, `pollutionPerNight: 8`, `maxHp: 300`.
+  - `factory`: 3×3, costs `{credits: 400, ap: 1}`, operations `{income: 0, upkeep: 0}` (it earns through deliveries, see `src/core/logistics.js`), power `{supply: 0, demand: 40}`, `pollutionPerNight: 8`, `maxHp: 300`.
   - `powerPlant`: 3×3, costs `{credits: 500, ap: 1}`, operations `{income: 0, upkeep: 0}`, power `{supply: 100, demand: 0}`, `pollutionPerNight: 12`, `maxHp: 300`.
   - `autocannon`: 1×1, costs `{credits: 250, ap: 1}`, operations `{income: 0, upkeep: 0}`, power `{supply: 0, demand: 20}`, `pollutionPerNight: 0`, `maxHp: 150`. It is a separate defensive building; Outpost is not a turret.
 - `src/core/power.js`: `calculatePower(buildings)` → `{generation, demand, status, buildings: [{id, type, enabled, powered}]}`.
@@ -210,6 +212,7 @@ Avoid implementing gameplay rules directly inside Phaser scenes.
 - `src/core/mutants.js`: `Mutants({cycle, placement, grid, rng, schedule, planNight})`, temporary graybox values in `MUTANT` and `TARGET_BIAS`.
   - `planNight(day)` is called once per night, on night tick 1, and the plan stays frozen until dawn. That equals sampling at END DAY: pollution only changes during settlement, construction is off at night, and no mutant exists yet. A night's emissions therefore affect the next night's plan. `plan()` returns the plan, or `null` outside a started Night. A fixed `schedule` array is used when there is no `planNight`.
   - Positions are world pixels from the Grid. `speed` is 0.5 px per tick. All distances are Manhattan distances to a footprint rectangle (`distanceToFootprint`).
+  - **Trucks:** with a `logistics` dependency, a truck within melee range stops a mutant, which counts as stationary, and the attack timer's hit lands on the truck before any building. A truck counts as one road tile for range. Mutants never seek trucks out, and truck hits are not in `effects`.
   - `step()` runs once per tick, **after** `ShiftCycle.onTick()`, and returns `{spawned, attacks, destroyed}` for that tick. Mutants act on night ticks 1..3599; tick 3600 only settles. A retried final tick therefore cannot apply damage twice. Outside Night, `step()` removes survivors with no penalty, which is the dawn cleanup.
   - Records are `{id, x, y, hp, targetId, obstacleId, attackTimer}` and hold building ids only. `hp` starts at `MUTANT.maxHp`.
   - `damageMutant(id, amount)` is the only way mutant HP changes. At 0 HP the record is removed, so a mutant dies exactly once and later damage returns `unknown-mutant`. Invalid amounts return `invalid-damage`. It returns `{ok, killed, hp}`.
@@ -251,7 +254,7 @@ Avoid implementing gameplay rules directly inside Phaser scenes.
   - Building records `{id, type, col, row, width, height, enabled, hp}` are the **single owner** of player power intent and of building HP. `enabled` starts as `true`; `hp` starts at the type's `maxHp`.
   - `damageBuilding(id, amount)` is the only way HP changes. It is not behind the construction gate and never touches the economy. At 0 HP it removes the grid cells and the record together, so a building is destroyed exactly once and later damage returns `unknown-building`. Invalid amounts return `invalid-state`. It returns `{ok, destroyed, hp}`. Damage persists across nights, and there is no repair yet.
   - **HQ rules:** `canBuild(typeId)` returns `{ok}` or `hq-required` / `hq-already-built`, and `select`, `preview`, `placeAt` and the menu all use it. One HQ per run is enforced by a latch (`hqBuilt`), so a destroyed HQ cannot be rebuilt, with or without `requireHq`. With `requireHq`, only HQ can be built until it stands. Placing HQ ends placement mode. `GameScene` always sets `requireHq`, except under `?hq=off`. The constructor default of `false` is legacy compatibility for unit fixtures; do not rely on it in new gameplay code.
-  - **Road rules:** with a `roads` dependency, HQ needs its whole 5x5 inside the map (`hq-ring-out-of-bounds`) and adds its 16-tile ring in the same transaction, nothing can be built on a road (`road-occupied`), and types in `ROAD_ACCESS_TYPES` (Factory only) need connected road access (`no-road-access`). `placeRoad`, `removeRoad`, `previewRoad` and `previewRoadRemoval` are free and behind the construction gate. Without `roads`, as in legacy fixtures and `?hq=off`, none of this applies. Road access never affects settlement.
+  - **Road rules:** with a `roads` dependency, HQ needs its whole 5x5 inside the map (`hq-ring-out-of-bounds`) and adds its 16-tile ring in the same transaction, nothing can be built on a road (`road-occupied`), and for types in `ROAD_ACCESS_TYPES` (Factory only) the exact dock tile must be a connected road (`no-road-access`). `preview` reports that tile as `dock`. `placeRoad`, `removeRoad`, `previewRoad` and `previewRoadRemoval` are free and behind the construction gate. Without `roads`, as in legacy fixtures and `?hq=off`, none of this applies, and with no logistics a Factory earns nothing.
   - `setEnabled(id, enabled)` is allowed in **both Day and Night**. It rejects a `switchable: false` type (HQ) with `invalid-state`. It is deliberately not behind the construction gate. It is free (no Credits or AP), touches neither the grid nor the economy, and is rejected with `unknown-building` or `invalid-state`.
   - `preview(cell)` and `placeAt(cell)` share one validation, in this order: the construction gate (`construction-disabled`, e.g. during Night Shift), then the HQ rules, then `grid.canPlace`, then `economy.canAfford`. Space reasons therefore win over resource reasons. `preview` never changes anything.
   - **`placeAt` is one atomic transaction:**
@@ -262,10 +265,18 @@ Avoid implementing gameplay rules directly inside Phaser scenes.
     A rejection leaves the grid, balances, buildings and next id unchanged. `no-selection` is returned when not placing.
   - Ids are deterministic (`outpost-1`, `factory-2`, …). `buildings()` returns a detached list.
 - `src/core/roads.js`: `RoadNetwork({grid})`, Phaser-free. Roads are not buildings and never occupy the `Grid`, so they have no effect on combat, spawning or settlement.
+  - **Docks:** `outgoingDock(footprint)` is the middle of a building's right side, and `receivingDock(footprint)` the middle of its bottom side. There is no rotation. A Factory ships from `{col: col + 3, row: row + 1}`, and HQ receives on `{col: col + 1, row: row + 3}`, which is always on its ring. A zero-edge route is impossible, because the docks could only meet if the footprints overlapped; the shortest legal route is 2 edges.
   - Tiles are `{col, row, kind}`, with kind `hq-ring` or `player`. `tiles()` and `connectedTiles()` are detached and row-major.
-  - Connectivity is orthogonal and derived from the HQ ring, never stored. `neighbors(cell)` uses fixed N, E, S, W order. `accessTiles(footprint)` returns connected roads touching a footprint's edges, so diagonals never count.
-  - `canAdd`/`add`: free, in bounds, not on a road or building, and touching the connected network. `canRemove`/`remove`: ring tiles are permanent, and a player tile stays only if removing it would leave a dependent footprint with no connected route. Removal may leave a harmless disconnected fragment, which gives no access until a new tile rejoins it.
+  - Connectivity is orthogonal and derived from the HQ ring, never stored. `neighbors(cell)` uses fixed N, E, S, W order. `isConnected(cell)` checks a tile. `route(from, to)` is a deterministic breadth-first shortest path, both ends included, or `null`.
+  - `canAdd`/`add`: free, in bounds, not on a road or building, and touching the connected network. `canRemove`/`remove`: ring tiles are permanent, and a player tile stays only if removing it would leave a dock in `docks` with no connected route. Removal may leave a harmless disconnected fragment, which gives no access until a new tile rejoins it.
   - `restoreTile(cell)` skips only the touching rule. It exists for layout fixtures, because fragments are legal; only `src/testShadow/layoutSnapshot.js` calls it.
+- `src/core/logistics.js`: `Logistics({cycle, placement, grid, roads, economy})`, provisional values in `LOGISTICS`. `step()` runs last in the tick, after `Mutants.step()`, on Night ticks 1..3599, and returns `{deliveries}`.
+  - **Production:** a powered Factory makes one load (10 GOODS) per 600 powered ticks, so a full Night gives exactly five, on ticks 600..3000. Partial progress resets at dusk; carrying it over would drift to six. Storage holds 2 loads, production pauses when full, and stored loads persist.
+  - **Trucks:** one free truck per Factory, in creation order, 20 HP, 1 px per tick, carrying one load. It leaves its dock when idle with a load, choosing its route then, and follows the shortest road to the HQ dock. A load pays exactly 30 Credits through `economy.adjustCredits` on arrival, and the truck drives back. Trucks may overlap.
+  - **Losses:** `damageTruck(id, amount)` is the only way truck HP changes. A destroyed truck loses its cargo and returns after 600 Night ticks, carried across Day. If its Factory is destroyed, a truck carrying cargo finishes the delivery and is then removed; stored loads are lost. All cargo losses are counted in `cargoLost`.
+  - **Dawn:** every truck parks at its dock, so Day road edits cannot strand one. A carried load returns to storage if there is room, otherwise it stays on the truck and leaves first next Night. Nothing is duplicated or dropped.
+  - An unreachable dock is safe: the truck stays parked, `noRoute` is set, and storage fills. Placement and removal rules keep this from happening in normal play.
+  - Deliveries during a Night that ends in defeat are kept. Settlement is unchanged, with `gross` 0 for Factories; the panel adds `lastNight.credits` to its Income and Net lines.
 - `src/core/simulationClock.js`: `SimulationClock`, a fixed 60 Hz clock (`TICK_RATE`).
   - Lifecycle: stopped → `start()` → running, with `pause()`/`resume()`. `reset()` returns to stopped with tick 0.
   - `advance(deltaMs, onTick)`: the accumulator. Each frame is capped at `MAX_FRAME_MS` = 100 ms (6 ticks) before it is added. Excess time is deliberately dropped, so there is no catch-up spiral. Does nothing while stopped or paused.
@@ -293,7 +304,8 @@ Avoid implementing gameplay rules directly inside Phaser scenes.
 - `src/scenes/BootScene.js`: Starts the game scene.
 - `src/scenes/MutantLayer.js`: graybox circles for mutants and HP bars on damaged buildings. Presentation only; `sync(mutants, buildings)` takes detached snapshots.
 - `src/scenes/AutocannonLayer.js`: graybox barrels, quantized to 8 directions, and short tracers lasting 6 simulation ticks. Presentation only; facing and tracer timing never affect gameplay.
-- `src/scenes/RoadLayer.js`: road tiles under buildings and the 5x5 HQ preview outline. Presentation only, redrawn only when roads change.
+- `src/scenes/TruckLayer.js`: truck rectangles, amber when loaded, and storage pips on Factories. Presentation only, synced from `Logistics.snapshot()`.
+- `src/scenes/RoadLayer.js`: road tiles under buildings, dock markers, the Factory dock preview and the 5x5 HQ preview outline. Presentation only, redrawn only when roads change.
 - `src/scenes/SpeedControls.js`: the Night-only 1x, 2x and 4x buttons (proxies `speed-1`, `speed-2`, `speed-4`, with `data-selected`), in the right band below the power toggle so they never sit under END DAY at dawn. 82x84 logical pixels is about 44 CSS pixels at 844x390. Presentation only: the clock owns the speed, so it lasts across Nights and a restart returns to 1x. The countdown stays in simulation seconds.
 - `src/scenes/GameOverLayer.js`: the Game Over overlay and RESTART button. Presentation only; nothing exists until `show()`. Its panel is interactive, so presses on it are UI, never grid input.
 - `src/scenes/GameScene.js`:
@@ -336,13 +348,14 @@ Avoid implementing gameplay rules directly inside Phaser scenes.
     - `pollution` (`{value, threatLevel, emissionsPerNight}`, `null` before Start; `emissionsPerNight` is derived from the current buildings, and the amount actually emitted is `settlement.pollution.emitted`) and `pollutionView` (the actual HUD text and visibility)
     - `simulation`: `{running, paused, tick, timeSeconds, speed, stepsExecuted, rng: {seed, state}}`
     - `speedView` (the rendered speed buttons: `{visible, selected, labels}`, `null` before Start)
-    - `roads` (`{tiles, connected}`, `null` before Start and under `?hq=off`), `roadViews` (rendered tiles), `roadMode`, `ringPreviewView` and `placementHint` (the actual hint text)
+    - `roads` (`{tiles, connected}`, `null` before Start and under `?hq=off`), `roadViews` (rendered tiles), `dockViews`, `dockPreviewView`, `roadMode`, `ringPreviewView` and `placementHint` (the actual hint text)
+    - `logistics` (`Logistics.snapshot()`: `factories`, `trucks`, `night`, `lastNight`, `totals`) and `truckViews` (rendered trucks and storage), `logistics` is `null` before Start and under `?hq=off`
     - `previewView` (the rendered preview: visibility, rect, colors)
     - `buildings` (domain records, including `enabled`) and `buildingViews` (the rendered rectangles, including `alpha` and `strokeColor`)
   - **Simulation:**
     - The clock is created stopped. Start calls `cycle.begin()`, which starts it paused for Day 1.
     - `update(time, delta)` calls `clock.advance(delta, stepSimulation)` then `syncShiftUi()`, and ignores Phaser's `time`.
-    - `stepSimulation(tick)` counts `stepsExecuted`, calls `cycle.onTick(tick)`, then `autocannons.step()`, then `mutants.step()`. Shots and destroyed buildings are handled from that tick's results: `handleBuildingsDestroyed` removes the views, clears a stale selection and calls `refreshPower()`.
+    - `stepSimulation(tick)` counts `stepsExecuted`, calls `cycle.onTick(tick)`, then `autocannons.step()`, then `mutants.step()`, then `logistics.step()`. Shots and destroyed buildings are handled from that tick's results: `handleBuildingsDestroyed` removes the views, clears a stale selection and calls `refreshPower()`.
     - The RNG seed is `DEFAULT_SEED`. In TEST_MODE only, `?seed=N` overrides it.
     - In TEST_MODE only, `?waveBudget=N` (optionally with `&waveLastTick=T`) and `?stressRamp=N` (`src/testShadow/stressParams.js`) give the real `Mutants` a fixed schedule for the soak suites.
     - In TEST_MODE only, `?hq=off` is a compatibility mode for legacy suites written before HQ existed: no HQ button, no HQ rule, and END DAY is always allowed. Production ignores it.
@@ -606,6 +619,14 @@ Once the simulation system exists, test:
 
 This policy applies to TASK 013 and all future tasks.
 
+**The rules:**
+
+- Run targeted tests during development.
+- Run one full verification pass at task completion.
+- After test-only fixes, rerun the affected tests only.
+- Run long browser soaks only when justified by major changes or release verification.
+- Never repeat expensive test suites automatically, including to obtain a clean report.
+
 **During implementation:**
 
 - Run only the unit tests directly relevant to the changed modules.
@@ -622,7 +643,7 @@ This policy applies to TASK 013 and all future tasks.
 2. Run the complete regular Playwright E2E suite with 3 workers and tracing disabled.
 3. Run the production build and TEST_MODE isolation gate.
 4. Run bounded, targeted mutation checks for new behavior.
-5. Run relevant soak suites only when justified by the changes.
+5. Run the headless soak suites when justified by the changes. Run the long browser soak only for major gameplay changes or release verification.
 6. Check for orphaned processes and verify `git diff --check`.
 
 **The smoke suite:**
@@ -633,7 +654,7 @@ The `@smoke` tag marks 13 existing tests covering boot, Start, mobile layout, HQ
 
 - Diagnose and fix the failure.
 - Rerun the affected subset first.
-- Repeat only the final gates potentially invalidated by that fix.
+- Repeat only the final gates potentially invalidated by that fix. A test-only fix invalidates only the tests it changed, so report any full run that was not repeated.
 - Never hide failures, weaken assertions, or skip required final verification.
 
 **Reporting:**
@@ -694,6 +715,7 @@ Complete:
 - TASK 015: Combat Escalation
 - TASK 016: Night Simulation Speed Controls
 - TASK 017: Roads & Connectivity
+- TASK 018: GOODS, Logistics & Delivery Trucks
 
 Later, not yet assigned:
 
@@ -704,7 +726,8 @@ Known balance issues, accepted for now and not final behaviour (see the GDD):
 
 - Corner advantage: corners stay stronger than the centre. Since TASK 015, a corner HQ with one Autocannon falls around Night 19 in scripted runs. The HQ ring now keeps HQ one tile from every edge; that effect has not been simulated.
 - Wave predictability: production always uses `DEFAULT_SEED`, so spawn positions repeat every run. The first mutant always appears at border cell 22,15, which allows a deliberately asymmetric defense. Not changed; review it with the Wave Director.
-- Compact fortresses: the road rules barely constrain a compact base. FORTRESS 22 needed two cannons moved one tile and one extra road.
+- Compact fortresses: docks constrain a compact base more than roads alone, but short routes stay a deliberate advantage. The FORTRESS 22 fixtures and `fortress-corner-v1.json` predate docks and are stale; a player-derived fortress will follow.
+- Long routes: a Factory holds 150 Credits a Night up to about 10 road edges, then falls gradually to about 90 at 20 edges.
 - Centre industry: at 1000 Credits, scripted industrial bases in the centre could do worse than defensive turtles. At 1250 Credits one scripted build queue improved from 5 to 28 of 30 runs alive after Night 20. HQ damage is still permanent, and losing a Plant still silences every cannon. Only real playtests can judge industrial viability.
 - Starting budget: 1250 Credits is approved. Power Plant + Factory + Autocannon costs 1150, so the first Day can include all three. A no-income turtle can buy three Autocannons and a Plant, with a median defeat of Night 20 from the centre and Nights 23-24 from corners in scripted runs.
 

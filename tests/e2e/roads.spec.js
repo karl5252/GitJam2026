@@ -11,7 +11,7 @@ import {sample} from '../helpers/qa.js';
 const HQ = {col: 12, row: 8};
 const ABOVE_RING = {col: 12, row: 5};
 const RING_TILE = {col: 10, row: 6};
-const FACTORY_ON_RING = {col: 12, row: 4}; // bottom edge touches the ring
+const FACTORY_ON_RING = {col: 8, row: 8}; // dock 10,8 is on the ring
 const FACTORY_FAR = {col: 3, row: 3};
 
 const overlaps = (a, b) => a.x < b.x + b.width && b.x < a.x + a.width && a.y < b.y + b.height && b.y < a.y + a.height;
@@ -102,7 +102,7 @@ function roadSuite(input) {
         const state = await hqRun(page);
         await pressAction(page, 'build-factory');
         await pressCell(page, state, FACTORY_FAR);
-        await expect.poll(async () => (await sample(page)).placementHint).toBe('Factory needs a connected road');
+        await expect.poll(async () => (await sample(page)).placementHint).toBe('Factory dock (right side) needs a connected road');
         expect((await sample(page)).buildings).toHaveLength(1);
         await pressAction(page, 'cancel-placement');
 
@@ -114,13 +114,11 @@ function roadSuite(input) {
 
         await roadTool(page);
         await pressCell(page, state, {col: 10, row: 5});
-        await expect.poll(async () => (await sample(page)).placementHint).toBe('A Factory depends on this road');
+        await expect.poll(async () => (await sample(page)).placementHint).toBe('A Factory dock depends on this road');
         expect(await roadCount(page)).toBe(18);
-        await pressCell(page, state, {col: 10, row: 4}); // 10,5 still serves it
-        await expect.poll(() => roadCount(page)).toBe(17);
     });
 
-    test('a Factory on the ring works and earns as before', async ({page}) => {
+    test('a Factory with its dock on the ring can be built with no extra road', async ({page}) => {
         const state = await hqRun(page);
         await place(page, state, 'factory', FACTORY_ON_RING);
         expect((await sample(page)).buildings).toHaveLength(2);

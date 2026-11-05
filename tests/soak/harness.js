@@ -15,6 +15,7 @@ import {Autocannons} from '../../src/core/autocannons.js';
 import {BuildingPlacement} from '../../src/core/buildingPlacement.js';
 import {Economy, STARTING_RESOURCES} from '../../src/core/economy.js';
 import {Grid} from '../../src/core/grid.js';
+import {Logistics} from '../../src/core/logistics.js';
 import {Mutants, MUTANT, distanceToFootprint} from '../../src/core/mutants.js';
 import {Pollution} from '../../src/core/pollution.js';
 import {RoadNetwork} from '../../src/core/roads.js';
@@ -54,11 +55,13 @@ export function createWorld({seed = 731, schedule = null, resources = STARTING_R
         canEndDay: () => !requireHq || placement.hqBuilt,
         settleNight: (day) => (day < firstNight ? null : settleNight({day, buildings: placement.buildings(), economy, pollution})),
     });
+    const logistics = roads ? new Logistics({cycle, placement, grid, roads, economy}) : null;
     const mutants = new Mutants({
         cycle,
         placement,
         grid,
         rng,
+        logistics,
         schedule: schedule ?? [],
         planNight: schedule ? null : (day) => (day < firstNight
             ? {schedule: []}
@@ -72,7 +75,8 @@ export function createWorld({seed = 731, schedule = null, resources = STARTING_R
         cycle.onTick(t);
         const defense = autocannons.step();
         const effects = mutants.step();
-        return {defense, effects};
+        const deliveries = logistics?.step().deliveries ?? 0;
+        return {defense, effects, deliveries};
     };
 
     /** A legal command: the real placement path, with its real validation. */
@@ -83,7 +87,7 @@ export function createWorld({seed = 731, schedule = null, resources = STARTING_R
         return result;
     };
 
-    return {clock, economy, pollution, grid, rng, placement, roads, cycle, mutants, autocannons, tick, place};
+    return {clock, economy, pollution, grid, rng, placement, roads, logistics, cycle, mutants, autocannons, tick, place};
 }
 
 /** The state compared between runs and between Node and Chromium. */

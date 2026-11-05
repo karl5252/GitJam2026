@@ -5,7 +5,8 @@
  *
  *   cost:       one-off purchase price
  *   operations: Credits per completed Night Shift (settled at the start of
- *               the next Day): income is added, upkeep is subtracted
+ *               the next Day): income is added, upkeep is subtracted. Factories
+ *               earn through deliveries instead (see core/logistics.js)
  *   power:      supply added to / demand drawn from the single global pool
  *               while the building is enabled (see core/power.js)
  *   pollutionPerNight: added per completed Night Shift while the building is
@@ -40,7 +41,7 @@ export const BUILDING_TYPES = Object.freeze({
     factory: Object.freeze({
         id: 'factory', name: 'Factory', width: 3, height: 3,
         cost: Object.freeze({credits: 400, ap: 1}),
-        operations: Object.freeze({income: 150, upkeep: 0}),
+        operations: Object.freeze({income: 0, upkeep: 0}),
         power: Object.freeze({supply: 0, demand: 40}),
         pollutionPerNight: 8,
         maxHp: 300,

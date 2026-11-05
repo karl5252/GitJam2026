@@ -185,7 +185,7 @@ Frame pacing varied between 0% and 15% slow frames, and the same stress Night ga
 
 ## Fortress benchmarks (TASK 017)
 
-`npm run test:soak:fortress` runs two separate references from Night 22 at full HP with no player input: the original FORTRESS 22 in a world without roads, and the road-legal fixture through the real road rules. They measure combat. Survival is report-only and is not a target, and the original layout is stale for normal play. A player-derived reference will replace them after road playtesting.
+`npm run test:soak:fortress` runs separate references from Night 22 at full HP with no player input: the original FORTRESS 22 and the TASK 017 road-legal variant, both historical in worlds without roads since TASK 018 added fixed docks, and the technical logistics reference with real roads and trucks. They measure combat. Survival is report-only and is not a target. A player-derived fortress will replace the historical ones.
 
 ## Known gaps
 

@@ -15,8 +15,14 @@
 export const HQ_RING = 'hq-ring';
 export const PLAYER_ROAD = 'player';
 
-/** Building types that need a connected road touching their footprint. */
+/** Building types whose outgoing dock must be a connected road. */
 export const ROAD_ACCESS_TYPES = Object.freeze(['factory']);
+
+/** The tile a building ships from: the middle of its right side. No rotation. */
+export const outgoingDock = ({col, row, width, height}) => ({col: col + width, row: row + Math.floor(height / 2)});
+
+/** The tile a building receives on: the middle of its bottom side. */
+export const receivingDock = ({col, row, width, height}) => ({col: col + Math.floor(width / 2), row: row + height});
 
 export const RoadFailure = Object.freeze({
     OUT_OF_BOUNDS: 'out-of-bounds',
@@ -42,14 +48,6 @@ export function hqRingCells({col, row, width, height}) {
             if (edge) cells.push({col: c, row: r});
         }
     }
-    return cells;
-}
-
-/** Cells orthogonally touching a footprint's edges. Corners do not touch. */
-function edgeCells({col, row, width, height}) {
-    const cells = [];
-    for (let c = col; c < col + width; c++) cells.push({col: c, row: row - 1}, {col: c, row: row + height});
-    for (let r = row; r < row + height; r++) cells.push({col: col - 1, row: r}, {col: col + width, row: r});
     return cells;
 }
 
@@ -117,15 +115,36 @@ export class RoadNetwork {
         return this.tiles().filter((t) => connected.has(this.#key(t)));
     }
 
-    #access(footprint, connected) {
-        return edgeCells(footprint)
-            .filter((cell) => this.#inBounds(cell) && connected.has(this.#key(cell)))
-            .sort((a, b) => this.#key(a) - this.#key(b));
+    /** Is this cell a road connected to the HQ ring? */
+    isConnected(cell) {
+        return this.#inBounds(cell) && this.#connectedKeys().has(this.#key(cell));
     }
 
-    /** Connected road cells touching a footprint, in row-major order. */
-    accessTiles(footprint) {
-        return this.#access(footprint, this.#connectedKeys());
+    /**
+     * The shortest road route between two tiles, both included, or null. The
+     * search expands in fixed N, E, S, W order, so ties always resolve the same
+     * way. Identical tiles give a one-tile route.
+     * @returns {Array<{col, row}> | null}
+     */
+    route(from, to) {
+        if (!this.#inBounds(from) || !this.#inBounds(to) || !this.has(from) || !this.has(to)) return null;
+        const target = this.#key(to);
+        const cameFrom = new Map([[this.#key(from), null]]);
+        const queue = [{col: from.col, row: from.row}];
+        for (let i = 0; i < queue.length; i++) {
+            const cell = queue[i];
+            if (this.#key(cell) === target) {
+                const path = [];
+                for (let step = cell; step; step = cameFrom.get(this.#key(step))) path.push(step);
+                return path.reverse();
+            }
+            for (const next of this.neighbors(cell)) {
+                if (cameFrom.has(this.#key(next))) continue;
+                cameFrom.set(this.#key(next), cell);
+                queue.push(next);
+            }
+        }
+        return null;
     }
 
     /** Would the whole ring fit around this footprint? Never mutates. */
@@ -177,23 +196,23 @@ export class RoadNetwork {
     }
 
     /**
-     * A tile can go unless it is part of the HQ ring, or some footprint in
-     * `dependents` would lose every connected route. Never mutates.
+     * A tile can go unless it is part of the HQ ring, or a dock in `docks`
+     * would lose every connected route. Never mutates.
      * @param {{col, row}} cell
-     * @param {Array<{col, row, width, height}>} dependents
+     * @param {Array<{col, row}>} docks
      */
-    canRemove(cell, dependents = []) {
+    canRemove(cell, docks = []) {
         if (!this.#inBounds(cell) || !this.has(cell)) return {ok: false, reason: RoadFailure.UNKNOWN_ROAD};
         const key = this.#key(cell);
         if (this.#tiles.get(key).kind === HQ_RING) return {ok: false, reason: RoadFailure.HQ_RING_PERMANENT};
         const connected = this.#connectedKeys(key);
         connected.delete(key);
-        const stranded = dependents.some((footprint) => this.#access(footprint, connected).length === 0);
+        const stranded = docks.some((dock) => !connected.has(this.#key(dock)));
         return stranded ? {ok: false, reason: RoadFailure.ROAD_REQUIRED} : {ok: true};
     }
 
-    remove(cell, dependents = []) {
-        const check = this.canRemove(cell, dependents);
+    remove(cell, docks = []) {
+        const check = this.canRemove(cell, docks);
         if (check.ok) this.#tiles.delete(this.#key(cell));
         return check;
     }

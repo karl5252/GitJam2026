@@ -120,7 +120,7 @@ function powerSuite({pressWorld, pressAction}) {
         await expect(byAction(page, 'toggle-power')).toHaveCount(0);
     });
 
-    test('Day toggle: plant OFF -> blackout (free), settles without income; ON again -> income returns', async ({page}) => {
+    test('Day toggle: plant OFF -> blackout (free), and upkeep alone puts the night in debt; ON again -> power returns', async ({page}) => {
         const state = await start(page);
         await poweredBase(page, state);
         // Spend the rest of the budget, so the blackout night really goes into debt.
@@ -159,7 +159,7 @@ function powerSuite({pressWorld, pressAction}) {
         expect(view(s, 'powerPlant-1').alpha).toBe(1);
 
         await completeNight(page);
-        expect((await sample(page)).settlement).toMatchObject({day: 2, gross: 150, net: 130, creditsBefore: -20, creditsAfter: 110});
+        expect((await sample(page)).settlement).toMatchObject({day: 2, gross: 0, net: -20, creditsBefore: -20, creditsAfter: -40});
     });
 
     test('Night toggle: switching works during Night Shift and affects power immediately', async ({page}) => {

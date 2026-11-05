@@ -1,5 +1,5 @@
 import {HQ_TYPE, getBuildingType} from './buildingTypes.js';
-import {ROAD_ACCESS_TYPES, RoadFailure} from './roads.js';
+import {ROAD_ACCESS_TYPES, RoadFailure, outgoingDock} from './roads.js';
 
 /**
  * Placement mode + placed-building state. Pure — no Phaser.
@@ -14,8 +14,8 @@ import {ROAD_ACCESS_TYPES, RoadFailure} from './roads.js';
  * requireHq, nothing else can be built until it stands.
  *
  * Roads are optional: with a RoadNetwork, HQ brings its ring, nothing can be
- * built on a road and Factories need connected road access. Without one, as in
- * legacy fixtures and ?hq=off, none of those rules exist.
+ * built on a road and a Factory's fixed dock must be a connected road. Without
+ * one, as in legacy fixtures and ?hq=off, none of those rules exist.
  */
 
 export const NO_SELECTION = 'no-selection';
@@ -111,7 +111,8 @@ export class BuildingPlacement {
         if (!this.isPlacing || !cell) return null;
         const type = getBuildingType(this.selectedType);
         const footprint = footprintAt(type, cell);
-        return {footprint, ...this.#validate(type, footprint)};
+        const needsDock = this.#roads && ROAD_ACCESS_TYPES.includes(type.id);
+        return {footprint, ...(needsDock ? {dock: outgoingDock(footprint)} : {}), ...this.#validate(type, footprint)};
     }
 
     /**
@@ -191,9 +192,9 @@ export class BuildingPlacement {
         return {ok: true, destroyed: true, hp};
     }
 
-    /** Footprints that depend on connected road access. */
+    /** Docks that must stay connected to the HQ network. */
     #roadDependents() {
-        return this.#buildings.filter((b) => ROAD_ACCESS_TYPES.includes(b.type));
+        return this.#buildings.filter((b) => ROAD_ACCESS_TYPES.includes(b.type)).map(outgoingDock);
     }
 
     /** Add a free road, or say why not. Never touches the economy. */
@@ -228,7 +229,7 @@ export class BuildingPlacement {
             if (!ring.ok) return ring;
         }
         if (this.#roads.overlaps(footprint)) return {ok: false, reason: RoadFailure.ROAD_OCCUPIED};
-        if (ROAD_ACCESS_TYPES.includes(type.id) && this.#roads.accessTiles(footprint).length === 0) {
+        if (ROAD_ACCESS_TYPES.includes(type.id) && !this.#roads.isConnected(outgoingDock(footprint))) {
             return {ok: false, reason: RoadFailure.NO_ROAD_ACCESS};
         }
         return {ok: true};

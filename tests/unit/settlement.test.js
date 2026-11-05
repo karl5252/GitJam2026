@@ -21,9 +21,9 @@ test('empty settlement is all zeros (power 0 / 0, normal)', () => {
     });
 });
 
-test('a powered factory earns +150', () => {
+test('a powered Factory adds nothing at settlement: it earns by delivery', () => {
     assert.deepEqual(calculateSettlement([...b('powerPlant'), ...b('factory')]), {
-        gross: 150, upkeep: 0, net: 150, counts: counts({factory: 1, powerPlant: 1}),
+        gross: 0, upkeep: 0, net: 0, counts: counts({factory: 1, powerPlant: 1}),
         power: {generation: 100, demand: 40, status: 'normal'},
     });
 });
@@ -64,7 +64,7 @@ test('outpost upkeep is -20 regardless of power or enabled state', () => {
 test('mixed combinations sum exactly', () => {
     // 2 plants (200) vs 2 factories + 3 outposts (110): normal.
     assert.deepEqual(calculateSettlement([...b('powerPlant', 2), ...b('factory', 2), ...b('outpost', 3)]), {
-        gross: 300, upkeep: 60, net: 240, counts: counts({outpost: 3, factory: 2, powerPlant: 2}),
+        gross: 0, upkeep: 60, net: -60, counts: counts({outpost: 3, factory: 2, powerPlant: 2}),
         power: {generation: 200, demand: 110, status: 'normal'},
     });
     // Same buildings with 1 plant (100 < 110): low power stops every factory.
@@ -72,7 +72,7 @@ test('mixed combinations sum exactly', () => {
         gross: 0, upkeep: 60, net: -60, counts: counts({outpost: 3, factory: 2, powerPlant: 1}),
         power: {generation: 100, demand: 110, status: 'low-power'},
     });
-    assert.equal(calculateSettlement([...b('powerPlant'), ...b('factory'), ...b('outpost')]).net, 130);
+    assert.equal(calculateSettlement([...b('powerPlant'), ...b('factory'), ...b('outpost')]).net, -20);
 });
 
 test('result is integer-only', () => {
@@ -101,12 +101,12 @@ test('settleNight applies net once and returns an exact report', () => {
     const economy = new Economy({credits: 0, ap: 2});
     const report = settleNight({day: 1, buildings: [...b('powerPlant'), ...b('factory'), ...b('outpost')], economy, pollution: new Pollution()});
     assert.deepEqual(report, {
-        day: 1, gross: 150, upkeep: 20, net: 130, creditsBefore: 0, creditsAfter: 130,
+        day: 1, gross: 0, upkeep: 20, net: -20, creditsBefore: 0, creditsAfter: -20,
         counts: counts({outpost: 1, factory: 1, powerPlant: 1}),
         power: {generation: 100, demand: 50, status: 'normal'},
         pollution: {before: 0, emitted: 20, after: 20, threatLevel: 1},
     });
-    assert.deepEqual(economy.snapshot(), {credits: 130, ap: 2}); // AP untouched
+    assert.deepEqual(economy.snapshot(), {credits: -20, ap: 2}); // AP untouched
 });
 
 test('settleNight without power: factory idle, outpost upkeep still charged', () => {
@@ -145,7 +145,7 @@ test('reports are frozen and detached from domain state', () => {
     buildings.push(...b('factory', 3));
     buildings[0].enabled = false;
     economy.adjustCredits(-5000);
-    assert.equal(report.creditsAfter, 1150);
+    assert.equal(report.creditsAfter, 1000);
     assert.equal(report.counts.factory, 1);
     assert.equal(report.power.generation, 100);
 });
@@ -251,12 +251,12 @@ test('settlement happens exactly once, at the end of night tick 3600', () => {
     w.step(1);
     assert.deepEqual(w.calls, [1]);
     assert.deepEqual(w.cycle.lastSettlement, {
-        day: 1, gross: 150, upkeep: 20, net: 130, creditsBefore: 0, creditsAfter: 130,
+        day: 1, gross: 0, upkeep: 20, net: -20, creditsBefore: 0, creditsAfter: -20,
         counts: counts({outpost: 1, factory: 1, powerPlant: 1}),
         power: {generation: 100, demand: 50, status: 'normal'},
         pollution: {before: 0, emitted: 20, after: 20, threatLevel: 1},
     });
-    assert.deepEqual(w.economy.snapshot(), {credits: 130, ap: 5}); // AP restored to exactly 5
+    assert.deepEqual(w.economy.snapshot(), {credits: -20, ap: 5}); // AP restored to exactly 5
     assert.equal(w.cycle.shift, Shift.DAY);
     assert.equal(w.cycle.day, 2);
 
@@ -267,7 +267,7 @@ test('settlement happens exactly once, at the end of night tick 3600', () => {
     w.frames(60);
     assert.equal(w.step(240), 0);
     assert.deepEqual(w.calls, [1]);
-    assert.equal(w.economy.credits, 130);
+    assert.equal(w.economy.credits, -20);
 });
 
 test('frame-driven and manual completion settle identically', () => {
@@ -283,7 +283,7 @@ test('frame-driven and manual completion settle identically', () => {
     assert.deepEqual(viaFrames.calls, [1]);
     assert.deepEqual(viaSteps.calls, [1]);
     assert.deepEqual(viaFrames.cycle.lastSettlement, viaSteps.cycle.lastSettlement);
-    assert.equal(viaFrames.cycle.lastSettlement.gross, 150);
+    assert.equal(viaFrames.cycle.lastSettlement.pollution.emitted, 20);
     assert.equal(viaFrames.clock.tick, 3600);
 });
 
@@ -323,8 +323,8 @@ test('consecutive nights settle once each; Credits persist between them', () => 
         reports.push(w.cycle.lastSettlement);
     }
     assert.deepEqual(w.calls, [1, 2, 3]);
-    assert.deepEqual(reports.map((r) => [r.day, r.creditsBefore, r.creditsAfter]), [[1, 0, 130], [2, 130, 260], [3, 260, 390]]);
-    assert.equal(w.economy.credits, 390);
+    assert.deepEqual(reports.map((r) => [r.day, r.creditsBefore, r.creditsAfter]), [[1, 0, -20], [2, -20, -40], [3, -40, -60]]);
+    assert.equal(w.economy.credits, -60);
     assert.equal(w.cycle.day, 4);
 });
 
@@ -360,7 +360,7 @@ test('settlement uses the power state at the end of the night; toggles persist a
     w.step(1800);
     assert.equal(w.placement.setEnabled(plant, true).ok, true);
     w.step(1800);
-    assert.equal(w.cycle.lastSettlement.gross, 150);
+    assert.equal(w.cycle.lastSettlement.pollution.emitted, 20); // Plant and Factory, both on at the end
     assert.equal(w.cycle.lastSettlement.power.status, 'normal');
     assert.equal(w.placement.buildings()[0].enabled, true);
 });

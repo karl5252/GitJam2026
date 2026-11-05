@@ -16,7 +16,7 @@ const START = STARTING_RESOURCES.credits;
 const HQ = {col: 20, row: 8};
 const CANNON = {col: 20, row: 11}; // between the first spawn and HQ
 const PLANT = {col: 6, row: 3};
-const FACTORY = {col: 20, row: 4}; // bottom edge touches the HQ ring
+const FACTORY = {col: 16, row: 7}; // dock 18,7 is on the HQ ring
 
 function integratedSuite(input) {
     const {pressAction} = input;
@@ -72,7 +72,7 @@ function integratedSuite(input) {
         await completeNight(page);
         s = await sample(page);
         expect(s.settlement).toMatchObject({
-            gross: 150, upkeep: 0, net: 150,
+            gross: 0, upkeep: 0, net: 0, // the Factory earned its 150 by delivery
             power: {generation: 120, demand: 40, status: 'normal'},
             pollution: {emitted: 20, after: 20},
         });

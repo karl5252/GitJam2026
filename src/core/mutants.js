@@ -114,6 +114,7 @@ export class Mutants {
     #schedule;
     #planNight;
     #plan = null; // frozen for the night on tick 1, cleared at dawn
+    #logistics;
     #spawns;
     #mutants = [];
     #nextId = 1;
@@ -123,12 +124,13 @@ export class Mutants {
      *          placement: import('./buildingPlacement.js').BuildingPlacement,
      *          grid: import('./grid.js').Grid,
      *          rng: import('./seededRandom.js').SeededRandom,
+     *          logistics?: import('./logistics.js').Logistics | null,
      *          schedule?: readonly number[],
      *          planNight?: ((day: number) => {schedule: readonly number[]}) | null}} deps
      *   schedule  - fixed spawn ticks, the same every night
      *   planNight - asked once per night, on night tick 1; overrides schedule
      */
-    constructor({cycle, placement, grid, rng, schedule = [], planNight = null}) {
+    constructor({cycle, placement, grid, rng, schedule = [], planNight = null, logistics = null}) {
         assertValidSchedule(schedule, cycle.nightTicks);
         this.#cycle = cycle;
         this.#placement = placement;
@@ -136,6 +138,7 @@ export class Mutants {
         this.#rng = rng;
         this.#schedule = schedule;
         this.#planNight = planNight;
+        this.#logistics = logistics;
         this.#spawns = borderSpawns(grid);
     }
 
@@ -157,8 +160,9 @@ export class Mutants {
 
         const effects = {spawned: [], attacks: [], destroyed: []};
         const buildings = this.#placement.buildings();
+        const trucks = this.#logistics?.attackableTrucks() ?? [];
         for (const mutant of this.#mutants) {
-            this.#act(mutant, buildings, effects);
+            this.#act(mutant, buildings, effects, trucks);
             if (this.#cycle.shift !== Shift.NIGHT) return effects; // HQ fell: the run ended on that hit
         }
         if (spawnDue) this.#spawn(buildings, effects);
@@ -201,7 +205,7 @@ export class Mutants {
         return plan;
     }
 
-    #act(mutant, buildings, effects) {
+    #act(mutant, buildings, effects, trucks) {
         const find = (id) => buildings.find((b) => b.id === id);
         if (mutant.obstacleId && !find(mutant.obstacleId)) mutant.obstacleId = null;
         if (!find(mutant.targetId)) mutant.targetId = selectTarget(mutant, buildings, this.#grid);
@@ -210,8 +214,13 @@ export class Mutants {
         const rect = target ? this.#grid.footprintRect(target) : null;
         const attackId = mutant.obstacleId
             ?? (rect && distanceToFootprint(mutant, rect) <= MUTANT.attackRange ? target.id : null);
-        if (attackId) {
-            if (--mutant.attackTimer === 0) this.#attack(mutant, attackId, buildings, effects);
+        // A truck in melee range holds a mutant's attention, but mutants never
+        // seek trucks out, and a moving truck is soon out of reach again.
+        const truck = trucks.find((t) => this.#inTruckRange(mutant, t));
+        if (truck || attackId) {
+            if (--mutant.attackTimer > 0) return;
+            if (truck) this.#attackTruck(mutant, truck, trucks);
+            else this.#attack(mutant, attackId, buildings, effects);
             return;
         }
 
@@ -226,6 +235,20 @@ export class Mutants {
         }
         mutant.x = next.x;
         mutant.y = next.y;
+    }
+
+    /** A truck counts as one road tile, so melee range works as it does for a 1x1 building. */
+    #inTruckRange(mutant, {x, y}) {
+        const {tileSize} = this.#grid;
+        const rect = {x: x - tileSize / 2, y: y - tileSize / 2, width: tileSize, height: tileSize};
+        return distanceToFootprint(mutant, rect) <= MUTANT.attackRange;
+    }
+
+    #attackTruck(mutant, truck, trucks) {
+        mutant.attackTimer = MUTANT.attackCooldownTicks;
+        const result = this.#logistics.damageTruck(truck.id, MUTANT.attackDamage);
+        if (!result.ok) throw new Error(`Mutant ${mutant.id} could not damage ${truck.id}: ${result.reason}`);
+        if (result.destroyed) trucks.splice(trucks.indexOf(truck), 1);
     }
 
     #attack(mutant, buildingId, buildings, effects) {

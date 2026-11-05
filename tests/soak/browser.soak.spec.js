@@ -306,9 +306,10 @@ test('stepped: 20 nights of destruction and rebuilding leave nothing behind', as
     const errors = watchErrors(page);
     const GUARD = {col: 4, row: 6};
     const BAIT = {col: 20, row: 13};
+    // No Factory: without roads it earns nothing, and the starting budget covers
+    // the Plant, both turrets and one rebuild, which is all this leak check needs.
     const state = await start(page, 'waveBudget=4');
     await place(page, state, 'powerPlant', {col: 2, row: 2});
-    await place(page, state, 'factory', {col: 6, row: 2});
 
     let guardId = null;
     let baitId = null;
@@ -418,6 +419,64 @@ test('stepped: Chromium and the Node harness reach identical state', async ({pag
     writeResult('cross-check', {scenario: 'Node harness against Chromium', checkpoints, expected, actual});
     expect(actual).toEqual(expected);
     expect(new Set(actual).size).toBe(checkpoints.length);
+    expect(errors).toEqual([]);
+});
+
+const LOGISTICS_FIXTURE = JSON.parse(readFileSync(new URL('../fixtures/layouts/logistics-reference.json', import.meta.url), 'utf8'));
+
+async function loadedBase(page, query, layout = LOGISTICS_FIXTURE) {
+    await boot(page, {scene: 'game', waitForQA: true, query});
+    await clickAction(page, 'start');
+    await expect(body(page)).toHaveAttribute('data-phase', 'started');
+    const result = await page.evaluate((s) => window.__qa.layout.load(s), layout);
+    expect(result.ok).toBe(true);
+}
+
+test('real time 4x: trucks on the road during the heaviest approved wave', async ({page}) => {
+    const errors = watchErrors(page);
+    await loadedBase(page, `waveBudget=40&waveLastTick=${WAVE.minLastTick}`);
+    const label = await beginRealTimeNight(page);
+    await clickAction(page, 'speed-4');
+    await page.waitForFunction(() => window.__qa.getState().shiftCycle.shift === 'day', null, {timeout: 30_000, polling: 50});
+    const perf = await stopProbe(page);
+    const dawn = await sample(page);
+    writeResult('speed-4x-logistics', {
+        scenario: 'logistics fixture, 2 trucks, 40 mutants ending on tick 1200, 4x', ...label,
+        workload: {trucks: dawn.logistics.trucks.length, lastNight: dawn.logistics.lastNight}, perf,
+    });
+    expect(dawn.simulation.tick).toBe(3600);
+    expect(dawn.logistics.lastNight.loads).toBeGreaterThan(0);
+    expect(perf.ticksPerSecond).toBeGreaterThanOrEqual(MIN_TICKS_PER_SECOND_AT_4X);
+    expect(errors).toEqual([]);
+});
+
+test('stepped: trucks, storage pips and repeated restarts leave nothing behind', async ({page}) => {
+    const errors = watchErrors(page);
+    const flow = hqFlow({pressWorld: clickWorld, pressAction: clickAction});
+    const counts = () => page.evaluate(() => window.__qa.perf.counts());
+    const loaded = [];
+    const titles = [];
+    // No cannons, so the base really falls and each run reaches a restart.
+    const undefended = {...LOGISTICS_FIXTURE, buildings: LOGISTICS_FIXTURE.buildings.filter((b) => b.type !== 'autocannon')};
+    await loadedBase(page, 'waveBudget=20', undefended);
+    for (let run = 0; run < 4; run++) {
+        if (run > 0) {
+            await clickAction(page, 'start');
+            await expect(body(page)).toHaveAttribute('data-phase', 'started');
+            expect((await page.evaluate((s) => window.__qa.layout.load(s), undefended)).ok).toBe(true);
+        }
+        await page.waitForTimeout(100); // the first frame draws the trucks
+        loaded.push(await counts());
+        expect((await sample(page)).truckViews.trucks).toHaveLength(2);
+        await flow.stepToDefeat(page, 8);
+        await clickAction(page, 'restart');
+        await page.waitForFunction(() => window.__qa?.getState().phase === 'ready');
+        await page.waitForTimeout(100);
+        titles.push(await counts());
+    }
+    writeResult('logistics-restart', {scenario: 'stepped, logistics fixture without cannons, 4 runs to defeat', loaded, titles});
+    for (const count of loaded) expect(count).toEqual(loaded[0]);
+    for (const count of titles) expect(count).toEqual(titles[0]);
     expect(errors).toEqual([]);
 });
 

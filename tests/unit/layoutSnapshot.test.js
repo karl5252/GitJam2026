@@ -10,7 +10,8 @@ import {LAYOUT_FORMAT, LAYOUT_VERSION, LayoutFailure, exportLayout, loadLayout} 
 import {FORTRESS_22_EXACT} from '../fixtures/legacy/fortress22-exact.js';
 import {createWorld} from '../soak/harness.js';
 
-const FIXTURE = JSON.parse(readFileSync(new URL('../fixtures/layouts/fortress22-road-legal.json', import.meta.url), 'utf8'));
+const FIXTURE = JSON.parse(readFileSync(new URL('../fixtures/layouts/logistics-reference.json', import.meta.url), 'utf8'));
+const STALE_ROAD_LEGAL = JSON.parse(readFileSync(new URL('../fixtures/layouts/fortress22-road-legal.json', import.meta.url), 'utf8'));
 const FUNDS = {credits: 9000, ap: 30};
 const clone = (value) => structuredClone(value);
 const fresh = (options = {}) => createWorld({requireHq: true, roads: true, ...options});
@@ -114,7 +115,7 @@ test('the HQ ring comes back, permanent and connected', () => {
 test('connections are live after a load: a needed road stays protected', () => {
     const w = loaded(snapshotOf(played().w));
     assert.deepEqual(w.placement.removeRoad({col: 10, row: 5}), {ok: false, reason: RoadFailure.ROAD_REQUIRED});
-    assert.equal(w.placement.removeRoad({col: 10, row: 4}).ok, true);
+    assert.deepEqual(w.placement.removeRoad({col: 10, row: 4}), {ok: false, reason: RoadFailure.ROAD_REQUIRED}); // the dock
 });
 
 test('a legal disconnected fragment round-trips', () => {
@@ -149,7 +150,7 @@ test('normal placement stays fully charged and validated after a load', () => {
 function tieSnapshot(first, second) {
     const w = fresh({resources: FUNDS});
     w.place('hq', 12, 8);
-    for (const cell of [{col: 11, row: 5}, {col: 11, row: 4}, {col: 9, row: 8}, {col: 8, row: 8}]) {
+    for (const cell of [{col: 14, row: 5}, {col: 14, row: 4}, {col: 14, row: 3}, {col: 14, row: 2}, {col: 9, row: 8}, {col: 8, row: 8}]) {
         assert.equal(w.placement.placeRoad(cell).ok, true);
     }
     for (const [col, row] of [first, second]) assert.equal(w.place('factory', col, row).ok, true);
@@ -324,17 +325,33 @@ test('a failure during the live replay is reported as applied, so the run can be
 
 // ---- Fixtures ---------------------------------------------------------------------
 
-test('the road-legal fixture loads through the real rules', () => {
+test('the logistics reference fixture loads through the real rules', () => {
     const w = loaded(FIXTURE);
     const buildings = w.placement.buildings();
     const count = (type) => buildings.filter((b) => b.type === type).length;
     assert.deepEqual(['hq', 'factory', 'powerPlant', 'autocannon'].map(count), [1, 2, 3, 9]);
-    assert.equal(w.roads.tiles().length, 17);
-    assert.equal(w.roads.connectedTiles().length, 17);
+    assert.equal(w.roads.tiles().length, 18);
+    assert.equal(w.roads.connectedTiles().length, 18);
     assert.deepEqual(calculatePower(buildings).generation, 320);
     assert.deepEqual(calculatePower(buildings).demand, 260);
-    assert.equal(calculateSettlement(buildings).gross, 300);
+    assert.equal(calculateSettlement(buildings).gross, 0);
     assert.deepEqual(snapshotOf(w), FIXTURE);
+});
+
+test('a loaded base delivers, and its trucks come from the real Factories', () => {
+    const w = fresh({schedule: []});
+    assert.equal(loadLayout(w, FIXTURE).ok, true);
+    const before = w.economy.credits;
+    w.cycle.endDay();
+    while (w.cycle.shift === Shift.NIGHT) w.cycle.stepTicks(240, w.tick);
+    assert.equal(w.logistics.snapshot().trucks.length, 2);
+    assert.equal(w.economy.credits, before + 300);
+});
+
+test('the TASK 017 road-legal fixture is stale: its Factory docks have no road', () => {
+    const w = fresh();
+    assert.equal(loadLayout(w, STALE_ROAD_LEGAL).reason, RoadFailure.NO_ROAD_ACCESS);
+    assert.deepEqual(w.placement.buildings(), []);
 });
 
 test('the original FORTRESS 22 stays outside the road rules', () => {

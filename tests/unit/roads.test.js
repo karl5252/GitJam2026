@@ -176,15 +176,10 @@ test('space is checked before resources', () => {
     const {build} = hqGame({credits: 0, ap: 0});
     assert.deepEqual(build('factory', 3, 3), {ok: false, reason: RoadFailure.NO_ROAD_ACCESS});
     assert.deepEqual(build('outpost', 10, 6), {ok: false, reason: RoadFailure.ROAD_OCCUPIED});
-    assert.equal(build('factory', 12, 4).reason, 'insufficient-credits');
+    assert.equal(build('factory', 8, 8).reason, 'insufficient-credits');
 });
 
-test('a Factory needs a connected road on any edge of its footprint', () => {
-    const edges = [[12, 4], [12, 12], [8, 8], [16, 8]];
-    for (const [col, row] of edges) assert.equal(hqGame().build('factory', col, row).ok, true, `${col},${row}`);
-});
-
-test('a Factory touching only a ring corner diagonally has no access', () => {
+test('a Factory with no road on its dock tile is rejected', () => {
     const {build, placement, economy} = hqGame();
     const before = economy.snapshot();
     assert.deepEqual(build('factory', 8, 4), {ok: false, reason: RoadFailure.NO_ROAD_ACCESS});
@@ -241,11 +236,10 @@ test('a road a Factory depends on cannot be removed', () => {
 
 test('a road can go when another connected route still serves the Factory', () => {
     const {build, placement, roads} = hqGame();
-    placement.placeRoad({col: 10, row: 5});
-    placement.placeRoad({col: 10, row: 4});
-    assert.equal(build('factory', 8, 4).ok, true);
-    assert.equal(placement.removeRoad({col: 10, row: 4}).ok, true); // 10,5 still touches it
-    assert.equal(roads.has({col: 10, row: 4}), false);
+    for (const [col, row] of [[10, 5], [10, 4], [11, 4], [11, 5]]) placement.placeRoad({col, row});
+    assert.equal(build('factory', 8, 4).ok, true); // dock 10,4
+    assert.equal(placement.removeRoad({col: 10, row: 5}).ok, true); // 11,4 and 11,5 still connect it
+    assert.equal(roads.has({col: 10, row: 5}), false);
 });
 
 test('a loop keeps a Factory served when one side is removed', () => {
@@ -255,7 +249,7 @@ test('a loop keeps a Factory served when one side is removed', () => {
         assert.equal(placement.placeRoad({col: cell[0], row: cell[1]}).ok, true, String(cell));
     }
     assert.equal(placement.placeRoad({col: 10, row: 2}).reason, RoadFailure.ROAD_EXISTS);
-    assert.equal(build('factory', 7, 2).ok, true); // right edge touches 9,2 only
+    assert.equal(build('factory', 7, 2).ok, true); // dock 9,2
     assert.equal(placement.removeRoad({col: 10, row: 4}).ok, true); // the other side still connects
     assert.deepEqual(placement.removeRoad({col: 12, row: 4}), {ok: false, reason: RoadFailure.ROAD_REQUIRED});
 });
@@ -273,7 +267,7 @@ test('a fragment gives no Factory access and cannot be extended', () => {
     const {build, placement} = hqGame();
     for (const row of [5, 4, 3]) placement.placeRoad({col: 12, row});
     placement.removeRoad({col: 12, row: 5});
-    assert.deepEqual(build('factory', 10, 3), {ok: false, reason: RoadFailure.NO_ROAD_ACCESS}); // right edge touches the fragment
+    assert.deepEqual(build('factory', 10, 3), {ok: false, reason: RoadFailure.NO_ROAD_ACCESS}); // its dock is on the fragment
     assert.deepEqual(placement.placeRoad({col: 12, row: 2}), {ok: false, reason: RoadFailure.NOT_CONNECTED});
 });
 
@@ -297,11 +291,8 @@ test('a destroyed Factory stops protecting its road, and roads survive it', () =
 
 // ---- Queries ----------------------------------------------------------------------
 
-test('accessTiles and neighbors have a stable, documented order', () => {
+test('neighbors have a stable, documented order', () => {
     const {roads} = ringed();
-    assert.deepEqual(roads.accessTiles({col: 11, row: 3, width: 3, height: 3}), [
-        {col: 11, row: 6}, {col: 12, row: 6}, {col: 13, row: 6},
-    ]);
     roads.add({col: 12, row: 5});
     assert.deepEqual(roads.neighbors({col: 12, row: 6}), [{col: 12, row: 5}, {col: 13, row: 6}, {col: 11, row: 6}]);
 });
@@ -325,7 +316,8 @@ test('tiles and snapshots are detached and independent of build order', () => {
 test('roads do not change combat: identical digests with and without them', () => {
     const run = (roads) => {
         const w = createWorld({seed: 98, resources: {credits: 5000, ap: 20}, requireHq: true, roads, schedule: [100, 110, 120, 700, 720]});
-        for (const [type, col, row] of [['hq', 12, 8], ['powerPlant', 12, 4], ['factory', 8, 8], ['autocannon', 15, 4]]) {
+        // No Factory, so no truck: this isolates the roads themselves.
+        for (const [type, col, row] of [['hq', 12, 8], ['powerPlant', 12, 4], ['outpost', 8, 8], ['autocannon', 15, 4]]) {
             assert.equal(w.place(type, col, row).ok, true, type);
         }
         if (roads) for (const cell of [{col: 15, row: 6}, {col: 15, row: 7}]) w.roads.add(cell);

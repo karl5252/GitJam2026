@@ -1,0 +1,42 @@
+{
+    "format": "papi-layout",
+    "version": 1,
+    "grid": {"cols":24,"rows":16},
+    "buildings": [
+        {"type":"hq","col":10,"row":5,"enabled":true},
+        {"type":"factory","col":6,"row":5,"enabled":true},
+        {"type":"factory","col":6,"row":9,"enabled":true},
+        {"type":"powerPlant","col":14,"row":3,"enabled":true},
+        {"type":"powerPlant","col":14,"row":7,"enabled":true},
+        {"type":"powerPlant","col":10,"row":1,"enabled":true},
+        {"type":"autocannon","col":5,"row":4,"enabled":true},
+        {"type":"autocannon","col":8,"row":4,"enabled":true},
+        {"type":"autocannon","col":5,"row":8,"enabled":true},
+        {"type":"autocannon","col":14,"row":2,"enabled":true},
+        {"type":"autocannon","col":18,"row":4,"enabled":true},
+        {"type":"autocannon","col":18,"row":8,"enabled":true},
+        {"type":"autocannon","col":13,"row":9,"enabled":true},
+        {"type":"autocannon","col":10,"row":11,"enabled":true},
+        {"type":"autocannon","col":3,"row":7,"enabled":true}
+    ],
+    "roads": [
+        {"col":9,"row":4,"kind":"hq-ring"},
+        {"col":10,"row":4,"kind":"hq-ring"},
+        {"col":11,"row":4,"kind":"hq-ring"},
+        {"col":12,"row":4,"kind":"hq-ring"},
+        {"col":13,"row":4,"kind":"hq-ring"},
+        {"col":9,"row":5,"kind":"hq-ring"},
+        {"col":13,"row":5,"kind":"hq-ring"},
+        {"col":9,"row":6,"kind":"hq-ring"},
+        {"col":13,"row":6,"kind":"hq-ring"},
+        {"col":9,"row":7,"kind":"hq-ring"},
+        {"col":13,"row":7,"kind":"hq-ring"},
+        {"col":9,"row":8,"kind":"hq-ring"},
+        {"col":10,"row":8,"kind":"hq-ring"},
+        {"col":11,"row":8,"kind":"hq-ring"},
+        {"col":12,"row":8,"kind":"hq-ring"},
+        {"col":13,"row":8,"kind":"hq-ring"},
+        {"col":9,"row":9,"kind":"player"},
+        {"col":9,"row":10,"kind":"player"}
+    ]
+}
