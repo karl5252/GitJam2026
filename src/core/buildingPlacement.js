@@ -1,4 +1,4 @@
-import {getBuildingType} from './buildingTypes.js';
+import {HQ_TYPE, getBuildingType} from './buildingTypes.js';
 
 /**
  * Placement mode + placed-building state. Pure — no Phaser.
@@ -7,12 +7,18 @@ import {getBuildingType} from './buildingTypes.js';
  * Economy for affordability. preview() and placeAt() share one validation
  * (grid first, then economy); a building is recorded only after both the
  * grid placement and the resource spend succeed.
+ *
+ * HQ rules: only one HQ can ever be built, enforced by a latch rather than by
+ * looking for an existing HQ, so a destroyed HQ cannot be rebuilt. With
+ * requireHq, nothing else can be built until it stands.
  */
 
 export const NO_SELECTION = 'no-selection';
 export const CONSTRUCTION_DISABLED = 'construction-disabled';
 export const UNKNOWN_BUILDING = 'unknown-building';
 export const INVALID_STATE = 'invalid-state';
+export const HQ_REQUIRED = 'hq-required';
+export const HQ_ALREADY_BUILT = 'hq-already-built';
 
 /**
  * Footprint for a building centred on a pointer cell.
@@ -38,22 +44,44 @@ export class BuildingPlacement {
 
     #economy;
     #isConstructionAllowed;
+    #requireHq;
+    #hqBuilt = false;
 
     /**
      * @param {import('./grid.js').Grid} grid
      * @param {import('./economy.js').Economy} economy
-     * @param {{isConstructionAllowed?: () => boolean}} [options] - e.g. false during Night Shift
+     * @param {{isConstructionAllowed?: () => boolean, requireHq?: boolean}} [options]
+     *   isConstructionAllowed - e.g. false during Night Shift
+     *   requireHq - only HQ can be built until it stands. Real play always sets
+     *   this. The false default is legacy compatibility, for fixtures that test
+     *   other rules without an HQ; do not rely on it in new gameplay code.
      */
-    constructor(grid, economy, {isConstructionAllowed = () => true} = {}) {
+    constructor(grid, economy, {isConstructionAllowed = () => true, requireHq = false} = {}) {
         this.#grid = grid;
         this.#economy = economy;
         this.#isConstructionAllowed = isConstructionAllowed;
+        this.#requireHq = requireHq;
         this.selectedType = null; // building type id, or null when not in placement mode
     }
 
-    /** Enter placement mode for a type. False for an unknown type or while construction is disabled. */
+    /** True once an HQ has been built this run, even if it was later destroyed. */
+    get hqBuilt() {
+        return this.#hqBuilt;
+    }
+
+    /**
+     * The HQ rules for a known type. Never mutates, and ignores the
+     * construction gate, space and resources.
+     * @returns {{ok: true} | {ok: false, reason: 'hq-required' | 'hq-already-built'}}
+     */
+    canBuild(typeId) {
+        if (typeId === HQ_TYPE) return this.#hqBuilt ? {ok: false, reason: HQ_ALREADY_BUILT} : {ok: true};
+        return this.#requireHq && !this.#hqBuilt ? {ok: false, reason: HQ_REQUIRED} : {ok: true};
+    }
+
+    /** Enter placement mode for a type. False if unknown, not buildable now, or construction is disabled. */
     select(typeId) {
-        if (!getBuildingType(typeId) || !this.#isConstructionAllowed()) return false;
+        if (!getBuildingType(typeId) || !this.#isConstructionAllowed() || !this.canBuild(typeId).ok) return false;
         this.selectedType = typeId;
         return true;
     }
@@ -106,6 +134,10 @@ export class BuildingPlacement {
         this.#nextId++;
         const building = {id, type: type.id, ...footprint, enabled: true, hp: type.maxHp};
         this.#buildings.push(building);
+        if (type.id === HQ_TYPE) {
+            this.#hqBuilt = true;
+            this.cancel(); // it cannot be built again, so placement mode ends here
+        }
         return {ok: true, building: {...building}};
     }
 
@@ -121,6 +153,7 @@ export class BuildingPlacement {
         if (typeof enabled !== 'boolean') return {ok: false, reason: INVALID_STATE};
         const building = this.#buildings.find((b) => b.id === id);
         if (!building) return {ok: false, reason: UNKNOWN_BUILDING};
+        if (getBuildingType(building.type).switchable === false) return {ok: false, reason: INVALID_STATE};
         building.enabled = enabled;
         return {ok: true, building: {...building}};
     }
@@ -149,9 +182,11 @@ export class BuildingPlacement {
         return {ok: true, destroyed: true, hp};
     }
 
-    /** Construction gate, then spatial rules (grid), then resources (economy). Never mutates. */
+    /** Construction gate, HQ rules, spatial rules (grid), then resources (economy). Never mutates. */
     #validate(type, footprint) {
         if (!this.#isConstructionAllowed()) return {ok: false, reason: CONSTRUCTION_DISABLED};
+        const allowed = this.canBuild(type.id);
+        if (!allowed.ok) return allowed;
         const spatial = this.#grid.canPlace(footprint);
         if (!spatial.ok) return spatial;
         return this.#economy.canAfford(type.cost);

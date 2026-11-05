@@ -118,6 +118,10 @@ At the real cap of 20, there is no measurable pressure. Idle and 20-mutant night
 
 That is about 2 ms per tick at 100 times the real cap. It does not justify optimization now.
 
+## HQ and defeat (TASK 013)
+
+The recorded numbers above predate HQ, and the scenarios behind them use the legacy HQ-less setup, so they stay comparable. The domain soak adds `legal-hq-survives-20-nights` and `legal-hq-undefended-defeat` on the real HQ rules, and the browser soak adds repeated defeat and restart cycles, with hard checks on objects and listeners.
+
 ## Known gaps
 
 - One machine and one run. Rerun before treating any number as a trend.

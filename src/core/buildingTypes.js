@@ -11,8 +11,24 @@
  *   pollutionPerNight: added per completed Night Shift while the building is
  *               powered (see core/pollution.js)
  *   maxHp:      starting and maximum hit points
+ *   switchable: false means setEnabled rejects it; otherwise it can be toggled
+ *
+ * HQ comes first, because it is the first thing built. It is an ordinary
+ * building to power, settlement and pollution, with extra rules in
+ * BuildingPlacement, and losing it ends the run (see ShiftCycle.defeat).
  */
+export const HQ_TYPE = 'hq';
+
 export const BUILDING_TYPES = Object.freeze({
+    hq: Object.freeze({
+        id: HQ_TYPE, name: 'HQ', width: 3, height: 3,
+        cost: Object.freeze({credits: 0, ap: 0}),
+        operations: Object.freeze({income: 0, upkeep: 0}),
+        power: Object.freeze({supply: 20, demand: 0}),
+        pollutionPerNight: 0,
+        maxHp: 600,
+        switchable: false,
+    }),
     outpost: Object.freeze({
         id: 'outpost', name: 'Outpost', width: 1, height: 1,
         cost: Object.freeze({credits: 100, ap: 1}),

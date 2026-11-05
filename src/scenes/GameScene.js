@@ -1,8 +1,8 @@
 import Phaser from 'phaser';
-import {GamePhase, startGame} from '../core/gamePhase.js';
+import {GamePhase, defeatGame, startGame} from '../core/gamePhase.js';
 import {Grid} from '../core/grid.js';
-import {BUILDING_TYPES} from '../core/buildingTypes.js';
-import {BuildingPlacement} from '../core/buildingPlacement.js';
+import {BUILDING_TYPES, HQ_TYPE, getBuildingType} from '../core/buildingTypes.js';
+import {BuildingPlacement, HQ_ALREADY_BUILT} from '../core/buildingPlacement.js';
 import {Economy} from '../core/economy.js';
 import {SimulationClock} from '../core/simulationClock.js';
 import {SeededRandom, DEFAULT_SEED, parseSeed} from '../core/seededRandom.js';
@@ -20,6 +20,7 @@ import {parseStressSchedule} from '../testShadow/stressParams.js';
 import {QASurface} from '../testShadow/QASurface.js';
 import {MutantLayer} from './MutantLayer.js';
 import {AutocannonLayer} from './AutocannonLayer.js';
+import {GameOverLayer} from './GameOverLayer.js';
 
 const GRID_COLS = 24;
 const GRID_ROWS = 16;
@@ -29,7 +30,7 @@ const GRID_LINE_COLOR = 0x78909c;
 const HIGHLIGHT_COLOR = 0xffeb3b;
 export const PREVIEW_VALID_COLOR = 0x4caf50;
 export const PREVIEW_INVALID_COLOR = 0xe53935;
-const BUILDING_COLORS = {outpost: 0x9e9e9e, factory: 0x616161, powerPlant: 0x5c6bc0, autocannon: 0x00897b};
+const BUILDING_COLORS = {hq: 0xc9a227, outpost: 0x9e9e9e, factory: 0x616161, powerPlant: 0x5c6bc0, autocannon: 0x00897b};
 const BUILDING_STROKE = 0x212121;
 export const UNPOWERED_STROKE = 0xe53935; // enabled but not operating (low power / blackout)
 export const DISABLED_ALPHA = 0.35; // switched OFF by the player
@@ -42,10 +43,13 @@ const POWER_STATUS_LABELS = {
 
 const BUTTON_IDLE_STROKE = 0x90a4ae;
 const BUTTON_SELECTED_STROKE = 0xffeb3b;
+const BUTTON_DISABLED_ALPHA = 0.45;
 
 // Build menu lives in the band left of the grid (grid x starts at 256).
 const MENU_X = 128;
 const MENU_BUTTON = {width: 192, height: 64};
+const MENU_TOP = 108;
+const MENU_STEP = 76;
 
 /**
  * Title + Start button. Start (READY -> STARTED) hides both, creates a 24x16
@@ -90,6 +94,8 @@ export class GameScene extends Phaser.Scene {
         this.mutantLayer = null;
         this.autocannons = null;
         this.autocannonLayer = null;
+        this.gameOverLayer = null;
+        this.hqRequired = true;
         this.lastResult = null;
         this.selectedCell = null;
         this.selectionHighlight = null;
@@ -153,6 +159,7 @@ export class GameScene extends Phaser.Scene {
             window.__qa.sim = {
                 pause: () => {
                     this.clock.pause();
+                    this.syncShiftUi(); // like stepTicks, so the HUD never lags behind QA
                     return this.clock.snapshot();
                 },
                 resume: () => {
@@ -208,9 +215,13 @@ export class GameScene extends Phaser.Scene {
         this.economy = new Economy();
         this.pollution = new Pollution();
         // Orchestration only: the settlement formula lives in core/settlement.js.
+        // TEST_MODE only: ?hq=off is a compatibility mode for legacy suites that
+        // predate the HQ-first flow. Real play always requires HQ.
+        this.hqRequired = !(TEST_MODE && new URLSearchParams(window.location.search).get('hq') === 'off');
         this.cycle = new ShiftCycle({
             clock: this.clock,
             economy: this.economy,
+            canEndDay: () => !this.hqRequired || this.placement.hqBuilt,
             settleNight: (day) => settleNight({
                 day,
                 buildings: this.placement.buildings(),
@@ -220,6 +231,7 @@ export class GameScene extends Phaser.Scene {
         });
         this.placement = new BuildingPlacement(this.grid, this.economy, {
             isConstructionAllowed: () => this.cycle.isConstructionAllowed,
+            requireHq: this.hqRequired,
         });
         // TEST_MODE only: ?mutants=off gives the real system an empty schedule,
         // for E2E suites about power, economy and pollution, and the soak suites
@@ -247,6 +259,7 @@ export class GameScene extends Phaser.Scene {
             mutants: this.mutants,
         });
         this.autocannonLayer = new AutocannonLayer(this, this.grid);
+        this.gameOverLayer = new GameOverLayer(this, () => this.scene.restart());
 
         const bounds = this.grid.footprintRect({col: 0, row: 0, width: GRID_COLS, height: GRID_ROWS});
         const lines = this.add.graphics();
@@ -367,8 +380,9 @@ export class GameScene extends Phaser.Scene {
     /** Living mutants, then scheduled slots reached out of total. Not a kill counter. */
     updateWaveHud(mutants) {
         const plan = this.mutants.plan();
-        this.waveHud.setVisible(plan !== null);
-        if (!plan) return;
+        const visible = plan !== null && this.cycle.shift === Shift.NIGHT;
+        this.waveHud.setVisible(visible);
+        if (!visible) return;
         const reached = waveProgress(plan, this.cycle.elapsedNightTicks);
         const text = `Mutants ${mutants.length} | Wave ${reached}/${plan.schedule.length}`;
         if (this.waveHud.text !== text) this.waveHud.setText(text);
@@ -377,10 +391,12 @@ export class GameScene extends Phaser.Scene {
     /** Shift line; the night countdown is derived from remaining simulation ticks. */
     updateShiftHud() {
         const {day, shift, remainingNightTicks} = this.cycle.snapshot();
-        const text = shift === Shift.NIGHT
-            ? `Day ${day} · Night Shift · ${(remainingNightTicks / this.clock.tickRate).toFixed(1)} s left`
-                + (this.clock.paused ? ' (paused)' : '')
-            : `Day ${day} · Day Shift`;
+        let text = `Day ${day} · Day Shift`;
+        if (shift === Shift.DEFEATED) text = `Day ${day} · Headquarters destroyed`;
+        if (shift === Shift.NIGHT) {
+            text = `Day ${day} · Night Shift · ${(remainingNightTicks / this.clock.tickRate).toFixed(1)} s left`
+                + (this.clock.paused ? ' (paused)' : '');
+        }
         if (this.shiftHud.text !== text) this.shiftHud.setText(text);
     }
 
@@ -401,6 +417,7 @@ export class GameScene extends Phaser.Scene {
             this.updateHud(); // AP is restored and the night settled at the start of each Day
             this.updatePollutionHud();
             if (isDay && this.cycle.lastSettlement) this.showSettlement(this.cycle.lastSettlement);
+            if (this.cycle.shift === Shift.DEFEATED) this.enterDefeat();
         }
         this.updateShiftHud();
         const mutants = this.mutants.snapshot();
@@ -416,7 +433,16 @@ export class GameScene extends Phaser.Scene {
         });
     }
 
+    /** Runs once: the Day/Night key changes only once into the defeated state. */
+    enterDefeat() {
+        this.phase = defeatGame(this.phase);
+        this.selectAt(null);
+        this.gameOverLayer.show(this.cycle.defeatReport);
+        setBodyState({phase: this.phase});
+    }
+
     handleEndDay() {
+        if (!this.cycle.canEndDay) return; // disabled, and must not disturb placement
         this.exitPlacementMode();
         this.cycle.endDay();
         this.syncShiftUi();
@@ -439,15 +465,15 @@ export class GameScene extends Phaser.Scene {
     }
 
     createBuildMenu() {
-        let y = 180;
-        for (const type of Object.values(BUILDING_TYPES)) {
+        let y = MENU_TOP;
+        for (const type of Object.values(BUILDING_TYPES).filter((t) => this.hqRequired || t.id !== HQ_TYPE)) {
             const label = `${type.name} ${type.width}x${type.height}\n${type.cost.credits}c · ${type.cost.ap} AP`;
             const button = this.createButton(y, label, 0x37474f);
             button.rect.on('pointerdown', () => this.enterPlacementMode(type.id));
             button.type = type;
             button.proxy = null;
             this.buildButtons[type.id] = button;
-            y += 88;
+            y += MENU_STEP;
         }
 
         this.cancelButton = this.createButton(y, 'Cancel', 0x8e2b2b);
@@ -472,7 +498,7 @@ export class GameScene extends Phaser.Scene {
             ? this.placement.buildings().find((b) => b.id === this.selectedBuildingId)
             : null;
         const {rect, text} = this.toggleButton;
-        const visible = Boolean(building);
+        const visible = Boolean(building) && getBuildingType(building.type).switchable !== false;
         rect.setVisible(visible);
         text.setVisible(visible);
         if (!visible) {
@@ -513,6 +539,34 @@ export class GameScene extends Phaser.Scene {
                 button.proxy = null;
             }
         }
+        if (visible) this.refreshBuildMenu();
+    }
+
+    /** 'available', 'locked' until HQ stands, or 'built' for an HQ already placed. */
+    buildState(typeId) {
+        const {ok, reason} = this.placement.canBuild(typeId);
+        if (ok) return 'available';
+        return reason === HQ_ALREADY_BUILT ? 'built' : 'locked';
+    }
+
+    /** Disabled buttons stay visible and pressable, but pressing them does nothing. */
+    refreshBuildMenu() {
+        for (const [id, button] of Object.entries(this.buildButtons)) {
+            const state = this.buildState(id);
+            const alpha = state === 'available' ? 1 : BUTTON_DISABLED_ALPHA;
+            button.rect.setAlpha(alpha);
+            button.text.setAlpha(alpha);
+            if (state === 'built') button.text.setText(`${button.type.name} ${button.type.width}x${button.type.height}\nBUILT`);
+            button.proxy?.set({state});
+        }
+    }
+
+    refreshEndDay() {
+        const enabled = this.cycle.canEndDay;
+        const alpha = enabled ? 1 : BUTTON_DISABLED_ALPHA;
+        this.endDayButton.rect.setAlpha(alpha);
+        this.endDayButton.text.setAlpha(alpha);
+        this.endDayProxy?.set({enabled});
     }
 
     setEndDayVisible(visible) {
@@ -522,6 +576,7 @@ export class GameScene extends Phaser.Scene {
         if (visible) {
             rect.setInteractive({useHandCursor: true});
             this.endDayProxy ??= addProxy(this, rect, 'end-day', {label: 'End Day'});
+            this.refreshEndDay();
         } else {
             rect.disableInteractive();
             this.endDayProxy?.destroy();
@@ -570,6 +625,10 @@ export class GameScene extends Phaser.Scene {
     exitPlacementMode() {
         if (!this.placement?.isPlacing) return;
         this.placement.cancel();
+        this.resetPlacementUi();
+    }
+
+    resetPlacementUi() {
         for (const button of Object.values(this.buildButtons)) {
             button.rect.setStrokeStyle(3, BUTTON_IDLE_STROKE);
             button.proxy?.set({selected: false});
@@ -608,7 +667,7 @@ export class GameScene extends Phaser.Scene {
 
     /** `over` = interactive objects under the pointer; UI hits are never grid input. */
     handleGridPointerDown(pointer, over) {
-        if (!this.grid || over.length > 0) return;
+        if (!this.grid || over.length > 0 || this.phase === GamePhase.DEFEATED) return;
         const cell = this.grid.worldToCell(pointer.worldX, pointer.worldY);
 
         if (this.placement.isPlacing) {
@@ -621,6 +680,11 @@ export class GameScene extends Phaser.Scene {
                 this.updateHud();
                 this.refreshPower(); // new supply/demand takes effect immediately
                 this.updatePreview(cell); // re-validate: cell now occupied, balances lower
+                if (building.type === HQ_TYPE) { // the domain ended placement; the rest unlocks
+                    this.resetPlacementUi();
+                    this.refreshBuildMenu();
+                    this.refreshEndDay();
+                }
             }
             return;
         }
@@ -630,7 +694,7 @@ export class GameScene extends Phaser.Scene {
     }
 
     handleGridPointerMove(pointer, over) {
-        if (!this.placement?.isPlacing) return;
+        if (!this.placement?.isPlacing || this.phase === GamePhase.DEFEATED) return;
         const cell = over.length > 0 ? null : this.grid.worldToCell(pointer.worldX, pointer.worldY);
         this.updatePreview(cell);
     }
@@ -709,6 +773,7 @@ export class GameScene extends Phaser.Scene {
                 startVisible: this.startButton.visible,
                 cancelVisible: this.cancelButton ? this.cancelButton.rect.visible : false,
                 endDayVisible: this.endDayButton ? this.endDayButton.rect.visible : false,
+                endDayEnabled: this.cycle ? this.cycle.canEndDay : false,
                 buildMenuVisible: Object.values(this.buildButtons).some((b) => b.rect.visible),
                 toggleVisible: this.toggleButton ? this.toggleButton.rect.visible : false,
             },
@@ -750,8 +815,13 @@ export class GameScene extends Phaser.Scene {
             hpBarViews: this.mutantLayer ? this.mutantLayer.hpBarViews() : null,
             // The frozen night plan, slots reached so far, and the actual HUD text.
             wave: this.mutants ? this.mutants.plan() : null,
-            waveProgress: this.mutants?.plan() ? waveProgress(this.mutants.plan(), this.cycle.elapsedNightTicks) : null,
+            waveProgress: this.mutants?.plan() && this.cycle.shift === Shift.NIGHT
+                ? waveProgress(this.mutants.plan(), this.cycle.elapsedNightTicks)
+                : null,
             waveView: this.waveHud ? {visible: this.waveHud.visible, text: this.waveHud.text} : null,
+            // The defeat record (null until HQ falls) and the actual overlay text.
+            defeat: this.cycle ? this.cycle.defeatReport : null,
+            gameOverView: this.gameOverLayer ? this.gameOverLayer.view() : null,
             // Domain turret state, then the rendered barrels and tracers.
             autocannons: this.autocannons ? this.autocannons.snapshot() : null,
             barrelViews: this.autocannonLayer ? this.autocannonLayer.barrelViews() : null,
@@ -765,6 +835,10 @@ export class GameScene extends Phaser.Scene {
             },
             // Actual HUD text, read off the game object.
             hudView: this.hud ? {visible: this.hud.visible, text: this.hud.text} : null,
+            // 'available', 'locked' or 'built', keyed by building type.
+            menuState: this.hud
+                ? Object.fromEntries(Object.keys(this.buildButtons).map((id) => [id, this.buildState(id)]))
+                : null,
             // Actual build-button label text, keyed by building type.
             menuLabels: this.hud
                 ? Object.fromEntries(Object.entries(this.buildButtons).map(([id, b]) => [id, b.text.text]))

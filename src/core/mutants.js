@@ -10,12 +10,17 @@
  * settles, and a retried final tick cannot apply damage twice. Outside Night
  * step() removes any survivors, which is how dawn cleanup happens.
  *
+ * Destroying HQ ends the run on that hit: later mutants do not act and a due
+ * spawn is dropped. Survivors stay where they are, frozen, since defeat is
+ * final and there is no dawn.
+ *
  * Mutant HP is owned here and only changes through damageMutant(). Building
  * HP and occupancy belong to BuildingPlacement; a mutant only holds building
  * ids. `targetId` is the preferred target, locked until destroyed.
  * `obstacleId` is a building that blocked the next step: the mutant stays
  * put and attacks it until destroyed, then resumes toward `targetId`.
  */
+import {HQ_TYPE} from './buildingTypes.js';
 import {Shift} from './shiftCycle.js';
 
 export const MUTANT = Object.freeze({
@@ -27,7 +32,7 @@ export const MUTANT = Object.freeze({
 });
 
 /** Px subtracted from a building's distance: higher is more attractive. */
-export const TARGET_BIAS = Object.freeze({powerPlant: 256, factory: 128, autocannon: 64, outpost: 0});
+export const TARGET_BIAS = Object.freeze({hq: 256, powerPlant: 256, factory: 128, autocannon: 64, outpost: 0});
 
 export const UNKNOWN_MUTANT = 'unknown-mutant';
 export const INVALID_DAMAGE = 'invalid-damage';
@@ -140,6 +145,7 @@ export class Mutants {
      * @returns {{spawned: string[], attacks: Array<{mutantId, buildingId, damage, hp}>, destroyed: string[]}}
      */
     step() {
+        if (this.#cycle.shift === Shift.DEFEATED) return NO_EFFECTS;
         if (this.#cycle.shift !== Shift.NIGHT) {
             this.#mutants.length = 0;
             this.#plan = null;
@@ -151,7 +157,10 @@ export class Mutants {
 
         const effects = {spawned: [], attacks: [], destroyed: []};
         const buildings = this.#placement.buildings();
-        for (const mutant of this.#mutants) this.#act(mutant, buildings, effects);
+        for (const mutant of this.#mutants) {
+            this.#act(mutant, buildings, effects);
+            if (this.#cycle.shift !== Shift.NIGHT) return effects; // HQ fell: the run ended on that hit
+        }
         if (spawnDue) this.#spawn(buildings, effects);
         return effects;
     }
@@ -226,7 +235,8 @@ export class Mutants {
         effects.attacks.push({mutantId: mutant.id, buildingId, damage: MUTANT.attackDamage, hp: result.hp});
         if (result.destroyed) {
             effects.destroyed.push(buildingId);
-            buildings.splice(buildings.findIndex((b) => b.id === buildingId), 1);
+            const [building] = buildings.splice(buildings.findIndex((b) => b.id === buildingId), 1);
+            if (building.type === HQ_TYPE) this.#cycle.defeat();
         }
     }
 

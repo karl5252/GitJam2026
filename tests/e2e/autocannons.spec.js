@@ -58,7 +58,7 @@ async function stepUntilGone(page, id) {
 
 function autocannonSuite({pressWorld, pressAction}) {
     async function start(page) {
-        await boot(page, {scene: 'game', waitForQA: true});
+        await boot(page, {scene: 'game', waitForQA: true, hq: false});
         await pressAction(page, 'start');
         await expect(body(page)).toHaveAttribute('data-phase', 'started');
         return sample(page);
@@ -276,7 +276,7 @@ function autocannonSuite({pressWorld, pressAction}) {
         await finishNight(page);
         const s = await sample(page);
         expect(s.settlement).toMatchObject({gross: 0, upkeep: 0, net: 0, pollution: {emitted: 12}});
-        expect(s.settlement.counts).toEqual({outpost: 0, factory: 0, powerPlant: 1, autocannon: 1});
+        expect(s.settlement.counts).toEqual({hq: 0, outpost: 0, factory: 0, powerPlant: 1, autocannon: 1});
         expect(s.resources).toEqual({credits: 250, ap: 5});
     });
 

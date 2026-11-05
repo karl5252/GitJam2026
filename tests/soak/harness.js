@@ -28,20 +28,22 @@ const GRID = {cols: 24, rows: 16, tileSize: 32, originX: 256, originY: 104};
 
 /**
  * @param {{seed?: number, schedule?: readonly number[]|null, resources?: {credits: number, ap: number},
- *          openConstruction?: boolean}} options
+ *          openConstruction?: boolean, requireHq?: boolean}} options
  *   schedule - fixed spawn ticks; null uses the real nightPlan
+ *   requireHq - the real HQ-first rules, as GameScene uses them
  */
-export function createWorld({seed = 731, schedule = null, resources = STARTING_RESOURCES, openConstruction = false} = {}) {
+export function createWorld({seed = 731, schedule = null, resources = STARTING_RESOURCES, openConstruction = false, requireHq = false} = {}) {
     const clock = new SimulationClock();
     const economy = new Economy(resources);
     const pollution = new Pollution();
     const grid = new Grid(GRID);
     const rng = new SeededRandom(seed);
     let cycle;
-    const placement = new BuildingPlacement(grid, economy, openConstruction ? {} : {isConstructionAllowed: () => cycle.isConstructionAllowed});
+    const placement = new BuildingPlacement(grid, economy, openConstruction ? {requireHq} : {isConstructionAllowed: () => cycle.isConstructionAllowed, requireHq});
     cycle = new ShiftCycle({
         clock,
         economy,
+        canEndDay: () => !requireHq || placement.hqBuilt,
         settleNight: (day) => settleNight({day, buildings: placement.buildings(), economy, pollution}),
     });
     const mutants = new Mutants({

@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import {GamePhase, startGame} from '../../src/core/gamePhase.js';
 
 test('phase values are stable and frozen', () => {
-    assert.deepEqual({...GamePhase}, {READY: 'ready', STARTED: 'started'});
+    assert.deepEqual({...GamePhase}, {READY: 'ready', STARTED: 'started', DEFEATED: 'defeated'});
     assert.ok(Object.isFrozen(GamePhase));
 });
 

@@ -83,10 +83,13 @@ export const body = (page) => page.locator('body');
  * @param {boolean} [opts.mutants] - false adds ?mutants=off, an empty spawn
  *   schedule for suites about power, economy and pollution. Combat tests
  *   must keep the default so they run the real schedule.
+ * @param {boolean} [opts.hq] - the default is the real HQ-first flow, which new
+ *   tests should use. false adds ?hq=off, a compatibility mode for legacy
+ *   suites written before HQ existed. Do not use it for new tests.
  * @param {string} [opts.query] - extra query parameters, e.g. 'waveBudget=20'
  */
-export async function boot(page, {path = '/', scene, waitForQA = false, mutants = true, query = ''} = {}) {
-    await page.goto(`${path}?testMode${mutants ? '' : '&mutants=off'}${query ? `&${query}` : ''}`);
+export async function boot(page, {path = '/', scene, waitForQA = false, mutants = true, hq = true, query = ''} = {}) {
+    await page.goto(`${path}?testMode${mutants ? '' : '&mutants=off'}${hq ? '' : '&hq=off'}${query ? `&${query}` : ''}`);
     if (scene) {
         await expect(body(page)).toHaveAttribute('data-scene', scene, {timeout: 10_000});
     }

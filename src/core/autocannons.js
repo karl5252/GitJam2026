@@ -4,7 +4,8 @@
  * step() runs once per executed simulation tick, AFTER ShiftCycle.onTick()
  * and BEFORE Mutants.step(), so a mutant killed on a tick cannot act on it.
  * Turrets fire on night ticks 1..nightTicks-1; outside Night step() clears
- * all turret state, which resets cooldowns at dawn.
+ * all turret state, which resets cooldowns at dawn. After a defeat they stop,
+ * and their state is left as it was.
  *
  * HP, position and the enabled flag belong to BuildingPlacement, power is
  * derived by calculatePower, and mutant HP belongs to Mutants. This module
@@ -77,6 +78,7 @@ export class Autocannons {
      *   x and y are where the mutant was when it was hit
      */
     step() {
+        if (this.#cycle.shift === Shift.DEFEATED) return NO_EFFECTS;
         if (this.#cycle.shift !== Shift.NIGHT) {
             this.#turrets.clear();
             return NO_EFFECTS;

@@ -20,7 +20,7 @@ function expectConsistent(s) {
 
 function simulationSuite(pressAction) {
     async function start(page) {
-        await boot(page, {scene: 'game', waitForQA: true, mutants: false});
+        await boot(page, {scene: 'game', waitForQA: true, hq: false, mutants: false});
         await pressAction(page, 'start');
         await expect(body(page)).toHaveAttribute('data-phase', 'started');
     }
@@ -33,7 +33,7 @@ function simulationSuite(pressAction) {
     }
 
     test('no ticks occur before Start, even when stepped manually', async ({page}) => {
-        await boot(page, {scene: 'game', waitForQA: true});
+        await boot(page, {scene: 'game', waitForQA: true, hq: false});
         await page.waitForTimeout(600);
         expect(await qaSim(page, 'stepTicks', 5)).toBe(0);
         await qaSim(page, 'pause');

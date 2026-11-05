@@ -4,6 +4,7 @@
 export const GamePhase = Object.freeze({
     READY: 'ready',
     STARTED: 'started',
+    DEFEATED: 'defeated',
 });
 
 /**
@@ -12,4 +13,9 @@ export const GamePhase = Object.freeze({
  */
 export function startGame(phase) {
     return phase === GamePhase.READY ? GamePhase.STARTED : phase;
+}
+
+/** HQ was destroyed. Only a started run can be lost; restart begins a new READY. */
+export function defeatGame(phase) {
+    return phase === GamePhase.STARTED ? GamePhase.DEFEATED : phase;
 }

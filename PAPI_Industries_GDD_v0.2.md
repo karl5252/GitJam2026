@@ -1,7 +1,7 @@
 # PAPI INDUSTRIES: THE GREEN SHIFT
 ## Game Design Document · v0.2 · 4 November 2026
 
-**Status:** Active graybox development · TASK 012A completed, no next task approved\
+**Status:** Active graybox development · TASK 013 completed, no next task approved\
 **Genre:** Industrial management + survival tower defense + corporate satire  
 **Platform:** Browser (itch.io), desktop and mobile landscape  
 **Engine:** Phaser + Vite · public GitHub game repository  
@@ -10,9 +10,9 @@
 
 > **Scope rule:** Playability first; art and optional systems can be cut without breaking the core loop. Figures throughout are starting hypotheses, not balanced final values.
 
-> **Authority note (4 Nov 2026):** Sections marked **IMPLEMENTED** describe the current agreed behavior as reported for completed tasks 001–012A. **PLANNED** sections are design intent, not permission for an agent to implement them. **OPEN** items require explicit developer approval. The repository source code and tests must be inspected to verify implementation details. `CLAUDE.md` governs workflow; this GDD governs gameplay intent. An agent must not automatically start the next task when resuming a session.
+> **Authority note (4 Nov 2026):** Sections marked **IMPLEMENTED** describe the current agreed behavior as reported for completed tasks 001–013. **PLANNED** sections are design intent, not permission for an agent to implement them. **OPEN** items require explicit developer approval. The repository source code and tests must be inspected to verify implementation details. `CLAUDE.md` governs workflow; this GDD governs gameplay intent. An agent must not automatically start the next task when resuming a session.
 
-### Implemented graybox baseline (TASKS 001–012A)
+### Implemented graybox baseline (TASKS 001–013)
 
 - **IMPLEMENTED:** Phaser 4/Vite graybox, 1280×720 logical canvas (`FIT`, centered), 24 columns × 16 rows of 32 px tiles (grid origin 256,104 in the current presentation); mouse/touch selection, placement previews and actual building selection.
 - **IMPLEMENTED:** Instant Day-only construction. Initial **1000 Credits / 5 AP**; Outpost 1×1 costs **100 Credits / 1 AP**; Factory 3×3 costs **400 / 1 AP**; Power Plant 3×3 costs **500 / 1 AP**. The older construction-queue idea is **deferred**, not active.
@@ -23,7 +23,8 @@
 - **IMPLEMENTED (TASK 011A, temporary graybox values, not balanced):** Mutants spawn on the grid border on the night's scheduled ticks, using one seeded draw each; a blocked border cell moves the spawn to the next free position clockwise, and the spawn is skipped if every border cell is occupied. Mutant: **40 HP**, **0.5 px per tick** in world pixels, axis-based movement, **8 px** attack range, **5 damage every 60 ticks**. Target choice is the lowest Manhattan distance to the footprint minus a bias of **256** (Power Plant), **128** (Factory) or **0** (Outpost), with deterministic tie-breaks, and the target stays locked until destroyed. A building blocking the next step becomes a temporary obstacle target, attacked until destroyed before the mutant resumes; there is no pathfinding. Building HP: Outpost **100**, Factory and Power Plant **300**. Damage persists across nights. Destruction removes the building and its occupancy together, and power, settlement and pollution use the remaining buildings. Mutants act on night ticks 1–3599, and survivors are removed at dawn with no penalty. With no buildings left, a mutant waits until dawn. Damaged buildings show a graybox HP bar.
 - **IMPLEMENTED (TASK 011B, temporary graybox values, not balanced):** The **Autocannon** is a separate 1×1 defensive building: **250 Credits / 1 AP**, power demand **20**, **150 HP**, no income, upkeep or pollution, and a mutant target bias of **64**. It fires automatically during Night while enabled and powered, so LOW_POWER and BLACKOUT silence it. Range is **160 px**, circular and inclusive, from the footprint centre. Each hit deals **10 damage** instantly, with **30 ticks** between shots and no projectiles. It acquires the nearest living mutant in range, with ties going to spawn order, and keeps that target while it is alive and in range. It reacquires when the target dies or leaves range, and clears the lock when disabled or unpowered. Reacquiring never changes the cooldown. The cooldown pauses while unpowered and resets at dawn. Each Night tick resolves shift state, then turrets, then surviving mutants, so a mutant killed on a tick cannot act on it. Combat runs on night ticks 1–3599, and tick 3600 only settles.
 - **IMPLEMENTED (TASK 012A, temporary graybox values, not balanced):** Each night's mutant count is **min(20, nightBudget + pollutionBudget + defenseResponse)**, where nightBudget = **1 + floor((night − 1) / 2)**, pollutionBudget = **2 × (Threat Level − 1)**, and defenseResponse = **min(4, floor(max(0, Autocannons − 1) / 2))**. Every existing Autocannon counts, enabled or not, powered or not. The plan is sampled on night tick 1 and frozen until dawn, so a night's emissions affect the next night, and switching power or losing a cannon changes nothing that night. Spawns run from tick **600** to **2700** with gaps that shrink through the night, one per tick at most. A spawn skipped because the whole border is occupied is not retried. Night 1 at Threat 1 stays one mutant at tick 600. The HUD shows `Mutants N | Wave X/Y` during Night, where X/Y is scheduled slots reached out of total, not kills.
-- **NOT YET IMPLEMENTED:** HQ/loss condition, mine/deposit extraction, trees/terrain clearing, other turret types, building repairs, climate debt, newspaper, policies/directives, decorative environmental changes and final art. Do not treat their descriptions below as existing functionality.
+- **IMPLEMENTED (TASK 013, temporary graybox values, not balanced):** The player builds **HQ** first, anywhere valid on the grid: **3×3, 0 Credits, 0 AP, 600 HP, +20 power, 0 demand**, with no upkeep or pollution, and it cannot be toggled. Until HQ stands, the other buildings and END DAY are visible but disabled. Only one HQ can ever be built per run, even after destruction. HQ power joins the global pool, so HQ alone runs one Autocannon or two Outposts but not a Factory, and with a Plant generation is 120. Generation cannot reach 0 while HQ stands, so BLACKOUT does not occur in normal play; LOW_POWER stops consumers the same way. Mutant target bias is **256**, equal to a Power Plant. **Destroying HQ is the only implemented defeat condition.** The run ends on that hit: later mutants do not act, a due spawn is dropped, survivors freeze, and that night earns and emits nothing. Game Over shows `HEADQUARTERS DESTROYED`, the approved quote and completed shifts, and restart returns to the title with a fully fresh run.
+- **NOT YET IMPLEMENTED:** insolvency run-ending condition, score, mine/deposit extraction, trees/terrain clearing, other turret types, building repairs, climate debt, newspaper, policies/directives, decorative environmental changes and final art. Do not treat their descriptions below as existing functionality.
 
 ### Next task: none approved
 
@@ -72,7 +73,7 @@ The player is a foreman operating a resource-extraction complex in the fictional
 
 | Structure | Footprint | Purpose |
 |---|---|---|
-| HQ (planned) | 3×3 | Central command, critical loss condition |
+| HQ (implemented) | 3×3 | Central command, critical loss condition; player-placed first, +20 power |
 | Mine (planned) | 2×2 | Deposit-linked extraction / revenue |
 | Refinery (planned) | 3×2 | Higher value output, high power/pollution |
 | Factory (implemented) | 3×3 | Current graybox income producer (+150 if powered) |
@@ -264,7 +265,7 @@ window.__qa = {
 
 ## 13. Scope plan and cut order
 
-**P0: playable core (protect at all costs)** — **completed:** deterministic grid/footprints, instant placement, AP/Credits, Power Plant/Factory/Outpost, day/night, power, economic settlement, pollution and derived Threat, one mutant with damage/destruction, one separate defensive turret (Autocannon), pollution affecting attack pressure (provisional). **Remaining:** HQ/loss condition, compact factual morning summary. **Trees and mine/deposits** remain design intent to prioritize or cut for the jam based on time.
+**P0: playable core (protect at all costs)** — **completed:** deterministic grid/footprints, instant placement, AP/Credits, Power Plant/Factory/Outpost, day/night, power, economic settlement, pollution and derived Threat, one mutant with damage/destruction, one separate defensive turret (Autocannon), pollution affecting attack pressure (provisional)., HQ/loss condition. **Remaining:** compact factual morning summary. **Trees and mine/deposits** remain design intent to prioritize or cut for the jam based on time.
 
 **P1: game identity (strongly preferred; not yet implemented)** — full newspaper template with static contextual articles; basic Policies; terrain color evolution; more building/enemy roles; intuitive power ON/OFF and mobile landscape polish.
 
@@ -272,7 +273,7 @@ window.__qa = {
 
 **Post-jam** — advanced enemy specializations, expanded industries, campaign/scenarios, complex directive sets, more troop roles, environmental simulation depth.
 
-**Current task sequence (implementation authority remains the explicit human-approved task):** TASK 010 Pollution **complete**; TASK 011A basic mutant **complete**; TASK 011B separate Autocannon **complete**; TASK 012A night waves **complete**; then HQ/loss, morning report and balance, subject to explicit reprioritization. Art integration stays near the end after gameplay stabilization.
+**Current task sequence (implementation authority remains the explicit human-approved task):** TASK 010 Pollution **complete**; TASK 011A basic mutant **complete**; TASK 011B separate Autocannon **complete**; TASK 012A night waves **complete**; TASK 012B soak baseline **complete**; TASK 013 HQ and defeat **complete**; then morning report and balance, subject to explicit reprioritization. Art integration stays near the end after gameplay stabilization.
 
 **Milestone gates:**
 1. **Graybox:** two building footprints, one resource, one defense and one attack wave work without art.
@@ -295,6 +296,7 @@ window.__qa = {
 9. **TASK 011A combat values:** coordinate system aligned to 32 px cells, mutant HP, building HP, target priority/tie-breaking, spawn cadence, approach to rectangular footprints, damage persistence and dawn cleanup were approved as temporary graybox values for TASK 011A (see the implemented baseline). Final combat balance remains **OPEN**.
 10. **Autocannon footprint:** resolved as 1×1 for TASK 011B. Final turret balance remains **OPEN**.
 11. **Economy safety:** `Economy.adjustCredits` historically validated the delta but not the resulting safe-integer balance; TASK 010 prevalidates night-end settlement specifically. Broader Economy hardening is separate work.
+12. **Known balance issues (accepted for TASK 013, not desirable final behavior):** corner camping, where an HQ in a corner with one Autocannon survived every scripted run; and no-income turtling, where a defense-only build with no Factory survived 20 scripted nights at every tested HQ position. Review these when balancing. Scripted results are evidence, not playtests.
 
 ## 15. Definition of done: first playable slice
 

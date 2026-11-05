@@ -47,7 +47,7 @@ async function stepUntilGone(page, id) {
 
 function mutantSuite({pressWorld, pressAction}) {
     async function start(page) {
-        await boot(page, {scene: 'game', waitForQA: true});
+        await boot(page, {scene: 'game', waitForQA: true, hq: false});
         await pressAction(page, 'start');
         await expect(body(page)).toHaveAttribute('data-phase', 'started');
         return sample(page);
@@ -290,7 +290,7 @@ function mutantSuite({pressWorld, pressAction}) {
     });
 
     test('?mutants=off gives an empty schedule in test mode', async ({page}) => {
-        await boot(page, {scene: 'game', waitForQA: true, mutants: false});
+        await boot(page, {scene: 'game', waitForQA: true, hq: false, mutants: false});
         await pressAction(page, 'start');
         await expect(body(page)).toHaveAttribute('data-phase', 'started');
         await nightTo(page, 1000);

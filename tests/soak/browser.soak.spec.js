@@ -1,6 +1,7 @@
 import {test, expect} from '@playwright/test';
 import {mkdirSync, readFileSync, readdirSync, writeFileSync} from 'node:fs';
 import {boot, body, byAction, clickAction, clickWorld} from '../helpers/canvas.js';
+import {hqFlow} from '../helpers/hq.js';
 import {sample} from '../helpers/qa.js';
 import {getBuildingType} from '../../src/core/buildingTypes.js';
 import {waveSchedule} from '../../src/core/waves.js';
@@ -49,7 +50,7 @@ function watchErrors(page) {
 }
 
 async function start(page, query) {
-    await boot(page, {scene: 'game', waitForQA: true, query});
+    await boot(page, {scene: 'game', waitForQA: true, hq: false, query});
     await clickAction(page, 'start');
     await expect(body(page)).toHaveAttribute('data-phase', 'started');
     return sample(page);
@@ -309,6 +310,39 @@ test('stepped: Chromium and the Node harness reach identical state', async ({pag
     writeResult('cross-check', {scenario: 'Node harness against Chromium', checkpoints, expected, actual});
     expect(actual).toEqual(expected);
     expect(new Set(actual).size).toBe(checkpoints.length);
+    expect(errors).toEqual([]);
+});
+
+test('stepped: repeated defeat and restart on the real HQ-first flow leave nothing behind', async ({page}) => {
+    const errors = watchErrors(page);
+    const flow = hqFlow({pressWorld: clickWorld, pressAction: clickAction});
+    const counts = () => page.evaluate(() => window.__qa.perf.counts());
+    const titles = [];
+    const days = [];
+
+    await boot(page, {scene: 'game', waitForQA: true, query: 'waveBudget=20'});
+    titles.push(await counts(page));
+    for (let run = 0; run < 6; run++) {
+        await clickAction(page, 'start');
+        await expect(body(page)).toHaveAttribute('data-phase', 'started');
+        const state = await sample(page);
+        await flow.buildHq(page, state, PLANT);
+        await flow.place(page, state, 'autocannon', CANNON_A);
+        days.push(await counts(page));
+
+        await flow.stepToDefeat(page, 6);
+        const defeated = await sample(page);
+        expect(defeated.phase).toBe('defeated');
+        expect(defeated.buildings.some((b) => b.type === 'hq')).toBe(false);
+
+        await clickAction(page, 'restart');
+        await page.waitForFunction(() => window.__qa?.getState().phase === 'ready');
+        await page.waitForTimeout(100);
+        titles.push(await counts(page));
+    }
+    writeResult('defeat-restart', {scenario: 'stepped, waveBudget=20, 6 defeat and restart cycles, real flow', titles, days});
+    for (const count of titles) expect(count).toEqual(titles[0]);
+    for (const count of days) expect(count).toEqual(days[0]);
     expect(errors).toEqual([]);
 });
 

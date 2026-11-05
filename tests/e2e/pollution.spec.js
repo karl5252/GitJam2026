@@ -32,7 +32,7 @@ const hudText = (value, level) => `Pollution ${value}\nThreat Level ${level}`;
 
 function pollutionSuite({pressWorld, pressAction}) {
     async function start(page) {
-        await boot(page, {scene: 'game', waitForQA: true, mutants: false});
+        await boot(page, {scene: 'game', waitForQA: true, hq: false, mutants: false});
         await pressAction(page, 'start');
         await expect(body(page)).toHaveAttribute('data-phase', 'started');
         return sample(page);

@@ -31,11 +31,11 @@ This file provides project context, architectural constraints, and working rules
 
 **Target platforms:** Desktop browsers and mobile browsers in landscape orientation.
 
-**Current status:** TASK 012B (Combat Soak & Performance Baseline) complete. No next task is approved: only work on tasks the developer explicitly assigns.
+**Current status:** TASK 013 (Headquarters, Defeat & Game Over) complete. No next task is approved: only work on tasks the developer explicitly assigns.
 
 The project was initialized from the Wee Games Starter Kit Basic. The original demo applications have been removed.
 
-Implemented so far: grid placement, Credits and AP, the Day/Night cycle, global power, nightly settlement, pollution and derived threat, one basic mutant type that damages and destroys buildings, the Autocannon, which kills mutants, and nightly waves that scale with the night, Threat Level and Autocannon count. There are no repairs, HQ or game over yet.
+Implemented so far: grid placement, Credits and AP, the Day/Night cycle, global power, nightly settlement, pollution and derived threat, one basic mutant type that damages and destroys buildings, the Autocannon, which kills mutants, and nightly waves that scale with the night, Threat Level and Autocannon count, and a player-built HQ whose destruction ends the run. There are no repairs yet.
 
 ### Game concept
 
@@ -177,6 +177,7 @@ Avoid implementing gameplay rules directly inside Phaser scenes.
 - `src/core/gamePhase.js`: Bootstrap game phase logic.
 - `src/core/grid.js`: `Grid` class (Phaser-free). Configurable `cols`/`rows`/`tileSize` with an origin offset (`originX`/`originY`). World↔cell conversion (`worldToCell`, `cellToWorld`, `cellCenter`, `footprintRect`). NxM footprints `{col, row, width, height}`, anchored at the top-left cell. `canPlace`/`place` are atomic and return `{ok}` or `{ok: false, reason}`, where reason is one of `PlacementFailure`: `invalid-footprint`, `out-of-bounds`, `occupied` (plus `blockers`), `duplicate-id`. Also `remove`, `occupantAt` and `snapshot()`, which returns detached JSON data. The grid is the source of truth for occupancy and validity.
 - `src/core/buildingTypes.js`: frozen plain data, with temporary graybox values. `getBuildingType(id)` returns the type or `null`.
+  - `hq`: 3×3, costs `{credits: 0, ap: 0}`, operations `{income: 0, upkeep: 0}`, power `{supply: 20, demand: 0}`, `pollutionPerNight: 0`, `maxHp: 600`, `switchable: false`. Its power joins the global pool, so `power.js` has no special case. Generation never reaches 0 while HQ stands, so BLACKOUT does not occur in normal play.
   - `outpost`: 1×1, costs `{credits: 100, ap: 1}`, operations `{income: 0, upkeep: 20}` per completed night, power `{supply: 0, demand: 10}`, `pollutionPerNight: 0`, `maxHp: 100`.
   - `factory`: 3×3, costs `{credits: 400, ap: 1}`, operations `{income: 150, upkeep: 0}` per completed night, power `{supply: 0, demand: 40}`, `pollutionPerNight: 8`, `maxHp: 300`.
   - `powerPlant`: 3×3, costs `{credits: 500, ap: 1}`, operations `{income: 0, upkeep: 0}`, power `{supply: 100, demand: 0}`, `pollutionPerNight: 12`, `maxHp: 300`.
@@ -209,9 +210,10 @@ Avoid implementing gameplay rules directly inside Phaser scenes.
   - **Obstacles:** if the next step enters any footprint (`blockerAt`, closed bounds, so touching buildings leave no seam), the mutant stays put and sets `obstacleId`. It attacks that building until destroyed, then resumes toward `targetId`. There is no pathfinding.
   - `attackTimer` only runs while stationary and resets on any movement. The first hit lands on the 60th tick spent attacking.
   - **Spawning:** exactly one RNG draw per scheduled spawn picks one of the `borderSpawns` positions. If that border cell is occupied, the next free position clockwise is used. If every border cell is occupied, that spawn is skipped and not retried, and its slot still counts as reached. Spawning does not depend on buildings existing.
-  - With no buildings left, mutants wait in place until dawn. There is no HQ or game over yet.
+  - With no buildings left, mutants wait in place until dawn. This only happens without HQ, in legacy test setups.
+  - **Defeat:** a hit that destroys HQ calls `cycle.defeat()`. The run ends on that hit: later mutants do not act, a due spawn is dropped, and survivors stay frozen. HQ has the top bias and mutants walk shortest paths, so it is always a target, never just an obstacle.
 - `src/core/autocannons.js`: `Autocannons({cycle, placement, grid, mutants})`, temporary graybox values in `AUTOCANNON` (`range` 160, `damage` 10, `cooldownTicks` 30).
-  - `step()` runs once per tick, after `ShiftCycle.onTick()` and **before** `Mutants.step()`, and returns `{shots}` for that tick. Turrets fire on night ticks 1..3599, never on tick 3600. A mutant killed on a tick cannot act on it. A mutant spawned on a tick is first shot on the next one. Outside Night, `step()` clears all turret state, so cooldowns reset at dawn.
+  - `step()` runs once per tick, after `ShiftCycle.onTick()` and **before** `Mutants.step()`, and returns `{shots}` for that tick. Turrets fire on night ticks 1..3599, never on tick 3600, and do nothing after a defeat. A mutant killed on a tick cannot act on it. A mutant spawned on a tick is first shot on the next one. Outside Night, `step()` clears all turret state, so cooldowns reset at dawn.
   - It holds only `{cooldown, targetId}` per turret, keyed by building id. HP, position and `enabled` stay in `BuildingPlacement`, power is derived, and mutant HP stays in `Mutants`. `snapshot()` is built from the live building list, so a destroyed turret disappears immediately. Records of destroyed turrets are dropped on the next step.
   - Range is circular and inclusive, measured from the footprint centre (`isInRange`, squared values, no `sqrt`).
   - **Targeting:** `selectMutant` acquires the nearest mutant in range, with ties going to spawn order. A lock is kept while the target is alive and in range, even if a nearer mutant arrives. It is reacquired when the target dies or leaves range, and cleared when the turret is disabled or unpowered. Reacquiring never changes the cooldown.
@@ -240,8 +242,9 @@ Avoid implementing gameplay rules directly inside Phaser scenes.
   - `BuildingPlacement(grid, economy, {isConstructionAllowed})` provides `select`/`cancel`/`selectedType`/`isPlacing`. `select` returns false while construction is disabled.
   - Building records `{id, type, col, row, width, height, enabled, hp}` are the **single owner** of player power intent and of building HP. `enabled` starts as `true`; `hp` starts at the type's `maxHp`.
   - `damageBuilding(id, amount)` is the only way HP changes. It is not behind the construction gate and never touches the economy. At 0 HP it removes the grid cells and the record together, so a building is destroyed exactly once and later damage returns `unknown-building`. Invalid amounts return `invalid-state`. It returns `{ok, destroyed, hp}`. Damage persists across nights, and there is no repair yet.
-  - `setEnabled(id, enabled)` is allowed in **both Day and Night**. It is deliberately not behind the construction gate. It is free (no Credits or AP), touches neither the grid nor the economy, and is rejected with `unknown-building` or `invalid-state`.
-  - `preview(cell)` and `placeAt(cell)` share one validation, in this order: the construction gate (`construction-disabled`, e.g. during Night Shift), then `grid.canPlace`, then `economy.canAfford`. Space reasons therefore win over resource reasons. `preview` never changes anything.
+  - **HQ rules:** `canBuild(typeId)` returns `{ok}` or `hq-required` / `hq-already-built`, and `select`, `preview`, `placeAt` and the menu all use it. One HQ per run is enforced by a latch (`hqBuilt`), so a destroyed HQ cannot be rebuilt, with or without `requireHq`. With `requireHq`, only HQ can be built until it stands. Placing HQ ends placement mode. `GameScene` always sets `requireHq`, except under `?hq=off`. The constructor default of `false` is legacy compatibility for unit fixtures; do not rely on it in new gameplay code.
+  - `setEnabled(id, enabled)` is allowed in **both Day and Night**. It rejects a `switchable: false` type (HQ) with `invalid-state`. It is deliberately not behind the construction gate. It is free (no Credits or AP), touches neither the grid nor the economy, and is rejected with `unknown-building` or `invalid-state`.
+  - `preview(cell)` and `placeAt(cell)` share one validation, in this order: the construction gate (`construction-disabled`, e.g. during Night Shift), then the HQ rules, then `grid.canPlace`, then `economy.canAfford`. Space reasons therefore win over resource reasons. `preview` never changes anything.
   - **`placeAt` is one atomic transaction:**
     1. Validate everything.
     2. Commit with `grid.place`, then `economy.spend`. If the spend fails, `grid.remove` undoes the grid change.
@@ -268,11 +271,14 @@ Avoid implementing gameplay rules directly inside Phaser scenes.
     4. Pause the clock inside the tick. That ends `advance()`'s loop with no extra ticks.
   - **Exactly once:** this is the only place settlement is called, and Day never ticks.
   - **If the hook throws:** nothing changes. It is still Night with 1 tick left, the clock tick is not counted, and AP is not restored. The error propagates, and the final tick is retried on the next step.
-  - `stepTicks(n, onTick)` is the QA path: Night only, clamped to the remaining night ticks. `resume()` is Night only.
+  - `stepTicks(n, onTick)` is the QA path: Night only, clamped to the remaining night ticks. It steps one tick at a time and stops if the shift changes, because the clock's own `stepTicks` runs on after a pause. `resume()` is Night only.
+  - **`canEndDay`:** a dependency that keeps the run in Day, used until HQ is built. `endDay()` then returns `hq-required`.
+  - **`defeat()`:** Night only, and only once. It sets `Shift.DEFEATED`, records a frozen `defeatReport` `{day, nightTick, completedShifts}` and pauses the clock. Mutants act on ticks up to 3599, so a defeat always comes before settlement: that night earns and emits nothing. Afterwards nothing ticks, settles or builds, and `endDay` and `resume` are refused.
   - The global `clock.tick` is never reset.
 - `src/scenes/BootScene.js`: Starts the game scene.
 - `src/scenes/MutantLayer.js`: graybox circles for mutants and HP bars on damaged buildings. Presentation only; `sync(mutants, buildings)` takes detached snapshots.
 - `src/scenes/AutocannonLayer.js`: graybox barrels, quantized to 8 directions, and short tracers lasting 6 simulation ticks. Presentation only; facing and tracer timing never affect gameplay.
+- `src/scenes/GameOverLayer.js`: the Game Over overlay and RESTART button. Presentation only; nothing exists until `show()`. Its panel is interactive, so presses on it are UI, never grid input.
 - `src/scenes/GameScene.js`:
   - Start hides the title and Start button and removes the `start` proxy. It then creates a 24×16 `Grid` with 32px cells at origin (256, 104), drawn with Phaser Graphics, and shows the build menu in the band left of the grid.
   - The HUD in the top band has two lines:
@@ -290,7 +296,9 @@ Avoid implementing gameplay rules directly inside Phaser scenes.
   - **Keeping the UI in step:** `syncShiftUi()` runs after every clock advance, every QA step and END DAY. On each Day/Night change:
     - At Night it exits placement mode and hides the building buttons and END DAY, removing their proxies.
     - At Day it restores them and refreshes the resource line.
-  - The build menu has Outpost, Factory, Power Plant and Autocannon buttons (proxies `build-outpost`/`build-factory`/`build-powerPlant`/`build-autocannon`, with `data-selected`). Their labels show the size and cost. There is also a Cancel button, visible with proxy `cancel-placement` only while placing.
+  - **HQ-first flow:** a new run offers only HQ. The other buttons and END DAY stay visible but disabled, and pressing them does nothing. Placing HQ unlocks them, marks HQ `BUILT` and enables END DAY. Proxies carry `data-state` (`available`, `locked`, `built`), and END DAY carries `data-enabled`. The toggle stays hidden for HQ.
+  - **Defeat:** `syncShiftUi()` calls `enterDefeat()` once on `Shift.DEFEATED`: the phase becomes `defeated`, the play UI hides and the overlay shows `HEADQUARTERS DESTROYED`, the approved quote and `Completed shifts: N`. Grid input is ignored. RESTART calls `scene.restart()`, which returns to the title; `create()` rebuilds everything, so no custom reset exists.
+  - The build menu has HQ, Outpost, Factory, Power Plant and Autocannon buttons (proxies `build-hq`/`build-outpost`/`build-factory`/`build-powerPlant`/`build-autocannon`, with `data-selected`). Their labels show the size and cost. There is also a Cancel button, visible with proxy `cancel-placement` only while placing.
   - **Normal mode:** `pointerdown` selects or highlights the cell from `pointer.worldX/worldY` via `grid.worldToCell`. If the cell is occupied, its building is selected too and the highlight covers the footprint. Normal mode never places. A pointer outside the grid clears the selection.
   - **Placement mode:** `pointermove` previews the footprint, and `pointerdown` attempts placement. Selection is cleared and disabled. Placement mode stays active after a successful placement. Escape or Cancel exits.
   - The preview color comes from the domain result: green when ok, red otherwise. An unaffordable footprint is red even when its cells are free.
@@ -305,6 +313,7 @@ Avoid implementing gameplay rules directly inside Phaser scenes.
     - `settlement` (the latest report, or `null`) and `settlementView` (the actual panel text and visibility)
     - `mutants` (domain records), `mutantViews` (rendered circles) and `hpBarViews` (rendered HP bars), all `null` before Start
     - `wave` (the frozen night plan, `null` outside a started Night), `waveProgress` (slots reached, or `null`) and `waveView` (the actual HUD text and visibility)
+    - `menuState` (`available`, `locked` or `built` per type), `ui.endDayEnabled`, `defeat` (the defeat report, or `null`) and `gameOverView` (the actual overlay text)
     - `autocannons` (`{id, cooldown, targetId}` per turret), `barrelViews` and `tracerViews` (rendered views), all `null` before Start
     - `pollution` (`{value, threatLevel, emissionsPerNight}`, `null` before Start; `emissionsPerNight` is derived from the current buildings, and the amount actually emitted is `settlement.pollution.emitted`) and `pollutionView` (the actual HUD text and visibility)
     - `simulation`: `{running, paused, tick, timeSeconds, stepsExecuted, rng: {seed, state}}`
@@ -316,9 +325,10 @@ Avoid implementing gameplay rules directly inside Phaser scenes.
     - `stepSimulation(tick)` counts `stepsExecuted`, calls `cycle.onTick(tick)`, then `autocannons.step()`, then `mutants.step()`. Shots and destroyed buildings are handled from that tick's results: `handleBuildingsDestroyed` removes the views, clears a stale selection and calls `refreshPower()`.
     - The RNG seed is `DEFAULT_SEED`. In TEST_MODE only, `?seed=N` overrides it.
     - In TEST_MODE only, `?waveBudget=N` and `?stressRamp=N` (`src/testShadow/stressParams.js`) give the real `Mutants` a fixed schedule for the soak suites.
+    - In TEST_MODE only, `?hq=off` is a compatibility mode for legacy suites written before HQ existed: no HQ button, no HQ rule, and END DAY is always allowed. Production ignores it.
     - In TEST_MODE only, `?mutants=off` gives the real `Mutants` an empty schedule instead of `nightPlan`. `boot(page, {mutants: false})` uses it for suites about power, economy and pollution. Combat tests must not use it, and production ignores it.
   - **TEST_MODE-only controls:** `window.__qa.sim` provides:
-    - `pause()` → `clock.pause()`
+    - `pause()` → `clock.pause()` then `syncShiftUi()`
     - `resume()` → `cycle.resume()`, Night only
     - `stepTicks(n)` → `cycle.stepTicks(n, stepSimulation)` then `syncShiftUi()`. It uses the same callback as `update` and drives real shift transitions, and does nothing during Day.
 
@@ -509,6 +519,7 @@ Test Shadow functions already no-op outside test mode.
 - Adds `?testMode`
 - Waits for `body[data-scene]`
 - Optionally waits for `window.__qa` when `waitForQA: true`
+- Uses the real HQ-first flow by default. `{hq: false}` adds `?hq=off`, for the ten legacy suites only. New tests must use the real flow, with the helpers in `tests/helpers/hq.js`.
 
 Playwright runs against the normal development server, not a separate test build.
 
@@ -563,6 +574,42 @@ Once the simulation system exists, test:
 - Do not replace real input tests with direct internal method calls.
 - Do not claim deterministic behavior without verifying it.
 
+### Efficient test execution
+
+This policy applies to TASK 013 and all future tasks.
+
+**During implementation:**
+
+- Run only the unit tests directly relevant to the changed modules.
+- Run only the affected Playwright spec files or targeted tests.
+- When changing a shared fixture/helper, validate it with a representative desktop and mobile smoke subset before expanding coverage.
+- Run targeted tests after each fix, not the entire suite.
+- Do not repeatedly run full E2E, soak suites, builds, or mutation checks after minor edits.
+- Do not run performance soak suites unless the change affects their contracts, lifecycle behavior, or measured performance.
+- Use existing test selection mechanisms. Do not build a new test runner or introduce dependencies.
+
+**Final verification, once the implementation is stable:**
+
+1. Run the complete unit test suite.
+2. Run the complete regular Playwright E2E suite with 3 workers and tracing disabled.
+3. Run the production build and TEST_MODE isolation gate.
+4. Run bounded, targeted mutation checks for new behavior.
+5. Run relevant soak suites only when justified by the changes.
+6. Check for orphaned processes and verify `git diff --check`.
+
+**When a final gate fails:**
+
+- Diagnose and fix the failure.
+- Rerun the affected subset first.
+- Repeat only the final gates potentially invalidated by that fix.
+- Never hide failures, weaken assertions, or skip required final verification.
+
+**Reporting:**
+
+- Summarize which targeted tests were run during development.
+- Report the final verification separately.
+- Explain any skipped or deferred soak checks.
+
 ---
 
 ## 10. Phaser 4 Conventions
@@ -610,12 +657,18 @@ Complete:
 - TASK 011B: Autocannon Defense
 - TASK 012A: Night Wave Director
 - TASK 012B: Combat Soak & Performance Baseline
+- TASK 013: Headquarters, Defeat & Game Over
 
 Later, not yet assigned:
 
-- HQ and loss condition
 - Repeatable survival loop
+- TASK 014 (reserved): possible improvements to test selection, fixtures and smoke-test tooling
 - Hardening: `Economy` does not bound balances. The constructor accepts unsafe integers and `adjustCredits` validates the delta but not the result, so a balance can pass the safe-integer range and lose precision. `settleNight` prevalidates this for settlement; `Economy` itself is unchanged.
+
+Known balance issues, accepted for now and not final behaviour (see the GDD):
+
+- Corner camping: an HQ in a corner with one Autocannon survived all scripted runs.
+- No-income turtling: a defense-only build with no Factory survived 20 scripted nights.
 
 Advanced systems, additional content, and visual polish must not be introduced ahead of their assigned tasks.
 

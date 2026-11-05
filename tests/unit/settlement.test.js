@@ -9,7 +9,7 @@ import {Grid} from '../../src/core/grid.js';
 import {BuildingPlacement} from '../../src/core/buildingPlacement.js';
 
 const b = (type, n = 1, extra = {}) => Array.from({length: n}, (_, i) => ({id: `${type}-${i + 1}`, type, enabled: true, ...extra}));
-const ZERO_COUNTS = {outpost: 0, factory: 0, powerPlant: 0, autocannon: 0};
+const ZERO_COUNTS = {hq: 0, outpost: 0, factory: 0, powerPlant: 0, autocannon: 0};
 const counts = (c) => ({...ZERO_COUNTS, ...c});
 
 // ---- calculateSettlement --------------------------------------------------------

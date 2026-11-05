@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import {BUILDING_TYPES, getBuildingType} from '../../src/core/buildingTypes.js';
 
 test('defines outpost (1x1), factory (3x3) and power plant (3x3)', () => {
-    assert.deepEqual(Object.keys(BUILDING_TYPES), ['outpost', 'factory', 'powerPlant', 'autocannon']);
+    assert.deepEqual(Object.keys(BUILDING_TYPES), ['hq', 'outpost', 'factory', 'powerPlant', 'autocannon']);
     assert.deepEqual(BUILDING_TYPES.outpost, {
         id: 'outpost', name: 'Outpost', width: 1, height: 1,
         cost: {credits: 100, ap: 1}, operations: {income: 0, upkeep: 20}, power: {supply: 0, demand: 10},
@@ -21,6 +21,13 @@ test('defines outpost (1x1), factory (3x3) and power plant (3x3)', () => {
         cost: {credits: 500, ap: 1}, operations: {income: 0, upkeep: 0}, power: {supply: 100, demand: 0},
         pollutionPerNight: 12,
         maxHp: 300,
+    });
+    assert.deepEqual(BUILDING_TYPES.hq, {
+        id: 'hq', name: 'HQ', width: 3, height: 3,
+        cost: {credits: 0, ap: 0}, operations: {income: 0, upkeep: 0}, power: {supply: 20, demand: 0},
+        pollutionPerNight: 0,
+        maxHp: 600,
+        switchable: false,
     });
     assert.deepEqual(BUILDING_TYPES.autocannon, {
         id: 'autocannon', name: 'Autocannon', width: 1, height: 1,

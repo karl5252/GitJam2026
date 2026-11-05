@@ -106,9 +106,10 @@ const legalCells = () => ({
     cannons: [[10, 6], [14, 6], [10, 10], [14, 10], [10, 8], [14, 8], [12, 6], [12, 10], [6, 6], [18, 6], [6, 10], [18, 10]],
 });
 
-function legalDay(strategy) {
+function legalDay(strategy, hq) {
     const cells = legalCells();
     return (world, night) => {
+        if (hq && night === 1) world.place('hq', 12, 8);
         if (strategy === 'steady') legalSteady(world, cells, night);
         else if (night === 1) {
             world.place('powerPlant', 12, 8);
@@ -135,6 +136,8 @@ const SCENARIOS = [
     {name: 'legal-survives-20-nights', workload: 'legal', nights: 20, strategy: 'steady', seed: 98, expect: ['shots', 'kills', 'attacks'], atLeast: {shots: 500, kills: 100}},
     {name: 'legal-collapses-20-nights', workload: 'legal', nights: 20, strategy: 'steady', seed: 1, expect: ['attacks', 'destroyed']},
     {name: 'legal-no-defense-20-nights', workload: 'legal', nights: 20, strategy: 'none', expect: ['attacks', 'destroyed']},
+    {name: 'legal-hq-survives-20-nights', workload: 'legal', hq: true, nights: 20, strategy: 'steady', seed: 98, expect: ['shots', 'kills', 'attacks'], atLeast: {shots: 500, kills: 100}},
+    {name: 'legal-hq-undefended-defeat', workload: 'legal', hq: true, nights: 20, strategy: 'none', expect: ['attacks', 'destroyed', 'defeats']},
 ];
 
 /** Uneven frames, for comparing real-frame driving with manual stepping. */
@@ -150,12 +153,13 @@ async function runScenario(scenario, {seed, driver}) {
         schedule: isSynthetic ? Array.from({length: scenario.mutants}, (_, i) => i + 1) : null,
         resources: isSynthetic ? SYNTHETIC_RESOURCES : undefined,
         openConstruction: isSynthetic,
+        requireHq: Boolean(scenario.hq),
     });
     const slots = isSynthetic ? syntheticLayout(scenario) : null;
-    const planDay = isSynthetic ? null : legalDay(scenario.strategy); // fresh command script per run
+    const planDay = isSynthetic ? null : legalDay(scenario.strategy, scenario.hq); // fresh command script per run
     const digest = [];
     const problems = [];
-    const tally = {spawned: 0, kills: 0, shots: 0, attacks: 0, destroyed: 0, clearedAtDawn: 0, rebuilt: 0, peakAlive: 0, nights: 0};
+    const tally = {spawned: 0, kills: 0, shots: 0, attacks: 0, destroyed: 0, clearedAtDawn: 0, frozenAtDefeat: 0, defeats: 0, rebuilt: 0, peakAlive: 0, nights: 0};
     const killed = new Set();
     const lost = new Set();
     const phases = {ramp: [], loaded: []};
@@ -207,7 +211,7 @@ async function runScenario(scenario, {seed, driver}) {
             const elapsed = world.cycle.elapsedNightTicks;
             if (elapsed % CHECK_EVERY_TICKS === 0) problems.push(...checkInvariants(world));
             if (elapsed % DIGEST_EVERY_TICKS === 0) digest.push(digestOf(canonicalState(worldState(world))));
-        } else {
+        } else if (world.cycle.shift === Shift.DAY) {
             tally.clearedAtDawn += aliveBefore;
             aliveBefore = 0;
         }
@@ -231,6 +235,18 @@ async function runScenario(scenario, {seed, driver}) {
             await yieldToLoop(); // lets GC observer entries arrive
         }
         tally.nights++;
+        if (world.cycle.shift === Shift.DEFEATED) {
+            tally.defeats++;
+            tally.frozenAtDefeat = world.mutants.snapshot().length;
+            if (world.placement.buildings().some((b) => b.type === 'hq')) problems.push('HQ still stands after defeat');
+            const frozen = canonicalState(worldState(world));
+            world.mutants.step();
+            world.autocannons.step();
+            if (canonicalState(worldState(world)) !== frozen) problems.push('state changed after defeat');
+            problems.push(...checkInvariants(world));
+            digest.push(digestOf(frozen));
+            break;
+        }
         if (world.mutants.snapshot().length !== 0) problems.push(`mutants survived dawn ${night}`);
         if (world.mutants.plan() !== null) problems.push(`plan survived dawn ${night}`);
         if (world.autocannons.snapshot().some((t) => t.cooldown !== 0 || t.targetId !== null)) problems.push(`turret state survived dawn ${night}`);
@@ -238,8 +254,8 @@ async function runScenario(scenario, {seed, driver}) {
         digest.push(digestOf(canonicalState(worldState(world))));
     }
 
-    if (tally.spawned !== tally.kills + tally.clearedAtDawn) {
-        problems.push(`accounting: ${tally.spawned} spawned, ${tally.kills} killed, ${tally.clearedAtDawn} cleared at dawn`);
+    if (tally.spawned !== tally.kills + tally.clearedAtDawn + tally.frozenAtDefeat) {
+        problems.push(`accounting: ${tally.spawned} spawned, ${tally.kills} killed, ${tally.clearedAtDawn} cleared at dawn, ${tally.frozenAtDefeat} frozen`);
     }
     if (isSynthetic && startingPower !== 'normal') problems.push(`starting power was ${startingPower}`);
     for (const key of scenario.expect) {

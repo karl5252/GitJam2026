@@ -31,7 +31,7 @@ const occupantsFrom = (buildings) => buildings.map(({id, col, row, width, height
 
 function placementSuite({pressWorld, pressAction}) {
     async function start(page) {
-        await boot(page, {scene: 'game', waitForQA: true});
+        await boot(page, {scene: 'game', waitForQA: true, hq: false});
         await clickAction(page, 'start');
         await expect(body(page)).toHaveAttribute('data-phase', 'started');
         return sample(page);
@@ -196,7 +196,7 @@ test.describe('desktop mouse', () => {
     placementSuite({pressWorld: clickWorld, pressAction: clickAction});
 
     test('hover shows a green preview derived from a valid domain result; leaving the grid hides it', async ({page}) => {
-        await boot(page, {scene: 'game', waitForQA: true});
+        await boot(page, {scene: 'game', waitForQA: true, hq: false});
         await clickAction(page, 'start');
         const state = await sample(page);
         await clickAction(page, 'build-factory');
