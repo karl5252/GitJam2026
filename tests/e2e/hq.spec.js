@@ -22,7 +22,7 @@ function hqSuite(input) {
         await start(page);
         const s = await sample(page);
         expect(s.buildings).toEqual([]);
-        expect(s.menuState).toEqual({hq: 'available', outpost: 'locked', factory: 'locked', powerPlant: 'locked', autocannon: 'locked', wall: 'locked', gateVertical: 'locked', gateHorizontal: 'locked'});
+        expect(s.menuState).toEqual({hq: 'available', outpost: 'locked', factory: 'locked', powerPlant: 'locked', autocannon: 'locked', barracks: 'locked', wall: 'locked', gateVertical: 'locked', gateHorizontal: 'locked'});
         expect(s.menuLabels.hq).toBe('HQ 3x3\n0c · 0 AP');
         expect(s.ui).toMatchObject({endDayVisible: true, endDayEnabled: false, buildMenuVisible: true});
         for (const type of LOCKED_TYPES) await expect(byAction(page, `build-${type}`)).toHaveAttribute('data-state', 'locked');
@@ -82,7 +82,7 @@ function hqSuite(input) {
         expect(s.buildings).toEqual([{id: 'hq-1', type: 'hq', col: 11, row: 7, width: 3, height: 3, enabled: true, hp: 600}]);
         expect(s.buildingViews).toHaveLength(1);
         expect(s.resources).toEqual({credits: START, ap: 5});
-        expect(s.menuState).toEqual({hq: 'built', outpost: 'available', factory: 'available', powerPlant: 'available', autocannon: 'available', wall: 'available', gateVertical: 'available', gateHorizontal: 'available'});
+        expect(s.menuState).toEqual({hq: 'built', outpost: 'available', factory: 'available', powerPlant: 'available', autocannon: 'available', barracks: 'available', wall: 'available', gateVertical: 'available', gateHorizontal: 'available'});
         expect(s.menuLabels.hq).toBe('HQ 3x3\nBUILT');
         expect(s.placement.selectedType).toBeNull();
         expect(s.ui).toMatchObject({cancelVisible: false, endDayEnabled: true});

@@ -17,6 +17,7 @@ import {getBuildingType} from '../../src/core/buildingTypes.js';
 import {Economy, STARTING_RESOURCES} from '../../src/core/economy.js';
 import {Gates} from '../../src/core/gates.js';
 import {Grid} from '../../src/core/grid.js';
+import {Infantry} from '../../src/core/infantry.js';
 import {Logistics} from '../../src/core/logistics.js';
 import {Mutants, MUTANT, distanceToFootprint} from '../../src/core/mutants.js';
 import {Pollution} from '../../src/core/pollution.js';
@@ -73,16 +74,21 @@ export function createWorld({seed = 731, schedule = null, resources = STARTING_R
             : nightPlan({day, pollution: pollution.value, buildings: placement.buildings()})),
     });
     const autocannons = new Autocannons({cycle, placement, grid, mutants});
+    const infantry = roads ? new Infantry({cycle, placement, grid, gates, mutants}) : null;
+    mutants.setInfantry(infantry);
     cycle.begin();
 
     /** Same order as GameScene.stepSimulation. */
     const tick = (t) => {
         cycle.onTick(t);
         const defense = autocannons.step();
-        gates.step(logistics?.gateDemands());
+        const wanted = logistics?.gateDemands();
+        if (wanted) infantry.addGateDemands(wanted);
+        gates.step(wanted);
+        const infantryShots = infantry?.step().shots ?? [];
         const effects = mutants.step();
         const deliveries = logistics?.step().deliveries ?? 0;
-        return {defense, effects, deliveries};
+        return {defense, infantryShots, effects, deliveries};
     };
 
     /** A legal command: the real placement path, with its real validation. */
@@ -93,12 +99,13 @@ export function createWorld({seed = 731, schedule = null, resources = STARTING_R
         return result;
     };
 
-    return {clock, economy, pollution, grid, rng, placement, roads, logistics, gates, cycle, mutants, autocannons, tick, place};
+    return {clock, economy, pollution, grid, rng, placement, roads, logistics, gates, cycle, mutants, autocannons, infantry, tick, place};
 }
 
 /** The state compared between runs and between Node and Chromium. */
-export function canonicalState({mutants, buildings, autocannons, rng}) {
-    return JSON.stringify({mutants, buildings, autocannons, rng});
+export function canonicalState({mutants, buildings, autocannons, rng, soldiers = []}) {
+    // A base with no soldiers keeps the digests it has always had.
+    return JSON.stringify({mutants, buildings, autocannons, rng, ...(soldiers.length ? {soldiers} : {})});
 }
 
 export const digestOf = (text) => createHash('sha256').update(text).digest('hex').slice(0, 16);
@@ -109,6 +116,7 @@ export function worldState(world) {
         buildings: world.placement.buildings(),
         autocannons: world.autocannons.snapshot(),
         rng: world.rng.snapshot(),
+        soldiers: world.infantry?.soldiers() ?? [],
     };
 }
 

@@ -756,6 +756,7 @@ const FIXTURES = {
     'fortification-reference.json': {status: 'valid'},
     'fortress-logistics-v1.json': {status: 'valid'},
     'fortress-checkerboard-v1.json': {status: 'valid'},
+    'infantry-reference.json': {status: 'valid'},
     'fortress-corner-v1.json': {status: 'stale', reason: RoadFailure.NO_ROAD_ACCESS},
     'fortress22-road-legal.json': {status: 'stale', reason: RoadFailure.NO_ROAD_ACCESS},
 };

@@ -5,6 +5,8 @@ const RING_PREVIEW_DEPTH = 3;
 const DOCK_INSET = 8;
 const FACTORY_DOCK_COLOR = 0xffb300;
 const HQ_DOCK_COLOR = 0x66bb6a;
+const BARRACKS_EXIT_COLOR = 0x29b6f6;
+const DOCK_COLORS = {factory: FACTORY_DOCK_COLOR, hq: HQ_DOCK_COLOR, barracks: BARRACKS_EXIT_COLOR};
 
 /** Road tiles and the HQ ring preview. Presentation only; redrawn on change. */
 export class RoadLayer {
@@ -24,7 +26,7 @@ export class RoadLayer {
 
     /**
      * @param {Array<{col, row, kind}>} tiles
-     * @param {Array<{col, row, kind: 'factory' | 'hq'}>} docks
+     * @param {Array<{col, row, kind: 'factory' | 'hq' | 'barracks'}>} docks
      */
     sync(tiles, docks = []) {
         this.#graphics.clear();
@@ -36,7 +38,7 @@ export class RoadLayer {
         });
         this.#dockViews = docks.map(({col, row, kind}) => {
             const {x, y, width, height} = this.#grid.footprintRect({col, row});
-            this.#graphics.fillStyle(kind === 'hq' ? HQ_DOCK_COLOR : FACTORY_DOCK_COLOR, 1);
+            this.#graphics.fillStyle(DOCK_COLORS[kind], 1);
             this.#graphics.fillRect(x + DOCK_INSET, y + DOCK_INSET, width - 2 * DOCK_INSET, height - 2 * DOCK_INSET);
             return {col, row, kind};
         });

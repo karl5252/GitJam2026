@@ -114,6 +114,7 @@ test('HQ values are the approved ones', () => {
         id: 'hq', name: 'HQ', width: 3, height: 3,
         cost: {credits: 0, ap: 0}, operations: {income: 0, upkeep: 0}, power: {supply: 20, demand: 0},
         pollutionPerNight: 0, maxHp: 600, switchable: false,
+        demolishable: false,
     });
     assert.equal(TARGET_BIAS.hq, 256);
 });

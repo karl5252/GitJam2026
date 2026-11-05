@@ -73,7 +73,7 @@ function selectionSuite(pointerAt) {
         const state = await startGame(page);
         const {grid} = state;
         const outside = [
-            {x: grid.originX - 20, y: 360},                                   // left
+            {x: grid.originX - 20, y: 540},                                   // left, below the build menu
             {x: grid.originX + grid.cols * grid.tileSize + 20, y: 360},       // right
             {x: 640, y: grid.originY - 20},                                   // above
             {x: 400, y: grid.originY + grid.rows * grid.tileSize + 20},       // below, beside Start

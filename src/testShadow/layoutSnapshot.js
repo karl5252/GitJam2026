@@ -3,6 +3,10 @@
 // TEST_MODE-only layout fixtures: window.__qa.layout.export() and .load().
 // A snapshot is a layout, not a save: no Credits, AP, Day, HP, enemies or RNG.
 //
+// Version 2 exists only because of Barracks, whose entries carry `flag`. A
+// layout without one is version 1 and stays byte for byte what it always was.
+// The version must match the contents, so neither can pass for the other.
+//
 // Building order is data. Target ties, blockers and turret firing all follow
 // the building list, so the array keeps creation order and is never sorted.
 // Instance ids are left out: only list order affects combat, and ids are only
@@ -13,7 +17,7 @@
 // is touched. That cannot prove the live replay succeeds, so its result is
 // checked too, and the caller must discard the run if it reports `applied`.
 
-import {HQ_TYPE, getBuildingType} from '../core/buildingTypes.js';
+import {BARRACKS_TYPE, HQ_TYPE, getBuildingType} from '../core/buildingTypes.js';
 import {BuildingPlacement} from '../core/buildingPlacement.js';
 import {Economy} from '../core/economy.js';
 import {Grid} from '../core/grid.js';
@@ -22,6 +26,7 @@ import {Shift} from '../core/shiftCycle.js';
 
 export const LAYOUT_FORMAT = 'papi-layout';
 export const LAYOUT_VERSION = 1;
+export const LAYOUT_VERSION_BARRACKS = 2;
 
 export const LayoutFailure = Object.freeze({
     NOT_STARTED: 'not-started',
@@ -39,6 +44,7 @@ export const LayoutFailure = Object.freeze({
 
 const TOP_LEVEL = ['format', 'version', 'grid', 'buildings', 'roads'];
 const BUILDING_FIELDS = ['type', 'col', 'row', 'enabled'];
+const BARRACKS_FIELDS = [...BUILDING_FIELDS, 'flag'];
 const ROAD_FIELDS = ['col', 'row', 'kind'];
 
 const fail = (reason, detail) => ({ok: false, reason, ...(detail ? {detail} : {})});
@@ -46,14 +52,21 @@ const hasExactly = (value, fields) => value !== null && typeof value === 'object
     && Object.keys(value).length === fields.length && fields.every((field) => Object.hasOwn(value, field));
 const isCell = ({col, row}) => Number.isInteger(col) && Number.isInteger(row);
 const byCell = (cols) => (a, b) => (a.row * cols + a.col) - (b.row * cols + b.col);
+const isBarracks = ({type}) => type === BARRACKS_TYPE;
+const versionFor = (buildings) => (buildings.some(isBarracks) ? LAYOUT_VERSION_BARRACKS : LAYOUT_VERSION);
+const flagOf = (flag) => (flag ? {col: flag.col, row: flag.row} : null);
+const buildingEntry = ({type, col, row, enabled, flag}) => ({
+    type, col, row, enabled, ...(type === BARRACKS_TYPE ? {flag: flagOf(flag)} : {}),
+});
 
 /** A deterministic snapshot of the live layout. */
 export function exportLayout({grid, placement, roads}) {
+    const buildings = placement.buildings();
     return {
         format: LAYOUT_FORMAT,
-        version: LAYOUT_VERSION,
+        version: versionFor(buildings),
         grid: {cols: grid.cols, rows: grid.rows},
-        buildings: placement.buildings().map(({type, col, row, enabled}) => ({type, col, row, enabled})),
+        buildings: buildings.map(buildingEntry),
         roads: roads.tiles().map(({col, row, kind}) => ({col, row, kind})),
     };
 }
@@ -61,15 +74,20 @@ export function exportLayout({grid, placement, roads}) {
 /** Shape checks only. Spatial rules are left to the real placement code. */
 function checkShape(snapshot) {
     if (snapshot === null || typeof snapshot !== 'object') return fail(LayoutFailure.INVALID_SNAPSHOT, 'not an object');
-    if (snapshot.format !== LAYOUT_FORMAT || snapshot.version !== LAYOUT_VERSION) {
+    if (snapshot.format !== LAYOUT_FORMAT || ![LAYOUT_VERSION, LAYOUT_VERSION_BARRACKS].includes(snapshot.version)) {
         return fail(LayoutFailure.UNSUPPORTED_SCHEMA, `${snapshot.format} v${snapshot.version}`);
     }
     if (!hasExactly(snapshot, TOP_LEVEL) || !hasExactly(snapshot.grid, ['cols', 'rows'])
         || !Array.isArray(snapshot.buildings) || !Array.isArray(snapshot.roads)) {
         return fail(LayoutFailure.INVALID_SNAPSHOT, 'unexpected fields');
     }
+    if (snapshot.version !== versionFor(snapshot.buildings)) {
+        return fail(LayoutFailure.UNSUPPORTED_SCHEMA, `v${snapshot.version} does not match its buildings`);
+    }
     for (const building of snapshot.buildings) {
-        if (!hasExactly(building, BUILDING_FIELDS) || !isCell(building) || typeof building.enabled !== 'boolean') {
+        const fields = isBarracks(building) ? BARRACKS_FIELDS : BUILDING_FIELDS;
+        const badFlag = isBarracks(building) && building.flag !== null && !(hasExactly(building.flag, ['col', 'row']) && isCell(building.flag));
+        if (!hasExactly(building, fields) || !isCell(building) || typeof building.enabled !== 'boolean' || badFlag) {
             return fail(LayoutFailure.INVALID_SNAPSHOT, `bad building ${JSON.stringify(building)}`);
         }
         if (!getBuildingType(building.type)) return fail(LayoutFailure.UNKNOWN_BUILDING_TYPE, String(building.type));
@@ -101,7 +119,8 @@ const pointerCell = ({type, col, row}) => {
 
 /**
  * Replay a checked snapshot through the real rules: HQ, which brings its ring,
- * then player roads, then the other buildings in their original order. The
+ * then player roads, then the other buildings in their original order, then
+ * flags, which may legally point at a tile that was built on afterwards. The
  * purchases are funded first, so Credits end where they began and AP is put
  * back. `faultAfter` is a QA hook that simulates a failure after N buildings.
  * @returns {{ok: true} | {ok: false, reason: string, detail?: string}}
@@ -112,11 +131,14 @@ function replay({placement, roads, economy}, snapshot, faultAfter = null) {
         return {credits: sum.credits + credits, ap: sum.ap + ap};
     }, {credits: 0, ap: 0});
     const startingAp = economy.ap;
+    const flags = [];
     economy.adjustCredits(cost.credits);
     economy.restoreAp(cost.ap);
 
     const place = (building) => {
-        if (!placement.select(building.type)) return fail(LayoutFailure.HQ_REQUIRED, building.type);
+        if (!placement.select(building.type)) {
+            return fail(placement.canBuild(building.type).reason ?? LayoutFailure.HQ_REQUIRED, building.type);
+        }
         const result = placement.placeAt(pointerCell(building));
         placement.cancel();
         if (!result.ok) return fail(result.reason, `${building.type} at ${building.col},${building.row}`);
@@ -126,6 +148,7 @@ function replay({placement, roads, economy}, snapshot, faultAfter = null) {
             const switched = placement.setEnabled(landed.id, false);
             if (!switched.ok) return fail(switched.reason, `${building.type} cannot be disabled`);
         }
+        if (building.flag) flags.push({id: landed.id, flag: building.flag});
         return {ok: true};
     };
 
@@ -142,6 +165,10 @@ function replay({placement, roads, economy}, snapshot, faultAfter = null) {
         const result = place(building);
         if (!result.ok) return result;
         placed++;
+    }
+    for (const {id, flag} of flags) {
+        const restored = placement.restoreFlag(id, flag);
+        if (!restored.ok) return fail(restored.reason, `flag at ${flag.col},${flag.row}`);
     }
     economy.restoreAp(startingAp);
     return {ok: true};
@@ -160,7 +187,7 @@ const canonical = (snapshot) => ({
     format: snapshot.format,
     version: snapshot.version,
     grid: {cols: snapshot.grid.cols, rows: snapshot.grid.rows},
-    buildings: snapshot.buildings.map(({type, col, row, enabled}) => ({type, col, row, enabled})),
+    buildings: snapshot.buildings.map(buildingEntry),
     roads: [...snapshot.roads].sort(byCell(snapshot.grid.cols)).map(({col, row, kind}) => ({col, row, kind})),
 });
 

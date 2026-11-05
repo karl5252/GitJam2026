@@ -1,15 +1,16 @@
 import Phaser from 'phaser';
 import {GamePhase, defeatGame, startGame} from '../core/gamePhase.js';
 import {Grid} from '../core/grid.js';
-import {BUILDING_TYPES, HQ_TYPE, WALL_TYPE, getBuildingType} from '../core/buildingTypes.js';
-import {BuildingPlacement, HQ_ALREADY_BUILT} from '../core/buildingPlacement.js';
+import {BARRACKS_TYPE, BUILDING_TYPES, HQ_TYPE, WALL_TYPE, getBuildingType} from '../core/buildingTypes.js';
+import {BARRACKS_LIMIT, BuildingPlacement, FlagFailure, HQ_ALREADY_BUILT, MAX_BARRACKS} from '../core/buildingPlacement.js';
 import {Economy} from '../core/economy.js';
 import {SimulationClock} from '../core/simulationClock.js';
 import {SeededRandom, DEFAULT_SEED, parseSeed} from '../core/seededRandom.js';
 import {ShiftCycle, Shift} from '../core/shiftCycle.js';
 import {Gates} from '../core/gates.js';
+import {INFANTRY, Infantry} from '../core/infantry.js';
 import {Logistics} from '../core/logistics.js';
-import {ROAD_ACCESS_TYPES, RoadFailure, RoadNetwork, outgoingDock, receivingDock} from '../core/roads.js';
+import {ROAD_ACCESS_TYPES, RoadFailure, RoadNetwork, barracksExit, outgoingDock, receivingDock} from '../core/roads.js';
 import {settleNight} from '../core/settlement.js';
 import {calculatePower, PowerStatus} from '../core/power.js';
 import {Pollution, calculateEmissions, threatLevel} from '../core/pollution.js';
@@ -30,6 +31,8 @@ import {SpeedControls} from './SpeedControls.js';
 import {RoadLayer} from './RoadLayer.js';
 import {TruckLayer} from './TruckLayer.js';
 import {GateLayer} from './GateLayer.js';
+import {InfantryLayer} from './InfantryLayer.js';
+import {BuildingControls} from './BuildingControls.js';
 
 const GRID_COLS = 24;
 const GRID_ROWS = 16;
@@ -41,7 +44,7 @@ export const PREVIEW_VALID_COLOR = 0x4caf50;
 export const PREVIEW_INVALID_COLOR = 0xe53935;
 const ROAD_TILE_COLOR = 0x455a64; // a gate's barrier is drawn over its road
 const BUILDING_COLORS = {
-    hq: 0xc9a227, outpost: 0x9e9e9e, factory: 0x616161, powerPlant: 0x5c6bc0, autocannon: 0x00897b,
+    hq: 0xc9a227, outpost: 0x9e9e9e, factory: 0x616161, powerPlant: 0x5c6bc0, autocannon: 0x00897b, barracks: 0x558b2f,
     wall: 0xa1887f, gateVertical: ROAD_TILE_COLOR, gateHorizontal: ROAD_TILE_COLOR,
 };
 const BUILDING_STROKE = 0x212121;
@@ -60,6 +63,12 @@ const PLACEMENT_HINTS = {
     [RoadFailure.GATE_ON_HQ_RING]: 'No gates on the HQ road ring',
     [RoadFailure.GATE_ON_DOCK]: 'No gates on a dock tile',
     [RoadFailure.GATE_DEPENDS_ON_ROAD]: 'A gate depends on this road',
+    [RoadFailure.NO_EXIT_ACCESS]: 'Barracks exit (left side) needs a connected road',
+    [RoadFailure.EXIT_REQUIRED]: 'A Barracks exit depends on this road',
+    [BARRACKS_LIMIT]: `No more than ${MAX_BARRACKS} Barracks`,
+    [FlagFailure.OCCUPIED]: 'Flags go on open ground or roads',
+    [FlagFailure.TAKEN]: 'Another squad holds this tile',
+    [FlagFailure.UNREACHABLE]: 'Soldiers cannot reach this tile',
 };
 
 const POWER_STATUS_LABELS = {
@@ -74,15 +83,16 @@ const BUTTON_DISABLED_ALPHA = 0.45;
 
 // Build menu lives in the band left of the grid (grid x starts at 256), in two
 // columns. Every button is at least 82 logical pixels on each side, which is 44
-// CSS pixels at 844x390. Road, Wall and the gates fill the slots below the
-// buildings; slots run left to right, top to bottom.
+// CSS pixels at 844x390. Road, Wall, Barracks and the gates fill the slots below
+// the buildings; slots run left to right, top to bottom. The menu is now full:
+// slot 10 would run into END DAY.
 const MENU_X = 128;
 const MENU_BUTTON = {width: 192, height: 84};
 const MENU_CELL = {width: 120, height: 84};
 const MENU_COLUMNS = [66, 190];
 const MENU_TOP = 122;
 const MENU_STEP = 88;
-const MENU_SLOTS = {road: 5, wall: 6, gateVertical: 8, gateHorizontal: 9};
+const MENU_SLOTS = {road: 5, wall: 6, barracks: 7, gateVertical: 8, gateHorizontal: 9};
 const RIGHT_ACTION = {x: 1152, y: 560}; // Cancel and the selection button share it: placing clears selection
 const menuSlot = (slot) => ({x: MENU_COLUMNS[slot % 2], y: MENU_TOP + Math.floor(slot / 2) * MENU_STEP});
 
@@ -158,8 +168,12 @@ export class GameScene extends Phaser.Scene {
         this.truckLayer = null;
         this.gates = null;
         this.gateLayer = null;
+        this.infantry = null;
+        this.infantryLayer = null;
+        this.buildingControls = null;
+        this.flagBarracksId = null; // the Barracks being given a flag, in flag mode
+        this.renderedPostsKey = null; // last revision and selection the flags were drawn for
         this.dragCell = null;
-        this.demolishProxy = null;
         this.roadButton = null;
         this.roadProxy = null;
         this.roadMode = false;
@@ -331,6 +345,16 @@ export class GameScene extends Phaser.Scene {
             mutants: this.mutants,
         });
         this.autocannonLayer = new AutocannonLayer(this, this.grid);
+        // Barracks need a road exit, so ?hq=off has none.
+        this.infantry = this.roads ? new Infantry({
+            cycle: this.cycle,
+            placement: this.placement,
+            grid: this.grid,
+            gates: this.gates,
+            mutants: this.mutants,
+        }) : null;
+        this.mutants.setInfantry(this.infantry);
+        this.infantryLayer = this.infantry ? new InfantryLayer(this, this.grid) : null;
         this.gameOverLayer = new GameOverLayer(this, () => this.scene.restart());
 
         const bounds = this.grid.footprintRect({col: 0, row: 0, width: GRID_COLS, height: GRID_ROWS});
@@ -489,6 +513,7 @@ export class GameScene extends Phaser.Scene {
         const key = `${this.cycle.day}:${this.cycle.shift}`;
         if (key !== this.renderedShiftKey) {
             this.renderedShiftKey = key;
+            this.exitFlagMode();
             const isDay = this.cycle.shift === Shift.DAY;
             if (!isDay) this.exitPlacementMode();
             this.setBuildMenuVisible(isDay);
@@ -511,6 +536,21 @@ export class GameScene extends Phaser.Scene {
             cannons: this.autocannons.snapshot(),
             mutants,
             buildings,
+            tick: this.clock.tick,
+            isNight: this.cycle.shift === Shift.NIGHT,
+        });
+        if (this.infantry) this.syncInfantry();
+    }
+
+    /** Soldiers every frame; flags only when walking or the selection changed. */
+    syncInfantry() {
+        const key = `${this.placement.revision}:${this.selectedBuildingId}:${this.flagBarracksId}`;
+        if (key !== this.renderedPostsKey) {
+            this.renderedPostsKey = key;
+            this.infantryLayer.syncPosts(this.infantry.posts(), this.placement.barracks(), this.selectedBuildingId ?? this.flagBarracksId);
+        }
+        this.infantryLayer.sync({
+            soldiers: this.infantry.soldiers().map((soldier) => ({...soldier, maxHp: INFANTRY.maxHp})),
             tick: this.clock.tick,
             isNight: this.cycle.shift === Shift.NIGHT,
         });
@@ -564,7 +604,8 @@ export class GameScene extends Phaser.Scene {
     }
 
     createBuildMenu() {
-        const buildings = Object.values(BUILDING_TYPES).filter((t) => !t.fortification && (this.hqRequired || t.id !== HQ_TYPE));
+        const buildings = Object.values(BUILDING_TYPES)
+            .filter((t) => !t.fortification && t.id !== BARRACKS_TYPE && (this.hqRequired || t.id !== HQ_TYPE));
         buildings.forEach((type, slot) => {
             this.addBuildButton(slot, type, `${type.name} ${type.width}x${type.height}\n${type.cost.credits}c · ${type.cost.ap} AP`);
         });
@@ -573,7 +614,8 @@ export class GameScene extends Phaser.Scene {
             this.roadButton = this.createMenuCell(MENU_SLOTS.road, 'Road\nfree');
             this.roadButton.rect.on('pointerdown', () => this.enterRoadMode());
             const cost = ({cost: {credits, ap}}) => (ap ? `${credits}c · ${ap} AP` : `${credits}c`);
-            const {wall, gateVertical, gateHorizontal} = BUILDING_TYPES;
+            const {barracks, wall, gateVertical, gateHorizontal} = BUILDING_TYPES;
+            this.addBuildButton(MENU_SLOTS.barracks, barracks, `Barracks 3x3\n${cost(barracks)}`);
             this.addBuildButton(MENU_SLOTS.wall, wall, `Wall\n${cost(wall)}`);
             this.addBuildButton(MENU_SLOTS.gateVertical, gateVertical, `Gate |\n${cost(gateVertical)}`);
             this.addBuildButton(MENU_SLOTS.gateHorizontal, gateHorizontal, `Gate —\n${cost(gateHorizontal)}`);
@@ -588,9 +630,13 @@ export class GameScene extends Phaser.Scene {
         this.endDayButton.rect.on('pointerdown', () => this.handleEndDay());
 
         // What can be done to the selected building, right band: its power
-        // switch in Day AND Night, or Demolish for a fortification during Day.
+        // switch in Day AND Night, and above it Demolish during Day and any flag.
         this.toggleButton = this.createButton(RIGHT_ACTION.y, '', 0x37474f, RIGHT_ACTION.x);
         this.toggleButton.rect.on('pointerdown', () => this.handleSelectionAction());
+        this.buildingControls = new BuildingControls(this, {
+            onFlag: () => this.enterFlagMode(),
+            onDemolish: () => this.handleDemolish(),
+        });
         this.updateToggleButton();
     }
 
@@ -602,36 +648,29 @@ export class GameScene extends Phaser.Scene {
             ? this.placement.buildings().find((b) => b.id === this.selectedBuildingId)
             : null;
         const type = building ? getBuildingType(building.type) : null;
-        return {building, type, demolishable: Boolean(type?.fortification) && this.cycle.isConstructionAllowed};
+        const demolishable = Boolean(type) && type.demolishable !== false && this.cycle.isConstructionAllowed;
+        return {building, type, demolishable};
     }
 
-    /** Visible whenever a switchable building is selected, or a fortification during Day. */
+    /** The power switch shows for a switchable building, in Day and Night. The other actions follow. */
     updateToggleButton() {
         const {building, type, demolishable} = this.selection();
+        this.buildingControls.update(building, {
+            canFlag: type?.id === BARRACKS_TYPE,
+            canDemolish: demolishable,
+            confirmDemolish: !type?.fortification,
+        });
         const {rect, text} = this.toggleButton;
         const switchable = Boolean(type) && type.switchable !== false;
-        const visible = switchable || demolishable;
-        rect.setVisible(visible);
-        text.setVisible(visible);
+        rect.setVisible(switchable);
+        text.setVisible(switchable);
         if (!switchable) {
             this.toggleProxy?.destroy();
             this.toggleProxy = null;
-        }
-        if (!demolishable) {
-            this.demolishProxy?.destroy();
-            this.demolishProxy = null;
-        }
-        if (!visible) {
             rect.disableInteractive();
             return;
         }
         rect.setInteractive({useHandCursor: true});
-        if (demolishable) {
-            text.setText(`${building.id}\nDemolish`);
-            this.demolishProxy ??= addProxy(this, rect, 'demolish', {label: 'Demolish'});
-            this.demolishProxy.set({target: building.id});
-            return;
-        }
         text.setText(`${building.id}\n${building.enabled ? 'Switch OFF' : 'Switch ON'}`);
         this.toggleProxy ??= addProxy(this, rect, 'toggle-power', {label: 'Toggle power'});
         this.toggleProxy.set({target: building.id, enabled: building.enabled});
@@ -639,14 +678,16 @@ export class GameScene extends Phaser.Scene {
 
     /** Act on the selected building through the real domain methods. */
     handleSelectionAction() {
-        const {building, demolishable} = this.selection();
+        const {building} = this.selection();
         if (!building) return;
-        if (demolishable) {
-            if (this.placement.demolish(building.id).ok) this.handleBuildingsDestroyed([building.id]);
-            return;
-        }
+        this.buildingControls.disarm();
         this.placement.setEnabled(building.id, !building.enabled);
         this.refreshPower();
+    }
+
+    handleDemolish() {
+        const {building} = this.selection();
+        if (building && this.placement.demolish(building.id).ok) this.handleBuildingsDestroyed([building.id]);
     }
 
     /** Show/enable the building buttons (Day) or hide/disable them (Night). */
@@ -754,6 +795,7 @@ export class GameScene extends Phaser.Scene {
 
     enterPlacementMode(typeId) {
         this.exitRoadMode();
+        this.exitFlagMode();
         if (!this.placement.select(typeId)) return;
         this.showHint(null);
 
@@ -773,7 +815,9 @@ export class GameScene extends Phaser.Scene {
     }
 
     exitPlacementMode() {
+        this.buildingControls?.disarm();
         this.exitRoadMode();
+        this.exitFlagMode();
         if (!this.placement?.isPlacing) return;
         this.placement.cancel();
         this.resetPlacementUi();
@@ -800,6 +844,50 @@ export class GameScene extends Phaser.Scene {
         this.previewRect.setVisible(false);
         this.previewResult = null;
         this.showHint(null);
+    }
+
+    /** Flag tool: the next tile pressed becomes the selected Barracks' post. Day and Night. */
+    enterFlagMode() {
+        const {building} = this.selection();
+        if (!building) return;
+        this.exitPlacementMode();
+        this.flagBarracksId = building.id;
+        this.selectAt(null);
+        this.setCancelVisible(true);
+        this.showHint(null);
+    }
+
+    /** Back to the Barracks, if it still stands. */
+    exitFlagMode() {
+        if (!this.flagBarracksId) return;
+        const barracks = this.placement.barracks().find((b) => b.id === this.flagBarracksId);
+        this.flagBarracksId = null;
+        this.setCancelVisible(false);
+        this.previewRect.setVisible(false);
+        this.previewResult = null;
+        this.showHint(null);
+        if (barracks) this.selectAt({col: barracks.col, row: barracks.row});
+    }
+
+    applyFlagCell(cell) {
+        const result = this.placement.setFlag(this.flagBarracksId, cell);
+        this.lastResult = result;
+        if (result.ok) {
+            this.exitFlagMode();
+            return;
+        }
+        this.showHint(result.reason);
+        this.updateFlagPreview(cell);
+    }
+
+    updateFlagPreview(cell) {
+        if (!cell) {
+            this.previewResult = null;
+            this.previewRect.setVisible(false);
+            return;
+        }
+        this.previewResult = {footprint: {...cell, width: 1, height: 1}, ...this.placement.canSetFlag(this.flagBarracksId, cell)};
+        this.drawPreview();
     }
 
     /** One road action on a cell, from a tap or a drag. */
@@ -830,6 +918,7 @@ export class GameScene extends Phaser.Scene {
         const buildings = this.placement.buildings();
         const docks = buildings.flatMap((building) => {
             if (building.type === HQ_TYPE) return [{...receivingDock(building), kind: 'hq'}];
+            if (building.type === BARRACKS_TYPE) return [{...barracksExit(building), kind: 'barracks'}];
             return ROAD_ACCESS_TYPES.includes(building.type) ? [{...outgoingDock(building), kind: 'factory'}] : [];
         });
         this.roadLayer.sync(this.roads.tiles(), docks);
@@ -907,6 +996,11 @@ export class GameScene extends Phaser.Scene {
         if (!this.grid || over.length > 0 || this.phase === GamePhase.DEFEATED) return;
         const cell = this.grid.worldToCell(pointer.worldX, pointer.worldY);
 
+        if (this.flagBarracksId) {
+            if (cell) this.applyFlagCell(cell);
+            return;
+        }
+
         if (this.roadMode) {
             this.roadDragAdds = false;
             if (!cell) return;
@@ -938,6 +1032,7 @@ export class GameScene extends Phaser.Scene {
         this.updateHud();
         this.refreshPower(); // new supply/demand takes effect immediately
         this.updatePreview(cell); // re-validate: cell now occupied, balances lower
+        if (building.type === BARRACKS_TYPE) this.refreshBuildMenu(); // the limit may have been reached
         if (building.type === HQ_TYPE) { // the domain ended placement; the rest unlocks
             this.resetPlacementUi();
             this.refreshBuildMenu();
@@ -961,6 +1056,10 @@ export class GameScene extends Phaser.Scene {
     }
 
     handleGridPointerMove(pointer, over) {
+        if (this.flagBarracksId) {
+            this.updateFlagPreview(over.length > 0 ? null : this.grid.worldToCell(pointer.worldX, pointer.worldY));
+            return;
+        }
         if (this.roadMode) {
             const cell = over.length > 0 ? null : this.grid.worldToCell(pointer.worldX, pointer.worldY);
             if (cell && pointer.isDown && this.roadDragAdds) this.applyRoadCell(cell, {dragging: true});
@@ -980,6 +1079,7 @@ export class GameScene extends Phaser.Scene {
      * highlight covers the building's footprint.
      */
     selectAt(cell) {
+        this.buildingControls?.disarm(); // any press on the map, even on the same building
         this.selectedCell = cell;
         this.selectedBuildingId = cell ? this.grid.occupantAt(cell.col, cell.row) : null;
         if (cell) {
@@ -1005,8 +1105,9 @@ export class GameScene extends Phaser.Scene {
     /**
      * One fixed 1/60 s simulation step. Called by both update() and manual
      * QA stepping. Drives the shift cycle (night countdown and the automatic
-     * Night -> Day transition), then turrets, gates, the surviving mutants and
-     * trucks. The order matters: a mutant killed this tick cannot act, and if settlement
+     * Night -> Day transition), then turrets, gates, soldiers, the surviving
+     * mutants and trucks. The order matters: a mutant killed this tick cannot act,
+     * every gate has its record before a soldier looks at it, and if settlement
      * throws on the final tick nothing else steps, so the retried tick cannot
      * apply anything twice. The counter lets QA verify that every tick ran
      * this path.
@@ -1016,7 +1117,11 @@ export class GameScene extends Phaser.Scene {
         this.cycle?.onTick(tick);
         const defense = this.autocannons?.step();
         if (defense?.shots.length) this.autocannonLayer.recordShots(defense.shots, this.clock.tick);
-        this.gates?.step(this.logistics?.gateDemands());
+        const wanted = this.logistics?.gateDemands();
+        if (wanted) this.infantry.addGateDemands(wanted);
+        this.gates?.step(wanted);
+        const squads = this.infantry?.step();
+        if (squads?.shots.length) this.infantryLayer.recordShots(squads.shots, this.clock.tick);
         const effects = this.mutants?.step();
         if (effects?.destroyed.length) this.handleBuildingsDestroyed(effects.destroyed);
         if (this.logistics?.step().deliveries) this.updateHud();
@@ -1030,8 +1135,10 @@ export class GameScene extends Phaser.Scene {
             this.autocannonLayer.remove(id);
         }
         if (ids.includes(this.selectedBuildingId)) this.selectAt(null);
+        if (ids.includes(this.flagBarracksId)) this.exitFlagMode();
         this.refreshPower();
         this.refreshRoads();
+        this.refreshBuildMenu(); // losing a Barracks frees a place under the limit
     }
 
     // ---- QA ----------------------------------------------------------------
@@ -1123,6 +1230,11 @@ export class GameScene extends Phaser.Scene {
             gates: this.gates ? this.gates.snapshot() : null,
             gateViews: this.gateLayer ? this.gateLayer.views() : null,
             gatePreviewView: this.gateLayer ? this.gateLayer.previewView() : null,
+            // Domain squads, then the rendered soldiers and flags, and the selection's controls.
+            infantry: this.infantry ? this.infantry.snapshot() : null,
+            infantryViews: this.infantryLayer ? this.infantryLayer.views() : null,
+            buildingControlsView: this.buildingControls ? this.buildingControls.view() : null,
+            flagMode: this.flagBarracksId,
             roadMode: this.roadMode,
             ringPreviewView: this.roadLayer ? this.roadLayer.ringPreviewView() : null,
             placementHint: this.placementHint ? this.placementHint.text : null,

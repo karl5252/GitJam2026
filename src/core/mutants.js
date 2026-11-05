@@ -28,8 +28,18 @@
  * block, and a mutant has a limited number of plans and extra tiles for its
  * whole life. Everything that blocks can be destroyed, so no mutant waits
  * forever. With no fortifications none of this runs.
+ *
+ * Soldiers are never targets. One within melee reach stops a mutant, like a truck
+ * does. One within LURE_RANGE pulls a walking mutant towards it, but only while
+ * the whole way there is clear, which is asked afresh every tick: nothing is
+ * remembered, so a blocked mutant walks on as usual and a passage that opens
+ * counts at once. The way a mutant walks depends only on where it stands, so
+ * every step of a clear way is still clear, and it cannot flip between its
+ * target and a soldier. A mutant at its target or at an obstacle is not walking,
+ * so a lure never takes it away. With no soldiers none of this runs.
  */
 import {HQ_TYPE, getBuildingType} from './buildingTypes.js';
+import {INFANTRY} from './infantry.js';
 import {Shift} from './shiftCycle.js';
 
 export const MUTANT = Object.freeze({
@@ -41,7 +51,10 @@ export const MUTANT = Object.freeze({
 });
 
 /** Px subtracted from a building's distance: higher is more attractive. */
-export const TARGET_BIAS = Object.freeze({hq: 256, powerPlant: 256, factory: 128, autocannon: 64, outpost: 0});
+export const TARGET_BIAS = Object.freeze({hq: 256, powerPlant: 256, factory: 128, autocannon: 64, barracks: 64, outpost: 0});
+
+/** Px from a walking mutant to a soldier it will turn towards. */
+export const LURE_RANGE = 64;
 
 /**
  * Limits on going round a fortification, in tiles beyond the direct distance.
@@ -144,6 +157,12 @@ function nextPosition({x, y}, rect) {
     return {x, y: y + Math.sign(dy) * Math.min(MUTANT.speed, Math.abs(dy))};
 }
 
+/** What a mutant has to reach to hit a soldier. */
+function soldierBody({x, y}) {
+    const half = INFANTRY.bodySize / 2;
+    return {x: x - half, y: y - half, width: INFANTRY.bodySize, height: INFANTRY.bodySize};
+}
+
 const CELL_STEPS = Object.freeze([[0, -1], [1, 0], [0, 1], [-1, 0]]); // N, E, S, W
 
 function assertValidSchedule(schedule, nightTicks) {
@@ -162,6 +181,7 @@ export class Mutants {
     #plan = null; // frozen for the night on tick 1, cleared at dawn
     #logistics;
     #gates;
+    #infantry = null;
     #spawns;
     #bounds;
     #mutants = [];
@@ -194,6 +214,11 @@ export class Mutants {
         this.#bounds = grid.footprintRect({col: 0, row: 0, width: grid.cols, height: grid.rows});
     }
 
+    /** Soldiers shoot mutants and mutants hit soldiers, so one of the two is connected later. */
+    setInfantry(infantry) {
+        this.#infantry = infantry;
+    }
+
     /**
      * One simulation tick. Existing mutants act in spawn order, then any
      * scheduled spawn is added, so a new mutant first acts on the next tick.
@@ -214,8 +239,9 @@ export class Mutants {
         const buildings = this.#placement.buildings();
         const byId = new Map(buildings.map((building) => [building.id, building]));
         const trucks = this.#logistics?.attackableTrucks() ?? [];
+        const soldiers = this.#infantry?.attackableSoldiers() ?? [];
         for (const mutant of this.#mutants) {
-            this.#act(mutant, buildings, byId, effects, trucks);
+            this.#act(mutant, buildings, byId, effects, trucks, soldiers);
             if (this.#cycle.shift !== Shift.NIGHT) return effects; // HQ fell: the run ended on that hit
         }
         if (spawnDue) this.#spawn(buildings, byId, effects);
@@ -266,7 +292,7 @@ export class Mutants {
         return plan;
     }
 
-    #act(mutant, buildings, byId, effects, trucks) {
+    #act(mutant, buildings, byId, effects, trucks, soldiers) {
         if (mutant.obstacleId && !byId.has(mutant.obstacleId)) mutant.obstacleId = null;
         if (!byId.has(mutant.targetId)) {
             mutant.targetId = selectTarget(mutant, buildings, this.#grid);
@@ -281,15 +307,22 @@ export class Mutants {
         // A truck in melee range holds a mutant's attention, but mutants never
         // seek trucks out, and a moving truck is soon out of reach again.
         const truck = trucks.find((t) => this.#inTruckRange(mutant, t));
-        if (truck || attackId) {
+        const soldier = truck ? null : soldiers.find((s) => distanceToFootprint(mutant, soldierBody(s)) <= MUTANT.attackRange);
+        if (truck || soldier || attackId) {
             if (--mutant.attackTimer > 0) return;
             if (truck) this.#attackTruck(mutant, truck, trucks);
+            else if (soldier) this.#attackSoldier(mutant, soldier, soldiers);
             else this.#attack(mutant, attackId, buildings, byId, effects);
             return;
         }
 
         // The attack timer only runs while stationary.
         mutant.attackTimer = MUTANT.attackCooldownTicks;
+        const lure = this.#lure(mutant, soldiers, buildings, byId);
+        if (lure) {
+            Object.assign(mutant, nextPosition(mutant, lure));
+            return;
+        }
         if (!rect) return; // no buildings left: wait for dawn
         const next = this.#nextStep(mutant, rect);
         const blocker = this.#blockerOf(mutant, next, buildings, byId);
@@ -434,6 +467,43 @@ export class Mutants {
         const result = this.#logistics.damageTruck(truck.id, MUTANT.attackDamage);
         if (!result.ok) throw new Error(`Mutant ${mutant.id} could not damage ${truck.id}: ${result.reason}`);
         if (result.destroyed) trucks.splice(trucks.indexOf(truck), 1);
+    }
+
+    #attackSoldier(mutant, soldier, soldiers) {
+        mutant.attackTimer = MUTANT.attackCooldownTicks;
+        const result = this.#infantry.damageSoldier(soldier.id, MUTANT.attackDamage);
+        if (!result.ok) throw new Error(`Mutant ${mutant.id} could not damage ${soldier.id}: ${result.reason}`);
+        if (result.killed) soldiers.splice(soldiers.indexOf(soldier), 1);
+    }
+
+    /**
+     * The body of the nearest soldier within LURE_RANGE, if the way there is
+     * clear. A mutant on a detour keeps to it. Ties go to the earliest soldier.
+     * @returns {object|null} a rectangle to walk towards
+     */
+    #lure(mutant, soldiers, buildings, byId) {
+        if (soldiers.length === 0 || this.#pathing.get(mutant)?.cells || this.#stepOntoMap(mutant)) return null;
+        let nearest = null;
+        let nearestDistance = LURE_RANGE;
+        for (const soldier of soldiers) {
+            const body = soldierBody(soldier);
+            const distance = distanceToFootprint(mutant, body);
+            if (distance > nearestDistance || (nearest && distance === nearestDistance)) continue;
+            nearest = body;
+            nearestDistance = distance;
+        }
+        return nearest && this.#clearWay(mutant, nearest, buildings, byId) ? nearest : null;
+    }
+
+    /** Walk the whole way in advance, step for step. At most LURE_RANGE / speed steps. */
+    #clearWay(mutant, body, buildings, byId) {
+        let at = mutant;
+        while (distanceToFootprint(at, body) > MUTANT.attackRange) {
+            const next = nextPosition(at, body);
+            if (this.#blockerOf(at, next, buildings, byId)) return false;
+            at = next;
+        }
+        return true;
     }
 
     #attack(mutant, buildingId, buildings, byId, effects) {

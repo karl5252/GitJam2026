@@ -26,6 +26,9 @@ export const ROAD_ACCESS_TYPES = Object.freeze(['factory']);
 /** The tile a building ships from: the middle of its right side. No rotation. */
 export const outgoingDock = ({col, row, width, height}) => ({col: col + width, row: row + Math.floor(height / 2)});
 
+/** The tile a Barracks deploys from: the middle of its left side. No rotation. */
+export const barracksExit = ({col, row, height}) => ({col: col - 1, row: row + Math.floor(height / 2)});
+
 /** The tile a building receives on: the middle of its bottom side. */
 export const receivingDock = ({col, row, width, height}) => ({col: col + Math.floor(width / 2), row: row + height});
 
@@ -40,6 +43,8 @@ export const RoadFailure = Object.freeze({
     HQ_RING_OUT_OF_BOUNDS: 'hq-ring-out-of-bounds',
     ROAD_OCCUPIED: 'road-occupied',
     NO_ROAD_ACCESS: 'no-road-access',
+    NO_EXIT_ACCESS: 'no-exit-access',
+    EXIT_REQUIRED: 'exit-required',
     GATE_NEEDS_ROAD: 'gate-needs-road',
     GATE_NEEDS_STRAIGHT_ROAD: 'gate-needs-straight-road',
     GATE_ON_HQ_RING: 'gate-on-hq-ring',

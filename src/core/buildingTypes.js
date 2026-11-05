@@ -20,6 +20,8 @@
  *               stands on a road. passageAxis is the direction of travel it
  *               lets through ('x' is east-west); core/gates.js runs every gate
  *               with one state machine
+ *   demolishable: false means demolish rejects it; everything else can be
+ *               taken down during Day
  *
  * HQ comes first, because it is the first thing built. It is an ordinary
  * building to power, settlement and pollution, with extra rules in
@@ -27,6 +29,7 @@
  */
 export const HQ_TYPE = 'hq';
 export const WALL_TYPE = 'wall';
+export const BARRACKS_TYPE = 'barracks';
 
 const NO_OPERATIONS = Object.freeze({income: 0, upkeep: 0});
 const NO_POWER = Object.freeze({supply: 0, demand: 0});
@@ -72,6 +75,7 @@ export const BUILDING_TYPES = Object.freeze({
         pollutionPerNight: 0,
         maxHp: 600,
         switchable: false,
+        demolishable: false,
     }),
     outpost: Object.freeze({
         id: 'outpost', name: 'Outpost', width: 1, height: 1,
@@ -104,6 +108,14 @@ export const BUILDING_TYPES = Object.freeze({
         power: Object.freeze({supply: 0, demand: 20}),
         pollutionPerNight: 0,
         maxHp: 150,
+    }),
+    barracks: Object.freeze({
+        id: BARRACKS_TYPE, name: 'Barracks', width: 3, height: 3,
+        cost: Object.freeze({credits: 400, ap: 1}),
+        operations: NO_OPERATIONS,
+        power: Object.freeze({supply: 0, demand: 30}),
+        pollutionPerNight: 0,
+        maxHp: 300,
     }),
     wall: Object.freeze({
         id: WALL_TYPE, name: 'Wall', width: 1, height: 1,

@@ -1,5 +1,6 @@
-import {HQ_TYPE, getBuildingType} from './buildingTypes.js';
-import {ROAD_ACCESS_TYPES, RoadFailure, outgoingDock} from './roads.js';
+import {BARRACKS_TYPE, HQ_TYPE, getBuildingType} from './buildingTypes.js';
+import {ROAD_ACCESS_TYPES, RoadFailure, barracksExit, outgoingDock} from './roads.js';
+import {isFree, resolvePost, walkMap} from './walkField.js';
 
 /**
  * Placement mode + placed-building state. Pure — no Phaser.
@@ -20,7 +21,14 @@ import {ROAD_ACCESS_TYPES, RoadFailure, outgoingDock} from './roads.js';
  *
  * Fortifications are ordinary buildings here. Walls obey the normal rules. A
  * gate is the one building that goes ON a road, and only where
- * RoadNetwork.canAddGate agrees. Only fortifications can be demolished.
+ * RoadNetwork.canAddGate agrees. Anything but HQ can be demolished.
+ *
+ * A Barracks needs a connected road on its left exit, and counts as a dock from
+ * then on. Nothing can be built on a road, that road cannot be removed and no
+ * gate can stand on it, so the exit can never be blocked. Each Barracks owns one
+ * rally flag, on its record, so a flag cannot outlive its building. `revision`
+ * changes whenever anything that affects walking changes, and core/infantry.js
+ * rebuilds its navigation from that.
  */
 
 export const NO_SELECTION = 'no-selection';
@@ -29,6 +37,15 @@ export const UNKNOWN_BUILDING = 'unknown-building';
 export const INVALID_STATE = 'invalid-state';
 export const HQ_REQUIRED = 'hq-required';
 export const HQ_ALREADY_BUILT = 'hq-already-built';
+export const BARRACKS_LIMIT = 'barracks-limit';
+export const MAX_BARRACKS = 4;
+
+export const FlagFailure = Object.freeze({
+    OUT_OF_BOUNDS: 'flag-out-of-bounds',
+    OCCUPIED: 'flag-occupied',
+    TAKEN: 'flag-taken',
+    UNREACHABLE: 'flag-unreachable',
+});
 
 /**
  * Footprint for a building centred on a pointer cell.
@@ -47,6 +64,9 @@ export function footprintAt(type, {col, row}) {
     };
 }
 
+/** A Barracks' flag is the one nested value on a record. */
+const detached = (building) => (building.flag ? {...building, flag: {...building.flag}} : {...building});
+
 export class BuildingPlacement {
     #grid;
     #buildings = [];
@@ -57,6 +77,8 @@ export class BuildingPlacement {
     #requireHq;
     #hqBuilt = false;
     #roads;
+    #revision = 0;
+    #listeners = [];
 
     /**
      * @param {import('./grid.js').Grid} grid
@@ -82,14 +104,30 @@ export class BuildingPlacement {
         return this.#hqBuilt;
     }
 
+    /** Be told the type of every building that is placed or removed, as it happens. */
+    onBuildingsChanged(listener) {
+        this.#listeners.push(listener);
+    }
+
+    #changed(type) {
+        for (const listener of this.#listeners) listener(type);
+    }
+
+    /** Changes on every placement, removal and flag change: anything that affects walking. */
+    get revision() {
+        return this.#revision;
+    }
+
     /**
-     * The HQ rules for a known type. Never mutates, and ignores the
-     * construction gate, space and resources.
-     * @returns {{ok: true} | {ok: false, reason: 'hq-required' | 'hq-already-built'}}
+     * The HQ rules and the Barracks limit for a known type. Never mutates, and
+     * ignores the construction gate, space and resources.
+     * @returns {{ok: true} | {ok: false, reason: 'hq-required' | 'hq-already-built' | 'barracks-limit'}}
      */
     canBuild(typeId) {
         if (typeId === HQ_TYPE) return this.#hqBuilt ? {ok: false, reason: HQ_ALREADY_BUILT} : {ok: true};
-        return this.#requireHq && !this.#hqBuilt ? {ok: false, reason: HQ_REQUIRED} : {ok: true};
+        if (this.#requireHq && !this.#hqBuilt) return {ok: false, reason: HQ_REQUIRED};
+        const full = typeId === BARRACKS_TYPE && this.#barracks().length >= MAX_BARRACKS;
+        return full ? {ok: false, reason: BARRACKS_LIMIT} : {ok: true};
     }
 
     /** Enter placement mode for a type. False if unknown, not buildable now, or construction is disabled. */
@@ -116,8 +154,8 @@ export class BuildingPlacement {
         if (!this.isPlacing || !cell) return null;
         const type = getBuildingType(this.selectedType);
         const footprint = footprintAt(type, cell);
-        const needsDock = this.#roads && ROAD_ACCESS_TYPES.includes(type.id);
-        return {footprint, ...(needsDock ? {dock: outgoingDock(footprint)} : {}), ...this.#validate(type, footprint)};
+        const dock = this.#roads ? this.#accessTile(type.id, footprint) : null;
+        return {footprint, ...(dock ? {dock} : {}), ...this.#validate(type, footprint)};
     }
 
     /**
@@ -147,14 +185,17 @@ export class BuildingPlacement {
 
         this.#nextId++;
         const building = {id, type: type.id, ...footprint, enabled: true, hp: type.maxHp};
+        if (type.id === BARRACKS_TYPE) building.flag = null;
         this.#buildings.push(building);
+        this.#revision++;
         if (type.gate) this.#roads.setGate(footprint, type.gate.passageAxis);
         if (type.id === HQ_TYPE) {
             this.#hqBuilt = true;
             this.#roads?.addHqRing(footprint); // validated above, so it cannot fail
             this.cancel(); // it cannot be built again, so placement mode ends here
         }
-        return {ok: true, building: {...building}};
+        this.#changed(type.id);
+        return {ok: true, building: detached(building)};
     }
 
     /**
@@ -198,16 +239,17 @@ export class BuildingPlacement {
     }
 
     /**
-     * Take down a wall or gate. Day only, free and with no refund. Always
-     * possible, because losing a barrier can only add road connections.
-     * Rebuilding is the only way to restore a damaged one.
+     * Take down anything but HQ. Day only, free and with no refund. Always
+     * possible, because losing a building can only add road connections and free
+     * what depended on it: docks, exits and power are all derived. Rebuilding is
+     * the only way to restore a damaged barrier.
      * @returns {{ok: true} | {ok: false, reason: string}}
      */
     demolish(id) {
         if (!this.#isConstructionAllowed()) return {ok: false, reason: CONSTRUCTION_DISABLED};
         const index = this.#buildings.findIndex((b) => b.id === id);
         if (index === -1) return {ok: false, reason: UNKNOWN_BUILDING};
-        if (!getBuildingType(this.#buildings[index].type).fortification) return {ok: false, reason: INVALID_STATE};
+        if (getBuildingType(this.#buildings[index].type).demolishable === false) return {ok: false, reason: INVALID_STATE};
         this.#removeAt(index);
         return {ok: true};
     }
@@ -217,12 +259,82 @@ export class BuildingPlacement {
         const building = this.#buildings[index];
         if (!this.#grid.remove(building.id)) throw new Error(`Building ${building.id} has no grid occupancy`);
         this.#buildings.splice(index, 1);
+        this.#revision++;
         if (getBuildingType(building.type).gate) this.#roads.clearGate(building);
+        this.#changed(building.type);
     }
 
-    /** Docks that must stay connected to the HQ network. */
-    #roadDependents() {
+    /**
+     * Would this rally flag be accepted? Never mutates. It is open to Day and
+     * Night alike, like setEnabled, because soldiers pay for a move in travel
+     * time. Walling a flag off later is allowed: see walkField.resolvePost.
+     * @returns {{ok: true} | {ok: false, reason: string}}
+     */
+    canSetFlag(id, cell) {
+        const barracks = this.#buildings.find((b) => b.id === id && b.type === BARRACKS_TYPE);
+        if (!barracks) return {ok: false, reason: UNKNOWN_BUILDING};
+        if (!this.#inBounds(cell)) return {ok: false, reason: FlagFailure.OUT_OF_BOUNDS};
+        const map = walkMap(this.#grid, this.#buildings);
+        if (!isFree(map, cell)) return {ok: false, reason: FlagFailure.OCCUPIED};
+        const same = ({col, row}) => col === cell.col && row === cell.row;
+        const taken = this.#barracks().some((b) => b !== barracks && same(b.flag ?? barracksExit(b)));
+        if (taken) return {ok: false, reason: FlagFailure.TAKEN};
+        return resolvePost(map, barracksExit(barracks), cell).blocked ? {ok: false, reason: FlagFailure.UNREACHABLE} : {ok: true};
+    }
+
+    /** Point a Barracks at a defensive position. Free, in both shifts. */
+    setFlag(id, cell) {
+        const check = this.canSetFlag(id, cell);
+        if (!check.ok) return check;
+        this.#assignFlag(id, cell);
+        return check;
+    }
+
+    /**
+     * Layout fixtures only: put back a flag without the placement rules, because
+     * a legal game can hold a flag that was walled off or built over afterwards.
+     */
+    restoreFlag(id, cell) {
+        if (!this.#barracks().some((b) => b.id === id)) return {ok: false, reason: UNKNOWN_BUILDING};
+        if (!this.#inBounds(cell)) return {ok: false, reason: FlagFailure.OUT_OF_BOUNDS};
+        this.#assignFlag(id, cell);
+        return {ok: true};
+    }
+
+    #assignFlag(id, {col, row}) {
+        this.#buildings.find((b) => b.id === id).flag = {col, row};
+        this.#revision++;
+    }
+
+    #inBounds(cell) {
+        const {col, row} = cell ?? {};
+        return Number.isInteger(col) && Number.isInteger(row)
+            && col >= 0 && row >= 0 && col < this.#grid.cols && row < this.#grid.rows;
+    }
+
+    #barracks() {
+        return this.#buildings.filter((b) => b.type === BARRACKS_TYPE);
+    }
+
+    /** The road tile a type must have on this footprint, or null. */
+    #accessTile(typeId, footprint) {
+        if (ROAD_ACCESS_TYPES.includes(typeId)) return outgoingDock(footprint);
+        return typeId === BARRACKS_TYPE ? barracksExit(footprint) : null;
+    }
+
+    #factoryDocks() {
         return this.#buildings.filter((b) => ROAD_ACCESS_TYPES.includes(b.type)).map(outgoingDock);
+    }
+
+    /** Docks and exits that must stay connected to the HQ network. */
+    #roadDependents() {
+        return [...this.#factoryDocks(), ...this.#barracks().map(barracksExit)];
+    }
+
+    /** ROAD_REQUIRED says a Factory depends on the road, so say so when only a Barracks does. */
+    #nameDependent(check, retry) {
+        if (check.ok || check.reason !== RoadFailure.ROAD_REQUIRED || !retry(this.#factoryDocks()).ok) return check;
+        return {ok: false, reason: RoadFailure.EXIT_REQUIRED};
     }
 
     /** Add a free road, or say why not. Never touches the economy. */
@@ -231,10 +343,10 @@ export class BuildingPlacement {
         return check.ok ? this.#roads.add(cell) : check;
     }
 
-    /** Remove a player road, unless a Factory would lose every route. */
+    /** Remove a player road, unless a Factory or Barracks would lose every route. */
     removeRoad(cell) {
-        if (!this.#isConstructionAllowed()) return {ok: false, reason: CONSTRUCTION_DISABLED};
-        return this.#roads.remove(cell, this.#roadDependents());
+        const check = this.previewRoadRemoval(cell);
+        return check.ok ? this.#roads.remove(cell, this.#roadDependents()) : check;
     }
 
     /** Validation for adding a road. Never mutates. */
@@ -246,21 +358,29 @@ export class BuildingPlacement {
     /** Validation for removing a road. Never mutates. */
     previewRoadRemoval(cell) {
         if (!this.#isConstructionAllowed()) return {ok: false, reason: CONSTRUCTION_DISABLED};
-        return this.#roads.canRemove(cell, this.#roadDependents());
+        return this.#nameDependent(this.#roads.canRemove(cell, this.#roadDependents()), (docks) => this.#roads.canRemove(cell, docks));
     }
 
     /** Road rules for a footprint the grid has already accepted. Never mutates. */
     #validateRoads(type, footprint) {
-        if (!this.#roads) return type.gate ? {ok: false, reason: RoadFailure.GATE_NEEDS_ROAD} : {ok: true};
-        if (type.gate) return this.#roads.canAddGate(footprint, type.gate.passageAxis, this.#roadDependents());
+        if (!this.#roads) {
+            if (type.gate) return {ok: false, reason: RoadFailure.GATE_NEEDS_ROAD};
+            return type.id === BARRACKS_TYPE ? {ok: false, reason: RoadFailure.NO_EXIT_ACCESS} : {ok: true};
+        }
+        if (type.gate) {
+            const {passageAxis} = type.gate;
+            return this.#nameDependent(this.#roads.canAddGate(footprint, passageAxis, this.#roadDependents()),
+                (docks) => this.#roads.canAddGate(footprint, passageAxis, docks));
+        }
         if (type.id === HQ_TYPE) {
             const ring = this.#roads.canAddHqRing(footprint);
             if (!ring.ok) return ring;
         }
         if (this.#roads.overlaps(footprint)) return {ok: false, reason: RoadFailure.ROAD_OCCUPIED};
-        if (ROAD_ACCESS_TYPES.includes(type.id)) {
-            const dock = outgoingDock(footprint);
-            if (!this.#roads.isConnected(dock)) return {ok: false, reason: RoadFailure.NO_ROAD_ACCESS};
+        const dock = this.#accessTile(type.id, footprint);
+        if (dock) {
+            const missing = type.id === BARRACKS_TYPE ? RoadFailure.NO_EXIT_ACCESS : RoadFailure.NO_ROAD_ACCESS;
+            if (!this.#roads.isConnected(dock)) return {ok: false, reason: missing};
             if (this.#roads.gateAt(dock) !== null) return {ok: false, reason: RoadFailure.GATE_ON_DOCK};
         }
         return {ok: true};
@@ -283,8 +403,13 @@ export class BuildingPlacement {
         return this.#buildings.filter((b) => getBuildingType(b.type).gate).map((b) => ({...b}));
     }
 
+    /** Detached records of the standing Barracks, without copying every wall. */
+    barracks() {
+        return this.#barracks().map(detached);
+    }
+
     /** Detached, JSON-serializable list of placed buildings. */
     buildings() {
-        return this.#buildings.map((b) => ({...b}));
+        return this.#buildings.map(detached);
     }
 }

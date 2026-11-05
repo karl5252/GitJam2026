@@ -26,6 +26,12 @@
  * A truck whose Factory is destroyed finishes a delivery in progress and is
  * then removed. All values are provisional.
  *
+ * Records follow the Factories at two explicit moments, and reading state is
+ * never one of them. During Day they follow each placement and removal as it
+ * happens. During Night they follow in step(), not at the moment of destruction:
+ * Mutants.step() is holding a list of trucks then, and they must not vanish from
+ * under it. A loss during Day belongs to no Night, so it counts in `totals` only.
+ *
  * A truck stops at the centre of the tile before a gate until it is OPEN, then
  * crosses. gateDemands() reports what every truck needs right now, so a gate
  * stays open until the last one has reached the tile beyond it. A gate lost
@@ -88,6 +94,9 @@ export class Logistics {
         this.#roads = roads;
         this.#economy = economy;
         this.#gates = gates;
+        placement.onBuildingsChanged((type) => {
+            if (cycle.shift === Shift.DAY && ROAD_ACCESS_TYPES.includes(type)) this.#sync(placement.buildings());
+        });
     }
 
     /** The completed Night's {loads, credits, cargoLost}, or null before the first. */
@@ -164,10 +173,9 @@ export class Logistics {
             .map(({id, x, y}) => ({id, x, y}));
     }
 
-    /** Detached, JSON-serializable state, in Factory creation order. */
+    /** Detached, JSON-serializable state, in Factory creation order. Reading it changes nothing. */
     snapshot() {
-        const buildings = this.#placement.buildings();
-        const factories = this.#sync(buildings);
+        const factories = this.#placement.buildings().filter(({id}) => this.#factories.has(id));
         return {
             factories: factories.map(({id, col, row, width, height}) => ({
                 id, col, row, width, height, dock: outgoingDock({col, row, width, height}), ...this.#factories.get(id),
@@ -220,7 +228,6 @@ export class Logistics {
     }
 
     #endNight() {
-        this.#inNight = false;
         for (const truck of [...this.#trucks.values()]) {
             if (truck.orphaned) {
                 if (truck.cargo > 0) this.#loseCargo(truck);
@@ -235,6 +242,7 @@ export class Logistics {
             }
             this.#park(truck);
         }
+        this.#inNight = false;
         this.#lastNight = {...this.#night};
     }
 
@@ -345,7 +353,7 @@ export class Logistics {
     }
 
     #countLost() {
-        this.#night.cargoLost++;
+        if (this.#inNight) this.#night.cargoLost++;
         this.#totals.cargoLost++;
     }
 }

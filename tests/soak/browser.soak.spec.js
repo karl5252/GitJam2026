@@ -7,6 +7,7 @@ import {getBuildingType} from '../../src/core/buildingTypes.js';
 import {WAVE, waveSchedule} from '../../src/core/waves.js';
 import {Shift} from '../../src/core/shiftCycle.js';
 import {canonicalState, createWorld, digestOf, worldState} from './harness.js';
+import {loadLayout} from '../../src/testShadow/layoutSnapshot.js';
 
 /**
  * Browser soak: `npm run test:soak:browser`. One worker, tracing off.
@@ -352,7 +353,7 @@ test('stepped: 20 nights of destruction and rebuilding leave nothing behind', as
         }
         const counts = await page.evaluate(() => window.__qa.perf.counts());
         const cannons = s.buildings.filter((b) => b.type === 'autocannon');
-        const proxiesExpected = 5 + (s.ui.toggleVisible ? 1 : 0); // 4 build buttons, END DAY, toggle
+        const proxiesExpected = 5 + (s.ui.toggleVisible ? 2 : 0); // 4 build buttons, END DAY, toggle and Demolish
         dawns.push({
             night, ...counts, buildings: s.buildings.length, cannons: cannons.length, barrels: s.barrelViews.length,
             hpBars: s.hpBarViews.length, tracers: s.tracerViews.length, buildingViews: s.buildingViews.length,
@@ -422,8 +423,40 @@ test('stepped: Chromium and the Node harness reach identical state', async ({pag
     expect(errors).toEqual([]);
 });
 
+test('stepped: with soldiers on the map, Chromium and the Node harness reach identical state', async ({page}) => {
+    const errors = watchErrors(page);
+    const checkpoints = [100, 700, 1500, 2500, 3599];
+
+    const world = createWorld({schedule: [...waveSchedule(20)], requireHq: true, roads: true});
+    expect(loadLayout(world, INFANTRY_FIXTURE).ok).toBe(true);
+    world.cycle.endDay();
+    const expected = [];
+    for (const tick of checkpoints) {
+        while (world.cycle.elapsedNightTicks < tick) world.cycle.stepTicks(Math.min(240, tick - world.cycle.elapsedNightTicks), world.tick);
+        expect(world.cycle.shift).toBe(Shift.NIGHT);
+        expected.push(digestOf(canonicalState(worldState(world))));
+    }
+
+    await loadedBase(page, 'waveBudget=20', INFANTRY_FIXTURE);
+    await nightPaused(page);
+    const actual = [];
+    for (const tick of checkpoints) {
+        await stepExactly(page, tick - (await sample(page)).shiftCycle.elapsedNightTicks);
+        const s = await sample(page);
+        expect(s.infantry.soldiers.length).toBeGreaterThan(0);
+        actual.push(digestOf(canonicalState({
+            mutants: s.mutants, buildings: s.buildings, autocannons: s.autocannons, rng: s.simulation.rng, soldiers: s.infantry.soldiers,
+        })));
+    }
+    writeResult('infantry-cross-check', {scenario: 'Node harness against Chromium, with soldiers', checkpoints, expected, actual});
+    expect(actual).toEqual(expected);
+    expect(new Set(actual).size).toBe(checkpoints.length);
+    expect(errors).toEqual([]);
+});
+
 const LOGISTICS_FIXTURE = JSON.parse(readFileSync(new URL('../fixtures/layouts/logistics-reference.json', import.meta.url), 'utf8'));
 const FORTIFICATION = JSON.parse(readFileSync(new URL('../fixtures/layouts/fortification-reference.json', import.meta.url), 'utf8'));
+const INFANTRY_FIXTURE = JSON.parse(readFileSync(new URL('../fixtures/layouts/infantry-reference.json', import.meta.url), 'utf8'));
 
 async function loadedBase(page, query, layout = LOGISTICS_FIXTURE) {
     await boot(page, {scene: 'game', waitForQA: true, query});
