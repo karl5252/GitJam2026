@@ -13,6 +13,7 @@
     "test:smoke": "playwright test --grep @smoke",
     "test:full": "npm run test && npm run test:e2e",
     "test:soak": "node --expose-gc tests/soak/domain.soak.js",
+    "test:soak:fortress": "node tests/soak/fortress.soak.js",
     "test:soak:browser": "playwright test --config playwright.soak.config.js"
   },
   "dependencies": {

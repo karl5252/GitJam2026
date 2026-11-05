@@ -183,6 +183,10 @@ Complete real-time Nights at 4x on the same machine, on 5 November 2026, with a 
 
 Frame pacing varied between 0% and 15% slow frames, and the same stress Night gave both 0% and 14%, so two runs cannot show whether speed or load affects it. Throughput held in all four runs, because the frame cap applies before the speed, so 33 ms frames still run the right number of ticks. A frame runs at most 24 ticks, up from 6, and time beyond that is dropped. No real mobile hardware has been measured.
 
+## Fortress benchmarks (TASK 017)
+
+`npm run test:soak:fortress` runs two separate references from Night 22 at full HP with no player input: the original FORTRESS 22 in a world without roads, and the road-legal fixture through the real road rules. They measure combat. Survival is report-only and is not a target, and the original layout is stale for normal play. A player-derived reference will replace them after road playtesting.
+
 ## Known gaps
 
 - One machine and one run. Rerun before treating any number as a trend.

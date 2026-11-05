@@ -101,10 +101,10 @@ function hqSuite(input) {
         expect((await sample(page)).buildings).toHaveLength(1);
     });
 
-    test('HQ can be placed in a corner', async ({page}) => {
+    test('HQ can be placed as close to a corner as its road ring allows', async ({page}) => {
         const state = await start(page);
-        await buildHq(page, state, {col: 1, row: 1});
-        expect((await sample(page)).buildings[0]).toMatchObject({col: 0, row: 0});
+        await buildHq(page, state, {col: 2, row: 2});
+        expect((await sample(page)).buildings[0]).toMatchObject({col: 1, row: 1});
     });
 
     test('selecting HQ offers no power toggle; other buildings still do', async ({page}) => {

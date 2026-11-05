@@ -17,6 +17,7 @@ import {Economy, STARTING_RESOURCES} from '../../src/core/economy.js';
 import {Grid} from '../../src/core/grid.js';
 import {Mutants, MUTANT, distanceToFootprint} from '../../src/core/mutants.js';
 import {Pollution} from '../../src/core/pollution.js';
+import {RoadNetwork} from '../../src/core/roads.js';
 import {SeededRandom} from '../../src/core/seededRandom.js';
 import {settleNight} from '../../src/core/settlement.js';
 import {ShiftCycle} from '../../src/core/shiftCycle.js';
@@ -28,23 +29,30 @@ const GRID = {cols: 24, rows: 16, tileSize: 32, originX: 256, originY: 104};
 
 /**
  * @param {{seed?: number, schedule?: readonly number[]|null, resources?: {credits: number, ap: number},
- *          openConstruction?: boolean, requireHq?: boolean}} options
+ *          openConstruction?: boolean, requireHq?: boolean, roads?: boolean, pollution?: number,
+ *          firstNight?: number}} options
  *   schedule - fixed spawn ticks; null uses the real nightPlan
  *   requireHq - the real HQ-first rules, as GameScene uses them
+ *   roads - the real road rules, as GameScene uses them. Off by default, which
+ *   is how the historical combat benchmarks keep a layout that predates them.
+ *   pollution - the starting value
+ *   firstNight - earlier nights spawn nothing and settle nothing, so a benchmark
+ *   can start late on the real calendar
  */
-export function createWorld({seed = 731, schedule = null, resources = STARTING_RESOURCES, openConstruction = false, requireHq = false} = {}) {
+export function createWorld({seed = 731, schedule = null, resources = STARTING_RESOURCES, openConstruction = false, requireHq = false, roads: useRoads = false, pollution: startingPollution = 0, firstNight = 1} = {}) {
     const clock = new SimulationClock();
     const economy = new Economy(resources);
-    const pollution = new Pollution();
+    const pollution = new Pollution(startingPollution);
     const grid = new Grid(GRID);
     const rng = new SeededRandom(seed);
+    const roads = useRoads ? new RoadNetwork({grid}) : null;
     let cycle;
-    const placement = new BuildingPlacement(grid, economy, openConstruction ? {requireHq} : {isConstructionAllowed: () => cycle.isConstructionAllowed, requireHq});
+    const placement = new BuildingPlacement(grid, economy, openConstruction ? {requireHq, roads} : {isConstructionAllowed: () => cycle.isConstructionAllowed, requireHq, roads});
     cycle = new ShiftCycle({
         clock,
         economy,
         canEndDay: () => !requireHq || placement.hqBuilt,
-        settleNight: (day) => settleNight({day, buildings: placement.buildings(), economy, pollution}),
+        settleNight: (day) => (day < firstNight ? null : settleNight({day, buildings: placement.buildings(), economy, pollution})),
     });
     const mutants = new Mutants({
         cycle,
@@ -52,7 +60,9 @@ export function createWorld({seed = 731, schedule = null, resources = STARTING_R
         grid,
         rng,
         schedule: schedule ?? [],
-        planNight: schedule ? null : (day) => nightPlan({day, pollution: pollution.value, buildings: placement.buildings()}),
+        planNight: schedule ? null : (day) => (day < firstNight
+            ? {schedule: []}
+            : nightPlan({day, pollution: pollution.value, buildings: placement.buildings()})),
     });
     const autocannons = new Autocannons({cycle, placement, grid, mutants});
     cycle.begin();
@@ -73,7 +83,7 @@ export function createWorld({seed = 731, schedule = null, resources = STARTING_R
         return result;
     };
 
-    return {clock, economy, pollution, grid, rng, placement, cycle, mutants, autocannons, tick, place};
+    return {clock, economy, pollution, grid, rng, placement, roads, cycle, mutants, autocannons, tick, place};
 }
 
 /** The state compared between runs and between Node and Chromium. */

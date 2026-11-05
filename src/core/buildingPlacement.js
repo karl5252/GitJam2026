@@ -1,4 +1,5 @@
 import {HQ_TYPE, getBuildingType} from './buildingTypes.js';
+import {ROAD_ACCESS_TYPES, RoadFailure} from './roads.js';
 
 /**
  * Placement mode + placed-building state. Pure — no Phaser.
@@ -11,6 +12,10 @@ import {HQ_TYPE, getBuildingType} from './buildingTypes.js';
  * HQ rules: only one HQ can ever be built, enforced by a latch rather than by
  * looking for an existing HQ, so a destroyed HQ cannot be rebuilt. With
  * requireHq, nothing else can be built until it stands.
+ *
+ * Roads are optional: with a RoadNetwork, HQ brings its ring, nothing can be
+ * built on a road and Factories need connected road access. Without one, as in
+ * legacy fixtures and ?hq=off, none of those rules exist.
  */
 
 export const NO_SELECTION = 'no-selection';
@@ -46,21 +51,24 @@ export class BuildingPlacement {
     #isConstructionAllowed;
     #requireHq;
     #hqBuilt = false;
+    #roads;
 
     /**
      * @param {import('./grid.js').Grid} grid
      * @param {import('./economy.js').Economy} economy
-     * @param {{isConstructionAllowed?: () => boolean, requireHq?: boolean}} [options]
+     * @param {{isConstructionAllowed?: () => boolean, requireHq?: boolean,
+     *          roads?: import('./roads.js').RoadNetwork | null}} [options]
      *   isConstructionAllowed - e.g. false during Night Shift
      *   requireHq - only HQ can be built until it stands. Real play always sets
      *   this. The false default is legacy compatibility, for fixtures that test
      *   other rules without an HQ; do not rely on it in new gameplay code.
      */
-    constructor(grid, economy, {isConstructionAllowed = () => true, requireHq = false} = {}) {
+    constructor(grid, economy, {isConstructionAllowed = () => true, requireHq = false, roads = null} = {}) {
         this.#grid = grid;
         this.#economy = economy;
         this.#isConstructionAllowed = isConstructionAllowed;
         this.#requireHq = requireHq;
+        this.#roads = roads;
         this.selectedType = null; // building type id, or null when not in placement mode
     }
 
@@ -136,6 +144,7 @@ export class BuildingPlacement {
         this.#buildings.push(building);
         if (type.id === HQ_TYPE) {
             this.#hqBuilt = true;
+            this.#roads?.addHqRing(footprint); // validated above, so it cannot fail
             this.cancel(); // it cannot be built again, so placement mode ends here
         }
         return {ok: true, building: {...building}};
@@ -182,13 +191,58 @@ export class BuildingPlacement {
         return {ok: true, destroyed: true, hp};
     }
 
-    /** Construction gate, HQ rules, spatial rules (grid), then resources (economy). Never mutates. */
+    /** Footprints that depend on connected road access. */
+    #roadDependents() {
+        return this.#buildings.filter((b) => ROAD_ACCESS_TYPES.includes(b.type));
+    }
+
+    /** Add a free road, or say why not. Never touches the economy. */
+    placeRoad(cell) {
+        const check = this.previewRoad(cell);
+        return check.ok ? this.#roads.add(cell) : check;
+    }
+
+    /** Remove a player road, unless a Factory would lose every route. */
+    removeRoad(cell) {
+        if (!this.#isConstructionAllowed()) return {ok: false, reason: CONSTRUCTION_DISABLED};
+        return this.#roads.remove(cell, this.#roadDependents());
+    }
+
+    /** Validation for adding a road. Never mutates. */
+    previewRoad(cell) {
+        if (!this.#isConstructionAllowed()) return {ok: false, reason: CONSTRUCTION_DISABLED};
+        return this.#roads.canAdd(cell);
+    }
+
+    /** Validation for removing a road. Never mutates. */
+    previewRoadRemoval(cell) {
+        if (!this.#isConstructionAllowed()) return {ok: false, reason: CONSTRUCTION_DISABLED};
+        return this.#roads.canRemove(cell, this.#roadDependents());
+    }
+
+    /** Road rules for a footprint the grid has already accepted. Never mutates. */
+    #validateRoads(type, footprint) {
+        if (!this.#roads) return {ok: true};
+        if (type.id === HQ_TYPE) {
+            const ring = this.#roads.canAddHqRing(footprint);
+            if (!ring.ok) return ring;
+        }
+        if (this.#roads.overlaps(footprint)) return {ok: false, reason: RoadFailure.ROAD_OCCUPIED};
+        if (ROAD_ACCESS_TYPES.includes(type.id) && this.#roads.accessTiles(footprint).length === 0) {
+            return {ok: false, reason: RoadFailure.NO_ROAD_ACCESS};
+        }
+        return {ok: true};
+    }
+
+    /** Construction gate, HQ rules, spatial rules (grid, roads), then resources (economy). Never mutates. */
     #validate(type, footprint) {
         if (!this.#isConstructionAllowed()) return {ok: false, reason: CONSTRUCTION_DISABLED};
         const allowed = this.canBuild(type.id);
         if (!allowed.ok) return allowed;
         const spatial = this.#grid.canPlace(footprint);
         if (!spatial.ok) return spatial;
+        const roads = this.#validateRoads(type, footprint);
+        if (!roads.ok) return roads;
         return this.#economy.canAfford(type.cost);
     }
 

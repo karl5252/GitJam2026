@@ -31,11 +31,11 @@ This file provides project context, architectural constraints, and working rules
 
 **Target platforms:** Desktop browsers and mobile browsers in landscape orientation.
 
-**Current status:** TASK 016 (Night Simulation Speed Controls) complete. No next task is approved: only work on tasks the developer explicitly assigns.
+**Current status:** TASK 017 (Roads & Connectivity) complete. No next task is approved: only work on tasks the developer explicitly assigns.
 
 The project was initialized from the Wee Games Starter Kit Basic. The original demo applications have been removed.
 
-Implemented so far: grid placement, Credits and AP, the Day/Night cycle, global power, nightly settlement, pollution and derived threat, one basic mutant type that damages and destroys buildings, the Autocannon, which kills mutants, and nightly waves that scale with the night, Threat Level and Autocannon count, and a player-built HQ whose destruction ends the run. There are no repairs yet.
+Implemented so far: grid placement, Credits and AP, the Day/Night cycle, global power, nightly settlement, pollution and derived threat, one basic mutant type that damages and destroys buildings, the Autocannon, which kills mutants, and nightly waves that scale with the night, Threat Level and Autocannon count, a player-built HQ whose destruction ends the run, Night speed controls, and a road network that Factories must connect to. There are no repairs yet.
 
 ### Game concept
 
@@ -117,6 +117,7 @@ npm run test:smoke
 npm run test:full
 npm run test:soak
 npm run test:soak:browser
+npm run test:soak:fortress
 npx playwright install chromium
 ```
 
@@ -129,6 +130,7 @@ npx playwright install chromium
 - `npm run test:full`: the full unit suite, then the full regular E2E suite.
 - `npm run test:soak`: Headless combat soak (`tests/soak/domain.soak.js`). Add `-- --quick` for a short subset. Writes `soak-results/domain.json`.
 - `npm run test:soak:browser`: Browser soak (`playwright.soak.config.js`, one worker, own port 5175, no server reuse). Takes a few minutes. Writes `soak-results/browser-*.json`.
+- `npm run test:soak:fortress`: The two FORTRESS 22 combat benchmarks (`tests/soak/fortress.soak.js`). Survival is report-only and never a target. Writes `soak-results/fortress.json`.
 - `npx playwright install chromium`: Install the Chromium browser.
 
 The soak suites are separate from `npm run test` and `npm run test:e2e`. See `docs/performance-baseline.md`.
@@ -249,6 +251,7 @@ Avoid implementing gameplay rules directly inside Phaser scenes.
   - Building records `{id, type, col, row, width, height, enabled, hp}` are the **single owner** of player power intent and of building HP. `enabled` starts as `true`; `hp` starts at the type's `maxHp`.
   - `damageBuilding(id, amount)` is the only way HP changes. It is not behind the construction gate and never touches the economy. At 0 HP it removes the grid cells and the record together, so a building is destroyed exactly once and later damage returns `unknown-building`. Invalid amounts return `invalid-state`. It returns `{ok, destroyed, hp}`. Damage persists across nights, and there is no repair yet.
   - **HQ rules:** `canBuild(typeId)` returns `{ok}` or `hq-required` / `hq-already-built`, and `select`, `preview`, `placeAt` and the menu all use it. One HQ per run is enforced by a latch (`hqBuilt`), so a destroyed HQ cannot be rebuilt, with or without `requireHq`. With `requireHq`, only HQ can be built until it stands. Placing HQ ends placement mode. `GameScene` always sets `requireHq`, except under `?hq=off`. The constructor default of `false` is legacy compatibility for unit fixtures; do not rely on it in new gameplay code.
+  - **Road rules:** with a `roads` dependency, HQ needs its whole 5x5 inside the map (`hq-ring-out-of-bounds`) and adds its 16-tile ring in the same transaction, nothing can be built on a road (`road-occupied`), and types in `ROAD_ACCESS_TYPES` (Factory only) need connected road access (`no-road-access`). `placeRoad`, `removeRoad`, `previewRoad` and `previewRoadRemoval` are free and behind the construction gate. Without `roads`, as in legacy fixtures and `?hq=off`, none of this applies. Road access never affects settlement.
   - `setEnabled(id, enabled)` is allowed in **both Day and Night**. It rejects a `switchable: false` type (HQ) with `invalid-state`. It is deliberately not behind the construction gate. It is free (no Credits or AP), touches neither the grid nor the economy, and is rejected with `unknown-building` or `invalid-state`.
   - `preview(cell)` and `placeAt(cell)` share one validation, in this order: the construction gate (`construction-disabled`, e.g. during Night Shift), then the HQ rules, then `grid.canPlace`, then `economy.canAfford`. Space reasons therefore win over resource reasons. `preview` never changes anything.
   - **`placeAt` is one atomic transaction:**
@@ -258,6 +261,11 @@ Avoid implementing gameplay rules directly inside Phaser scenes.
 
     A rejection leaves the grid, balances, buildings and next id unchanged. `no-selection` is returned when not placing.
   - Ids are deterministic (`outpost-1`, `factory-2`, …). `buildings()` returns a detached list.
+- `src/core/roads.js`: `RoadNetwork({grid})`, Phaser-free. Roads are not buildings and never occupy the `Grid`, so they have no effect on combat, spawning or settlement.
+  - Tiles are `{col, row, kind}`, with kind `hq-ring` or `player`. `tiles()` and `connectedTiles()` are detached and row-major.
+  - Connectivity is orthogonal and derived from the HQ ring, never stored. `neighbors(cell)` uses fixed N, E, S, W order. `accessTiles(footprint)` returns connected roads touching a footprint's edges, so diagonals never count.
+  - `canAdd`/`add`: free, in bounds, not on a road or building, and touching the connected network. `canRemove`/`remove`: ring tiles are permanent, and a player tile stays only if removing it would leave a dependent footprint with no connected route. Removal may leave a harmless disconnected fragment, which gives no access until a new tile rejoins it.
+  - `restoreTile(cell)` skips only the touching rule. It exists for layout fixtures, because fragments are legal; only `src/testShadow/layoutSnapshot.js` calls it.
 - `src/core/simulationClock.js`: `SimulationClock`, a fixed 60 Hz clock (`TICK_RATE`).
   - Lifecycle: stopped → `start()` → running, with `pause()`/`resume()`. `reset()` returns to stopped with tick 0.
   - `advance(deltaMs, onTick)`: the accumulator. Each frame is capped at `MAX_FRAME_MS` = 100 ms (6 ticks) before it is added. Excess time is deliberately dropped, so there is no catch-up spiral. Does nothing while stopped or paused.
@@ -285,6 +293,7 @@ Avoid implementing gameplay rules directly inside Phaser scenes.
 - `src/scenes/BootScene.js`: Starts the game scene.
 - `src/scenes/MutantLayer.js`: graybox circles for mutants and HP bars on damaged buildings. Presentation only; `sync(mutants, buildings)` takes detached snapshots.
 - `src/scenes/AutocannonLayer.js`: graybox barrels, quantized to 8 directions, and short tracers lasting 6 simulation ticks. Presentation only; facing and tracer timing never affect gameplay.
+- `src/scenes/RoadLayer.js`: road tiles under buildings and the 5x5 HQ preview outline. Presentation only, redrawn only when roads change.
 - `src/scenes/SpeedControls.js`: the Night-only 1x, 2x and 4x buttons (proxies `speed-1`, `speed-2`, `speed-4`, with `data-selected`), in the right band below the power toggle so they never sit under END DAY at dawn. 82x84 logical pixels is about 44 CSS pixels at 844x390. Presentation only: the clock owns the speed, so it lasts across Nights and a restart returns to 1x. The countdown stays in simulation seconds.
 - `src/scenes/GameOverLayer.js`: the Game Over overlay and RESTART button. Presentation only; nothing exists until `show()`. Its panel is interactive, so presses on it are UI, never grid input.
 - `src/scenes/GameScene.js`:
@@ -306,6 +315,7 @@ Avoid implementing gameplay rules directly inside Phaser scenes.
     - At Day it restores them and refreshes the resource line.
   - **HQ-first flow:** a new run offers only HQ. The other buttons and END DAY stay visible but disabled, and pressing them does nothing. Placing HQ unlocks them, marks HQ `BUILT` and enables END DAY. Proxies carry `data-state` (`available`, `locked`, `built`), and END DAY carries `data-enabled`. The toggle stays hidden for HQ.
   - **Defeat:** `syncShiftUi()` calls `enterDefeat()` once on `Shift.DEFEATED`: the phase becomes `defeated`, the play UI hides and the overlay shows `HEADQUARTERS DESTROYED`, the approved quote and `Completed shifts: N`. Grid input is ignored. RESTART calls `scene.restart()`, which returns to the title; `create()` rebuilds everything, so no custom reset exists.
+  - **Road tool:** the Road button (proxy `build-road`, `data-state` `locked` or `available`, `data-selected`) needs HQ. A tap or click adds a road on an empty tile and removes a player road, and dragging only ever adds. Cancel, Escape and Night exit it. A rejected placement or road action shows a short hint above the grid, because touch has no hover.
   - The build menu has HQ, Outpost, Factory, Power Plant and Autocannon buttons (proxies `build-hq`/`build-outpost`/`build-factory`/`build-powerPlant`/`build-autocannon`, with `data-selected`). Their labels show the size and cost. There is also a Cancel button, visible with proxy `cancel-placement` only while placing.
   - **Normal mode:** `pointerdown` selects or highlights the cell from `pointer.worldX/worldY` via `grid.worldToCell`. If the cell is occupied, its building is selected too and the highlight covers the footprint. Normal mode never places. A pointer outside the grid clears the selection.
   - **Placement mode:** `pointermove` previews the footprint, and `pointerdown` attempts placement. Selection is cleared and disabled. Placement mode stays active after a successful placement. Escape or Cancel exits.
@@ -326,6 +336,7 @@ Avoid implementing gameplay rules directly inside Phaser scenes.
     - `pollution` (`{value, threatLevel, emissionsPerNight}`, `null` before Start; `emissionsPerNight` is derived from the current buildings, and the amount actually emitted is `settlement.pollution.emitted`) and `pollutionView` (the actual HUD text and visibility)
     - `simulation`: `{running, paused, tick, timeSeconds, speed, stepsExecuted, rng: {seed, state}}`
     - `speedView` (the rendered speed buttons: `{visible, selected, labels}`, `null` before Start)
+    - `roads` (`{tiles, connected}`, `null` before Start and under `?hq=off`), `roadViews` (rendered tiles), `roadMode`, `ringPreviewView` and `placementHint` (the actual hint text)
     - `previewView` (the rendered preview: visibility, rect, colors)
     - `buildings` (domain records, including `enabled`) and `buildingViews` (the rendered rectangles, including `alpha` and `strokeColor`)
   - **Simulation:**
@@ -340,6 +351,12 @@ Avoid implementing gameplay rules directly inside Phaser scenes.
     - `pause()` → `clock.pause()` then `syncShiftUi()`
     - `resume()` → `cycle.resume()`, Night only
     - `stepTicks(n)` → `cycle.stepTicks(n, stepSimulation)` then `syncShiftUi()`. It uses the same callback as `update` and drives real shift transitions, and does nothing during Day.
+
+    `window.__qa.layout` (`src/testShadow/layoutSnapshot.js`) provides `export()` and `load(snapshot, {faultAfter?})`. A snapshot is `{format: 'papi-layout', version: 1, grid, buildings, roads}`: a layout fixture, not a save, with no Credits, AP, Day, HP, enemies or RNG.
+      - **Building order is data:** target ties, blockers and turret firing follow the building list, so `buildings` keeps creation order and must never be sorted. Instance ids are omitted, because ids are only compared for equality. Roads sort canonically.
+      - `load` works only on a fresh Day, and replays through the real rules: HQ with its ring, player roads, then the other buildings. It funds its own purchases, so Credits and AP end unchanged, and normal placement gets no bypass.
+      - A dry run on throwaway objects rejects anything invalid before the live game is touched. If the live replay still fails, or its export differs from the snapshot, the result has `applied: true` and the scene restarts, so a partial base can never be played. `faultAfter` simulates that failure for tests.
+      - The same seed, commands and starting state give identical combat, including when the original ids have gaps. Historical HP, active combat and RNG state are not reconstructed.
 
     `window.__qa.perf` (`src/testShadow/PerfProbe.js`) provides `start()`, `stop()`, `counts()` and `renderer()` for the browser soak. It reports simulation, scene update, render callbacks and frame time separately, and classifies the rest as unattributed. Use it for real-time runs only; never derive frame rates from `stepTicks`.
 
@@ -676,6 +693,7 @@ Complete:
 - TASK 014: Efficient Test Execution
 - TASK 015: Combat Escalation
 - TASK 016: Night Simulation Speed Controls
+- TASK 017: Roads & Connectivity
 
 Later, not yet assigned:
 
@@ -684,7 +702,8 @@ Later, not yet assigned:
 
 Known balance issues, accepted for now and not final behaviour (see the GDD):
 
-- Corner advantage: corners stay stronger than the centre. Since TASK 015, a corner HQ with one Autocannon falls around Night 19 in scripted runs.
+- Corner advantage: corners stay stronger than the centre. Since TASK 015, a corner HQ with one Autocannon falls around Night 19 in scripted runs. The HQ ring now keeps HQ one tile from every edge; that effect has not been simulated.
+- Compact fortresses: the road rules barely constrain a compact base. FORTRESS 22 needed two cannons moved one tile and one extra road.
 - Centre industry: at 1000 Credits, scripted industrial bases in the centre could do worse than defensive turtles. At 1250 Credits one scripted build queue improved from 5 to 28 of 30 runs alive after Night 20. HQ damage is still permanent, and losing a Plant still silences every cannon. Only real playtests can judge industrial viability.
 - Starting budget: 1250 Credits is approved. Power Plant + Factory + Autocannon costs 1150, so the first Day can include all three. A no-income turtle can buy three Autocannons and a Plant, with a median defeat of Night 20 from the centre and Nights 23-24 from corners in scripted runs.
 

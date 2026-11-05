@@ -16,7 +16,7 @@ const START = STARTING_RESOURCES.credits;
 const HQ = {col: 20, row: 8};
 const CANNON = {col: 20, row: 11}; // between the first spawn and HQ
 const PLANT = {col: 6, row: 3};
-const FACTORY = {col: 10, row: 3};
+const FACTORY = {col: 20, row: 4}; // bottom edge touches the HQ ring
 
 function integratedSuite(input) {
     const {pressAction} = input;

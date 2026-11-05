@@ -7,6 +7,7 @@ import {Economy} from '../core/economy.js';
 import {SimulationClock} from '../core/simulationClock.js';
 import {SeededRandom, DEFAULT_SEED, parseSeed} from '../core/seededRandom.js';
 import {ShiftCycle, Shift} from '../core/shiftCycle.js';
+import {RoadFailure, RoadNetwork} from '../core/roads.js';
 import {settleNight} from '../core/settlement.js';
 import {calculatePower, PowerStatus} from '../core/power.js';
 import {Pollution, calculateEmissions, threatLevel} from '../core/pollution.js';
@@ -15,6 +16,7 @@ import {nightPlan, waveProgress} from '../core/waves.js';
 import {Autocannons} from '../core/autocannons.js';
 import {TEST_MODE} from '../testMode.js';
 import {addProxy, markScene, setBodyState} from '../testShadow/TestProxy.js';
+import {createLayoutQa} from '../testShadow/layoutSnapshot.js';
 import {createPerfProbe} from '../testShadow/PerfProbe.js';
 import {parseStressSchedule} from '../testShadow/stressParams.js';
 import {QASurface} from '../testShadow/QASurface.js';
@@ -22,6 +24,7 @@ import {MutantLayer} from './MutantLayer.js';
 import {AutocannonLayer} from './AutocannonLayer.js';
 import {GameOverLayer} from './GameOverLayer.js';
 import {SpeedControls} from './SpeedControls.js';
+import {RoadLayer} from './RoadLayer.js';
 
 const GRID_COLS = 24;
 const GRID_ROWS = 16;
@@ -35,6 +38,15 @@ const BUILDING_COLORS = {hq: 0xc9a227, outpost: 0x9e9e9e, factory: 0x616161, pow
 const BUILDING_STROKE = 0x212121;
 export const UNPOWERED_STROKE = 0xe53935; // enabled but not operating (low power / blackout)
 export const DISABLED_ALPHA = 0.35; // switched OFF by the player
+
+const PLACEMENT_HINTS = {
+    [RoadFailure.NO_ROAD_ACCESS]: 'Factory needs a connected road',
+    [RoadFailure.ROAD_OCCUPIED]: 'Buildings cannot go on roads',
+    [RoadFailure.HQ_RING_OUT_OF_BOUNDS]: 'The HQ road ring must fit on the map',
+    [RoadFailure.ROAD_REQUIRED]: 'A Factory depends on this road',
+    [RoadFailure.HQ_RING_PERMANENT]: 'The HQ road ring is permanent',
+    [RoadFailure.NOT_CONNECTED]: 'Roads must extend the connected network',
+};
 
 const POWER_STATUS_LABELS = {
     [PowerStatus.NORMAL]: 'NORMAL',
@@ -50,7 +62,7 @@ const BUTTON_DISABLED_ALPHA = 0.45;
 const MENU_X = 128;
 const MENU_BUTTON = {width: 192, height: 64};
 const MENU_TOP = 108;
-const MENU_STEP = 76;
+const MENU_STEP = 68;
 
 /**
  * Title + Start button. Start (READY -> STARTED) hides both, creates a 24x16
@@ -116,6 +128,13 @@ export class GameScene extends Phaser.Scene {
         this.toggleButton = null;
         this.toggleProxy = null;
         this.speedControls = null;
+        this.roads = null;
+        this.roadLayer = null;
+        this.roadButton = null;
+        this.roadProxy = null;
+        this.roadMode = false;
+        this.roadDragAdds = false;
+        this.placementHint = null;
         this.renderedShiftKey = null; // last `${day}:${shift}` the UI was synced to
 
         // Fixed 60 Hz simulation. Stopped until Start; stepped from update().
@@ -178,6 +197,7 @@ export class GameScene extends Phaser.Scene {
                 },
             };
             window.__qa.perf = createPerfProbe(this);
+            window.__qa.layout = createLayoutQa(this);
         }
 
         markScene(this, {phase: this.phase});
@@ -232,10 +252,14 @@ export class GameScene extends Phaser.Scene {
                 pollution: this.pollution,
             }),
         });
+        // No HQ means no network, so ?hq=off plays without road rules.
+        this.roads = this.hqRequired ? new RoadNetwork({grid: this.grid}) : null;
         this.placement = new BuildingPlacement(this.grid, this.economy, {
             isConstructionAllowed: () => this.cycle.isConstructionAllowed,
             requireHq: this.hqRequired,
+            roads: this.roads,
         });
+        this.roadLayer = new RoadLayer(this, this.grid);
         // TEST_MODE only: ?mutants=off gives the real system an empty schedule,
         // for E2E suites about power, economy and pollution, and the soak suites
         // can set a fixed one. Otherwise the formula in core/waves.js plans each
@@ -328,6 +352,12 @@ export class GameScene extends Phaser.Scene {
             color: '#ffffff',
             lineSpacing: 4,
         }).setOrigin(0, 0);
+        // Under the resource line, just above the grid.
+        this.placementHint = this.add.text(this.scale.width / 2, 94, '', {
+            fontFamily: 'monospace',
+            fontSize: '16px',
+            color: '#ffcc80',
+        }).setOrigin(0.5);
         this.settlementPanel = this.add.text(1040, 190, '', {
             fontFamily: 'monospace',
             fontSize: '20px',
@@ -480,6 +510,12 @@ export class GameScene extends Phaser.Scene {
             y += MENU_STEP;
         }
 
+        if (this.roads) {
+            this.roadButton = this.createButton(y, 'Road\nfree', 0x37474f);
+            this.roadButton.rect.on('pointerdown', () => this.enterRoadMode());
+            y += MENU_STEP;
+        }
+
         this.cancelButton = this.createButton(y, 'Cancel', 0x8e2b2b);
         this.cancelButton.rect.on('pointerdown', () => this.exitPlacementMode());
         this.setCancelVisible(false);
@@ -543,6 +579,20 @@ export class GameScene extends Phaser.Scene {
                 button.proxy = null;
             }
         }
+        if (this.roadButton) {
+            const {rect, text} = this.roadButton;
+            rect.setVisible(visible).setStrokeStyle(3, BUTTON_IDLE_STROKE);
+            text.setVisible(visible);
+            if (visible) {
+                rect.setInteractive({useHandCursor: true});
+                this.roadProxy ??= addProxy(this, rect, 'build-road', {label: 'Road'});
+                this.roadProxy.set({selected: false});
+            } else {
+                rect.disableInteractive();
+                this.roadProxy?.destroy();
+                this.roadProxy = null;
+            }
+        }
         if (visible) this.refreshBuildMenu();
     }
 
@@ -562,6 +612,12 @@ export class GameScene extends Phaser.Scene {
             button.text.setAlpha(alpha);
             if (state === 'built') button.text.setText(`${button.type.name} ${button.type.width}x${button.type.height}\nBUILT`);
             button.proxy?.set({state});
+        }
+        if (this.roadButton) {
+            const alpha = this.placement.hqBuilt ? 1 : BUTTON_DISABLED_ALPHA;
+            this.roadButton.rect.setAlpha(alpha);
+            this.roadButton.text.setAlpha(alpha);
+            this.roadProxy?.set({state: this.placement.hqBuilt ? 'available' : 'locked'});
         }
     }
 
@@ -609,7 +665,9 @@ export class GameScene extends Phaser.Scene {
     // ---- Placement mode ----------------------------------------------------
 
     enterPlacementMode(typeId) {
+        this.exitRoadMode();
         if (!this.placement.select(typeId)) return;
+        this.showHint(null);
 
         // Selection (cell or building) is disabled while placing; it resumes after cancel.
         this.selectedCell = null;
@@ -627,9 +685,60 @@ export class GameScene extends Phaser.Scene {
     }
 
     exitPlacementMode() {
+        this.exitRoadMode();
         if (!this.placement?.isPlacing) return;
         this.placement.cancel();
         this.resetPlacementUi();
+    }
+
+    /** Road tool: tap adds or removes, dragging only ever adds. Needs HQ. */
+    enterRoadMode() {
+        if (!this.placement.hqBuilt || !this.cycle.isConstructionAllowed) return;
+        this.exitPlacementMode();
+        this.selectAt(null);
+        this.roadMode = true;
+        this.roadButton.rect.setStrokeStyle(3, BUTTON_SELECTED_STROKE);
+        this.roadProxy?.set({selected: true});
+        this.setCancelVisible(true);
+    }
+
+    exitRoadMode() {
+        if (!this.roadMode) return;
+        this.roadMode = false;
+        this.roadDragAdds = false;
+        this.roadButton.rect.setStrokeStyle(3, BUTTON_IDLE_STROKE);
+        this.roadProxy?.set({selected: false});
+        this.setCancelVisible(false);
+        this.previewRect.setVisible(false);
+        this.previewResult = null;
+        this.showHint(null);
+    }
+
+    /** One road action on a cell, from a tap or a drag. */
+    applyRoadCell(cell, {dragging}) {
+        const removing = this.roads.has(cell);
+        if (dragging && removing) return;
+        const result = removing ? this.placement.removeRoad(cell) : this.placement.placeRoad(cell);
+        this.lastResult = result;
+        this.showHint(result.ok ? null : result.reason);
+        if (result.ok) this.roadLayer.sync(this.roads.tiles());
+        this.updateRoadPreview(cell);
+    }
+
+    updateRoadPreview(cell) {
+        if (!cell) {
+            this.previewResult = null;
+            this.previewRect.setVisible(false);
+            return;
+        }
+        const check = this.roads.has(cell) ? this.placement.previewRoadRemoval(cell) : this.placement.previewRoad(cell);
+        this.previewResult = {footprint: {...cell, width: 1, height: 1}, ...check};
+        this.drawPreview();
+    }
+
+    /** One short reason after a rejection, because touch has no hover. */
+    showHint(reason) {
+        this.placementHint.setText(PLACEMENT_HINTS[reason] ?? '');
     }
 
     resetPlacementUi() {
@@ -639,6 +748,7 @@ export class GameScene extends Phaser.Scene {
         }
         this.setCancelVisible(false);
         this.updatePreview(null);
+        this.showHint(null);
     }
 
     /** Render the preview from the domain validation result for `cell`. */
@@ -646,8 +756,13 @@ export class GameScene extends Phaser.Scene {
         this.previewResult = this.placement.preview(cell);
         if (!this.previewResult) {
             this.previewRect.setVisible(false);
+            this.roadLayer.showRing(null);
             return;
         }
+        this.drawPreview();
+    }
+
+    drawPreview() {
         const rect = this.grid.footprintRect(this.previewResult.footprint);
         const color = this.previewResult.ok ? PREVIEW_VALID_COLOR : PREVIEW_INVALID_COLOR;
         this.previewRect
@@ -656,6 +771,8 @@ export class GameScene extends Phaser.Scene {
             .setFillStyle(color, 0.4)
             .setStrokeStyle(2, color)
             .setVisible(true);
+        const hqRing = this.roads && this.placement.selectedType === HQ_TYPE;
+        this.roadLayer.showRing(hqRing ? this.previewResult.footprint : null, color);
     }
 
     addBuildingView(building) {
@@ -667,6 +784,17 @@ export class GameScene extends Phaser.Scene {
         this.buildingViews.set(building.id, view);
     }
 
+    /** Every view that follows the buildings and roads, after a QA layout load. */
+    handleLayoutLoaded() {
+        for (const building of this.placement.buildings()) this.addBuildingView(building);
+        this.roadLayer.sync(this.roads.tiles());
+        this.selectAt(null);
+        this.updateHud();
+        this.refreshPower();
+        this.refreshBuildMenu();
+        this.refreshEndDay();
+    }
+
     // ---- Pointer -----------------------------------------------------------
 
     /** `over` = interactive objects under the pointer; UI hits are never grid input. */
@@ -674,13 +802,23 @@ export class GameScene extends Phaser.Scene {
         if (!this.grid || over.length > 0 || this.phase === GamePhase.DEFEATED) return;
         const cell = this.grid.worldToCell(pointer.worldX, pointer.worldY);
 
+        if (this.roadMode) {
+            this.roadDragAdds = false;
+            if (!cell) return;
+            this.roadDragAdds = !this.roads.has(cell);
+            this.applyRoadCell(cell, {dragging: false});
+            return;
+        }
+
         if (this.placement.isPlacing) {
             this.updatePreview(cell); // touch has no hover: show where the tap landed
             if (!cell) return;
             const {building, ...result} = this.placement.placeAt(cell);
             this.lastResult = result;
+            this.showHint(result.ok ? null : result.reason);
             if (result.ok) {
                 this.addBuildingView(building);
+                this.roadLayer.sync(this.roads?.tiles() ?? []);
                 this.updateHud();
                 this.refreshPower(); // new supply/demand takes effect immediately
                 this.updatePreview(cell); // re-validate: cell now occupied, balances lower
@@ -698,6 +836,12 @@ export class GameScene extends Phaser.Scene {
     }
 
     handleGridPointerMove(pointer, over) {
+        if (this.roadMode) {
+            const cell = over.length > 0 ? null : this.grid.worldToCell(pointer.worldX, pointer.worldY);
+            if (cell && pointer.isDown && this.roadDragAdds) this.applyRoadCell(cell, {dragging: true});
+            else this.updateRoadPreview(cell);
+            return;
+        }
         if (!this.placement?.isPlacing || this.phase === GamePhase.DEFEATED) return;
         const cell = over.length > 0 ? null : this.grid.worldToCell(pointer.worldX, pointer.worldY);
         this.updatePreview(cell);
@@ -839,6 +983,11 @@ export class GameScene extends Phaser.Scene {
                 rng: this.rng.snapshot(),
             },
             speedView: this.speedControls ? this.speedControls.view() : null,
+            roads: this.roads ? this.roads.snapshot() : null,
+            roadViews: this.roadLayer ? this.roadLayer.views() : null,
+            roadMode: this.roadMode,
+            ringPreviewView: this.roadLayer ? this.roadLayer.ringPreviewView() : null,
+            placementHint: this.placementHint ? this.placementHint.text : null,
             // Actual HUD text, read off the game object.
             hudView: this.hud ? {visible: this.hud.visible, text: this.hud.text} : null,
             // 'available', 'locked' or 'built', keyed by building type.
