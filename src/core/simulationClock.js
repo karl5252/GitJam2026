@@ -12,12 +12,17 @@
  * so a stall or a suspended tab slows the simulation instead of triggering a
  * catch-up spiral.
  *
+ * Speed: the capped delta is multiplied by the selected speed, so faster play
+ * runs more of the same fixed steps per frame, and the most one frame can run
+ * stays bounded. Manual stepping ignores it.
+ *
  * Time is derived from the integer tick count, so it never drifts.
  */
 
 export const TICK_RATE = 60;
 export const MAX_FRAME_MS = 100;
 export const MAX_MANUAL_STEPS = 240;
+export const SIMULATION_SPEEDS = Object.freeze([1, 2, 4]);
 
 const EPSILON = 1e-9; // ms; absorbs float error when deltas sum to exact step multiples
 
@@ -29,6 +34,7 @@ export class SimulationClock {
     #accumulatorMs = 0;
     #running = false;
     #paused = false;
+    #speed = 1;
 
     constructor({tickRate = TICK_RATE, maxFrameMs = MAX_FRAME_MS} = {}) {
         if (!Number.isInteger(tickRate) || tickRate <= 0) {
@@ -47,6 +53,15 @@ export class SimulationClock {
     get timeSeconds() { return this.#tick / this.#tickRate; }
     get running() { return this.#running; }
     get paused() { return this.#paused; }
+    get speed() { return this.#speed; }
+
+    /** Takes effect on the next frame, and keeps any partial step. */
+    setSpeed(speed) {
+        if (!SIMULATION_SPEEDS.includes(speed)) {
+            throw new RangeError(`speed must be one of ${SIMULATION_SPEEDS.join(', ')}, got ${speed}`);
+        }
+        this.#speed = speed;
+    }
 
     /** stopped -> running. No-op if already started. */
     start() {
@@ -71,6 +86,7 @@ export class SimulationClock {
         this.#accumulatorMs = 0;
         this.#running = false;
         this.#paused = false;
+        this.#speed = 1;
     }
 
     /**
@@ -86,7 +102,7 @@ export class SimulationClock {
         }
         if (!this.#running || this.#paused) return 0;
 
-        this.#accumulatorMs += Math.min(deltaMs, this.#maxFrameMs);
+        this.#accumulatorMs += Math.min(deltaMs, this.#maxFrameMs) * this.#speed;
         let steps = 0;
         while (this.#accumulatorMs + EPSILON >= this.#stepMs) {
             this.#accumulatorMs -= this.#stepMs;

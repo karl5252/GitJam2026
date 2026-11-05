@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {readFileSync} from 'node:fs';
-import {SimulationClock, TICK_RATE, MAX_FRAME_MS, MAX_MANUAL_STEPS} from '../../src/core/simulationClock.js';
+import {SimulationClock, SIMULATION_SPEEDS, TICK_RATE, MAX_FRAME_MS, MAX_MANUAL_STEPS} from '../../src/core/simulationClock.js';
 
 const started = (opts) => {
     const c = new SimulationClock(opts);
@@ -233,4 +233,104 @@ test('clock and RNG sources use no wall clock, timers, Math.random or Phaser', (
             assert.ok(!src.includes(banned), `${file} must not use ${banned}`);
         }
     }
+});
+
+// ---- Speed ------------------------------------------------------------------------
+
+function runningClock(speed) {
+    const c = new SimulationClock();
+    c.start();
+    c.setSpeed(speed);
+    return c;
+}
+
+test('the approved speeds are 1, 2 and 4, starting at 1', () => {
+    assert.deepEqual([...SIMULATION_SPEEDS], [1, 2, 4]);
+    assert.ok(Object.isFrozen(SIMULATION_SPEEDS));
+    assert.equal(new SimulationClock().speed, 1);
+});
+
+test('an invalid speed is rejected and changes nothing', () => {
+    const c = runningClock(2);
+    for (const bad of [0, 3, -1, 1.5, 8, NaN, Infinity, '2', null, undefined]) {
+        assert.throws(() => c.setSpeed(bad), RangeError, String(bad));
+    }
+    assert.equal(c.speed, 2);
+});
+
+test('one real second runs 60, 120 or 240 ticks', () => {
+    for (const [speed, expected] of [[1, 60], [2, 120], [4, 240]]) {
+        const c = runningClock(speed);
+        assert.equal(feed(c, repeat(60, 1000 / 60)), expected, `${speed}x at 60 FPS`);
+        const slow = runningClock(speed);
+        assert.equal(feed(slow, repeat(30, 1000 / 30)), expected, `${speed}x at 30 FPS`);
+    }
+});
+
+test('the frame cap applies before the speed, so 4x still holds at low frame rates', () => {
+    const atTenFps = runningClock(4);
+    assert.equal(feed(atTenFps, repeat(10, 100)), 240);
+    for (const [speed, expected] of [[1, 6], [2, 12], [4, 24]]) {
+        const c = runningClock(speed);
+        assert.equal(c.advance(2000), expected, `${speed}x`);
+        assert.equal(c.advance(1), 0, `${speed}x: no backlog`);
+    }
+});
+
+test('changing speed keeps the partial step and applies from the next frame', () => {
+    const c = runningClock(1);
+    assert.equal(c.advance(10), 0);
+    c.setSpeed(4);
+    assert.equal(c.tick, 0);
+    assert.equal(c.advance(2), 1); // 10 ms kept, plus 8 ms
+    c.setSpeed(1);
+    assert.equal(c.advance(1000 / 60), 1);
+});
+
+test('manual stepping runs exactly the requested ticks at every speed, paused or not', () => {
+    for (const speed of SIMULATION_SPEEDS) {
+        const c = runningClock(speed);
+        assert.equal(c.stepTicks(7), 7);
+        c.pause();
+        assert.equal(c.stepTicks(240), 240);
+        assert.equal(c.tick, 247);
+        assert.equal(c.paused, true);
+    }
+});
+
+test('pause freezes every speed and discards the partial step', () => {
+    for (const speed of SIMULATION_SPEEDS) {
+        const c = runningClock(speed);
+        c.advance(10 / speed + 1000 / 60 / speed);
+        const before = c.tick;
+        c.pause();
+        assert.equal(c.advance(100), 0, `${speed}x`);
+        assert.equal(c.tick, before);
+        c.resume();
+        assert.equal(c.advance(7 / speed), 0, `${speed}x: the remainder was discarded`);
+    }
+});
+
+test('pausing inside a tick ends a multi-tick frame at once', () => {
+    const c = runningClock(4);
+    const ran = [];
+    c.advance(100, (tick) => {
+        ran.push(tick);
+        if (tick === 4) c.pause();
+    });
+    assert.deepEqual(ran, [0, 1, 2, 3, 4]);
+    assert.equal(c.tick, 5);
+});
+
+test('speed stays through pause and resume, and reset returns to 1', () => {
+    const c = runningClock(4);
+    c.pause();
+    c.resume();
+    assert.equal(c.speed, 4);
+    c.reset();
+    assert.equal(c.speed, 1);
+});
+
+test('the snapshot shape does not depend on speed', () => {
+    assert.deepEqual(Object.keys(runningClock(4).snapshot()), ['running', 'paused', 'tick', 'timeSeconds']);
 });

@@ -170,6 +170,19 @@ Real-time browser nights on the same machine, on 5 November 2026, with a Plant a
 
 `?waveBudget=40&waveLastTick=1200` is the shortest approved window. 36 mutants were alive at the last spawn, and they destroyed the whole test base by dawn. The simulation kept real time, and render callbacks stayed under 3 ms per frame at worst. More frames exceeded 20 ms, always at the 33 ms step this machine also shows when idle, and p50 stayed at 16.7 ms. This is one run with software rendering, so that share is not a stable measurement.
 
+## Night speed (TASK 016)
+
+Complete real-time Nights at 4x on the same machine, on 5 November 2026, with a Plant and two Autocannons and software rendering. Each Night ran twice.
+
+| Night | Run | Real seconds | Ticks per second | Frames over 20 ms | Frame p50 / p95 / max ms | Simulation mean ms | Scene update mean ms | Render callbacks mean ms |
+|---|---|---:|---:|---:|---|---:|---:|---:|
+| 4 mutants | 1 | 15.24 | 236.2 | 115 of 798 (14%) | 16.7 / 33.4 / 33.4 | 0.013 | 0.337 | 0.382 |
+| 4 mutants | 2 | 15.18 | 237.0 | 120 of 789 (15%) | 16.7 / 33.4 / 33.5 | 0.012 | 0.345 | 0.383 |
+| 40 mutants ending on tick 1200 | 1 | 15.05 | 239.0 | 0 of 902 (0%) | 16.7 / 16.7 / 16.8 | 0.011 | 0.216 | 0.364 |
+| 40 mutants ending on tick 1200 | 2 | 15.17 | 237.2 | 112 of 795 (14%) | 16.7 / 33.4 / 50.1 | 0.021 | 0.403 | 0.659 |
+
+Frame pacing varied between 0% and 15% slow frames, and the same stress Night gave both 0% and 14%, so two runs cannot show whether speed or load affects it. Throughput held in all four runs, because the frame cap applies before the speed, so 33 ms frames still run the right number of ticks. A frame runs at most 24 ticks, up from 6, and time beyond that is dropped. No real mobile hardware has been measured.
+
 ## Known gaps
 
 - One machine and one run. Rerun before treating any number as a trend.

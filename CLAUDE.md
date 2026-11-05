@@ -31,7 +31,7 @@ This file provides project context, architectural constraints, and working rules
 
 **Target platforms:** Desktop browsers and mobile browsers in landscape orientation.
 
-**Current status:** TASK 015 (Combat Escalation) complete. No next task is approved: only work on tasks the developer explicitly assigns.
+**Current status:** TASK 016 (Night Simulation Speed Controls) complete. No next task is approved: only work on tasks the developer explicitly assigns.
 
 The project was initialized from the Wee Games Starter Kit Basic. The original demo applications have been removed.
 
@@ -261,7 +261,8 @@ Avoid implementing gameplay rules directly inside Phaser scenes.
 - `src/core/simulationClock.js`: `SimulationClock`, a fixed 60 Hz clock (`TICK_RATE`).
   - Lifecycle: stopped → `start()` → running, with `pause()`/`resume()`. `reset()` returns to stopped with tick 0.
   - `advance(deltaMs, onTick)`: the accumulator. Each frame is capped at `MAX_FRAME_MS` = 100 ms (6 ticks) before it is added. Excess time is deliberately dropped, so there is no catch-up spiral. Does nothing while stopped or paused.
-  - `stepTicks(count, onTick)`: exactly 1..240 ticks through the same callback. Allowed while paused, without unpausing. Does nothing before `start()` or after `reset()`.
+  - `speed` and `setSpeed(n)`: 1, 2 or 4 (`SIMULATION_SPEEDS`), default 1. `advance()` multiplies the frame delta by the speed **after** the cap, so a frame runs at most 24 ticks and 4x holds at low frame rates. `reset()` returns to 1. `clock.snapshot()` does not include it.
+  - `stepTicks(count, onTick)`: exactly 1..240 ticks through the same callback, at any speed. Allowed while paused, without unpausing. Does nothing before `start()` or after `reset()`.
   - `timeSeconds = tick / tickRate`. There is no wall clock and no timers.
 - `src/core/seededRandom.js`:
   - `SeededRandom(seed)` is the Refit/BarrelStorm LCG with a uint32 seed (`DEFAULT_SEED` = 731). It provides `next()` in [0, 1), inclusive `nextInt(min, max)`, `reset()` (back to the seed) and `snapshot()` → `{seed, state}`.
@@ -284,6 +285,7 @@ Avoid implementing gameplay rules directly inside Phaser scenes.
 - `src/scenes/BootScene.js`: Starts the game scene.
 - `src/scenes/MutantLayer.js`: graybox circles for mutants and HP bars on damaged buildings. Presentation only; `sync(mutants, buildings)` takes detached snapshots.
 - `src/scenes/AutocannonLayer.js`: graybox barrels, quantized to 8 directions, and short tracers lasting 6 simulation ticks. Presentation only; facing and tracer timing never affect gameplay.
+- `src/scenes/SpeedControls.js`: the Night-only 1x, 2x and 4x buttons (proxies `speed-1`, `speed-2`, `speed-4`, with `data-selected`), in the right band below the power toggle so they never sit under END DAY at dawn. 82x84 logical pixels is about 44 CSS pixels at 844x390. Presentation only: the clock owns the speed, so it lasts across Nights and a restart returns to 1x. The countdown stays in simulation seconds.
 - `src/scenes/GameOverLayer.js`: the Game Over overlay and RESTART button. Presentation only; nothing exists until `show()`. Its panel is interactive, so presses on it are UI, never grid input.
 - `src/scenes/GameScene.js`:
   - Start hides the title and Start button and removes the `start` proxy. It then creates a 24×16 `Grid` with 32px cells at origin (256, 104), drawn with Phaser Graphics, and shows the build menu in the band left of the grid.
@@ -322,7 +324,8 @@ Avoid implementing gameplay rules directly inside Phaser scenes.
     - `menuState` (`available`, `locked` or `built` per type), `ui.endDayEnabled`, `defeat` (the defeat report, or `null`) and `gameOverView` (the actual overlay text)
     - `autocannons` (`{id, cooldown, targetId}` per turret), `barrelViews` and `tracerViews` (rendered views), all `null` before Start
     - `pollution` (`{value, threatLevel, emissionsPerNight}`, `null` before Start; `emissionsPerNight` is derived from the current buildings, and the amount actually emitted is `settlement.pollution.emitted`) and `pollutionView` (the actual HUD text and visibility)
-    - `simulation`: `{running, paused, tick, timeSeconds, stepsExecuted, rng: {seed, state}}`
+    - `simulation`: `{running, paused, tick, timeSeconds, speed, stepsExecuted, rng: {seed, state}}`
+    - `speedView` (the rendered speed buttons: `{visible, selected, labels}`, `null` before Start)
     - `previewView` (the rendered preview: visibility, rect, colors)
     - `buildings` (domain records, including `enabled`) and `buildingViews` (the rendered rectangles, including `alpha` and `strokeColor`)
   - **Simulation:**
@@ -672,6 +675,7 @@ Complete:
 - TASK 013: Headquarters, Defeat & Game Over
 - TASK 014: Efficient Test Execution
 - TASK 015: Combat Escalation
+- TASK 016: Night Simulation Speed Controls
 
 Later, not yet assigned:
 

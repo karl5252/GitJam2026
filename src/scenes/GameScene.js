@@ -21,6 +21,7 @@ import {QASurface} from '../testShadow/QASurface.js';
 import {MutantLayer} from './MutantLayer.js';
 import {AutocannonLayer} from './AutocannonLayer.js';
 import {GameOverLayer} from './GameOverLayer.js';
+import {SpeedControls} from './SpeedControls.js';
 
 const GRID_COLS = 24;
 const GRID_ROWS = 16;
@@ -114,6 +115,7 @@ export class GameScene extends Phaser.Scene {
         this.selectedBuildingId = null;
         this.toggleButton = null;
         this.toggleProxy = null;
+        this.speedControls = null;
         this.renderedShiftKey = null; // last `${day}:${shift}` the UI was synced to
 
         // Fixed 60 Hz simulation. Stopped until Start; stepped from update().
@@ -196,6 +198,7 @@ export class GameScene extends Phaser.Scene {
             this.createGrid();
             this.createHud();
             this.createBuildMenu();
+            this.speedControls = new SpeedControls(this, this.clock);
             this.cycle.begin(); // Day 1; the clock starts paused for Day Shift
             this.syncShiftUi();
             this.refreshPower();
@@ -414,6 +417,7 @@ export class GameScene extends Phaser.Scene {
             if (!isDay) this.exitPlacementMode();
             this.setBuildMenuVisible(isDay);
             this.setEndDayVisible(isDay);
+            this.speedControls.setVisible(this.cycle.shift === Shift.NIGHT);
             this.updateHud(); // AP is restored and the night settled at the start of each Day
             this.updatePollutionHud();
             if (isDay && this.cycle.lastSettlement) this.showSettlement(this.cycle.lastSettlement);
@@ -830,9 +834,11 @@ export class GameScene extends Phaser.Scene {
             pollutionView: this.pollutionHud ? {visible: this.pollutionHud.visible, text: this.pollutionHud.text} : null,
             simulation: {
                 ...this.clock.snapshot(),
+                speed: this.clock.speed,
                 stepsExecuted: this.simulationSteps,
                 rng: this.rng.snapshot(),
             },
+            speedView: this.speedControls ? this.speedControls.view() : null,
             // Actual HUD text, read off the game object.
             hudView: this.hud ? {visible: this.hud.visible, text: this.hud.text} : null,
             // 'available', 'locked' or 'built', keyed by building type.

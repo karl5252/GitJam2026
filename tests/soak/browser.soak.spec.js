@@ -22,6 +22,7 @@ import {canonicalState, createWorld, digestOf, worldState} from './harness.js';
  */
 
 const MIN_TICKS_PER_SECOND = 57;
+const MIN_TICKS_PER_SECOND_AT_4X = 4 * MIN_TICKS_PER_SECOND;
 const NIGHT_SECONDS = 60;
 const LATE_NIGHT_TICK = 3500;
 const LISTENERS_PER_DOM_ELEMENT = 3; // Phaser's DOMElement: sleep, wake and prerender
@@ -183,6 +184,54 @@ test('real time: 40 mutants in the shortest approved spawn window', async ({page
     expect(dawn.shiftCycle.day).toBe(2);
     expect(perf.ticksPerSecond).toBeGreaterThanOrEqual(MIN_TICKS_PER_SECOND);
     expect(errors).toEqual([]);
+});
+
+/** One complete real-time Night at 4x, from the first frames to dawn. */
+async function nightAt4x(page, query, onCompressed = async () => {}) {
+    const errors = watchErrors(page);
+    const state = await start(page, query);
+    await defendedBase(page, state);
+    const label = await beginRealTimeNight(page);
+    await clickAction(page, 'speed-4');
+    await onCompressed();
+    await page.waitForFunction(() => window.__qa.getState().shiftCycle.shift === 'day', null, {timeout: 30_000, polling: 50});
+    const perf = await stopProbe(page);
+    const dawn = await sample(page);
+
+    expect(dawn.simulation.speed).toBe(4);
+    expect(dawn.simulation.tick).toBe(3600);
+    expect(dawn.simulation.stepsExecuted).toBe(3600);
+    expect(dawn.settlement.day).toBe(1);
+    expect(dawn.shiftCycle.day).toBe(2);
+    expect(dawn.mutants).toEqual([]);
+    expect(dawn.mutantViews).toEqual([]);
+    expect(errors).toEqual([]);
+    return {label, perf, dawn};
+}
+
+test('real time 4x: an ordinary Night takes about 15 seconds', async ({page}) => {
+    const {label, perf, dawn} = await nightAt4x(page, 'waveBudget=4');
+    writeResult('speed-4x-normal', {
+        scenario: 'defended, waveBudget=4, 4x', ...label,
+        workload: {scheduled: 4, buildingsAtDawn: dawn.buildings.length}, perf,
+    });
+    expect(perf.ticksPerSecond).toBeGreaterThanOrEqual(MIN_TICKS_PER_SECOND_AT_4X);
+});
+
+test('real time 4x: 40 mutants in the shortest approved spawn window', async ({page}) => {
+    let compressed = null;
+    const {label, perf, dawn} = await nightAt4x(page, `waveBudget=40&waveLastTick=${WAVE.minLastTick}`, async () => {
+        await page.waitForFunction((tick) => window.__qa.getState().shiftCycle.elapsedNightTicks >= tick, WAVE.minLastTick, {polling: 50});
+        compressed = await sample(page);
+    });
+    writeResult('speed-4x-compressed-40', {
+        scenario: 'defended, 40 mutants ending on tick 1200, 4x', ...label,
+        workload: {scheduled: 40, aliveNearLastSpawn: compressed.mutants.length, sampledAtTick: compressed.shiftCycle.elapsedNightTicks, buildingsAtDawn: dawn.buildings.length},
+        perf,
+    });
+    expect(compressed.waveProgress).toBe(40);
+    expect(compressed.mutants.length, 'the window must really overlap attackers').toBeGreaterThan(20);
+    expect(perf.ticksPerSecond).toBeGreaterThanOrEqual(MIN_TICKS_PER_SECOND_AT_4X);
 });
 
 test('real time: a defended night of 20 scheduled mutants', async ({page}) => {
