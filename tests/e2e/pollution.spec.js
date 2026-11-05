@@ -1,5 +1,6 @@
 import {test, expect} from '@playwright/test';
 import {boot, body, byAction, clickAction, clickWorld, tapAction, tapWorld} from '../helpers/canvas.js';
+import {hqFlow} from '../helpers/hq.js';
 import {sample} from '../helpers/qa.js';
 
 /**
@@ -30,11 +31,16 @@ async function stepExactly(page, total) {
 
 const hudText = (value, level) => `Pollution ${value}\nThreat Level ${level}`;
 
-function pollutionSuite({pressWorld, pressAction}) {
-    async function start(page) {
-        await boot(page, {scene: 'game', waitForQA: true, hq: false, mutants: false});
+function pollutionSuite(input) {
+    const {pressWorld, pressAction} = input;
+    const {buildHq} = hqFlow(input);
+
+    /** The real flow by default. {hq: false} is only for HQ-less states. */
+    async function start(page, {hq = true} = {}) {
+        await boot(page, {scene: 'game', waitForQA: true, hq, mutants: false});
         await pressAction(page, 'start');
         await expect(body(page)).toHaveAttribute('data-phase', 'started');
+        if (hq) await buildHq(page, await sample(page), {col: 20, row: 3});
         return sample(page);
     }
 
@@ -140,7 +146,8 @@ function pollutionSuite({pressWorld, pressAction}) {
     });
 
     test('toggling buildings changes what the next night emits', async ({page}) => {
-        const state = await start(page);
+        // Stays HQ-less: it asserts blackout, which cannot happen while HQ generates.
+        const state = await start(page, {hq: false});
         await poweredBase(page, state);
         const [plant, factory] = (await sample(page)).buildings;
 
@@ -176,7 +183,7 @@ function pollutionSuite({pressWorld, pressAction}) {
     test('a toggle during Night counts: emissions use the end-of-night state', async ({page}) => {
         const state = await start(page);
         await poweredBase(page, state);
-        const factory = (await sample(page)).buildings[1];
+        const factory = (await sample(page)).buildings.find((b) => b.type === 'factory');
 
         await nightTo(page, 1800);
         await select(page, state, 10, 8, factory.id);

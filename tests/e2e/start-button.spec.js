@@ -2,7 +2,7 @@ import {test, expect} from '@playwright/test';
 import {boot, body, byAction, clickAction, clickWorld} from '../helpers/canvas.js';
 import {sample} from '../helpers/qa.js';
 
-test('clicking Start on the canvas moves the phase to started', async ({page}) => {
+test('clicking Start on the canvas moves the phase to started', {tag: '@smoke'}, async ({page}) => {
     await boot(page, {scene: 'game', waitForQA: true});
 
     await clickAction(page, 'start');

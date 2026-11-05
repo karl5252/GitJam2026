@@ -31,6 +31,7 @@ const occupantsFrom = (buildings) => buildings.map(({id, col, row, width, height
 
 function placementSuite({pressWorld, pressAction}) {
     async function start(page) {
+        // hq: false: it tests rules on an empty grid; HQ-first is covered by hq.spec.js.
         await boot(page, {scene: 'game', waitForQA: true, hq: false});
         await clickAction(page, 'start');
         await expect(body(page)).toHaveAttribute('data-phase', 'started');

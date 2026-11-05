@@ -1,5 +1,6 @@
 // tests/helpers/canvas.js
-import {expect} from '@playwright/test';
+import {expect, test} from '@playwright/test';
+import {attachBootDiagnostics, watchBoot} from './bootDiagnostics.js';
 
 /**
  * Click a canvas element via its DOM proxy (see src/testShadow/TestProxy.js
@@ -89,11 +90,19 @@ export const body = (page) => page.locator('body');
  * @param {string} [opts.query] - extra query parameters, e.g. 'waveBudget=20'
  */
 export async function boot(page, {path = '/', scene, waitForQA = false, mutants = true, hq = true, query = ''} = {}) {
-    await page.goto(`${path}?testMode${mutants ? '' : '&mutants=off'}${hq ? '' : '&hq=off'}${query ? `&${query}` : ''}`);
-    if (scene) {
-        await expect(body(page)).toHaveAttribute('data-scene', scene, {timeout: 10_000});
-    }
-    if (waitForQA) {
-        await page.waitForFunction(() => typeof window.__qa?.getState === 'function');
+    const watch = watchBoot(page);
+    try {
+        await page.goto(`${path}?testMode${mutants ? '' : '&mutants=off'}${hq ? '' : '&hq=off'}${query ? `&${query}` : ''}`);
+        if (scene) {
+            await expect(body(page)).toHaveAttribute('data-scene', scene, {timeout: 10_000});
+        }
+        if (waitForQA) {
+            await page.waitForFunction(() => typeof window.__qa?.getState === 'function');
+        }
+    } catch (error) {
+        await attachBootDiagnostics({page, watch, error, testInfo: test.info()});
+        throw error;
+    } finally {
+        watch.stop();
     }
 }

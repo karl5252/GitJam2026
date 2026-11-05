@@ -31,7 +31,7 @@ This file provides project context, architectural constraints, and working rules
 
 **Target platforms:** Desktop browsers and mobile browsers in landscape orientation.
 
-**Current status:** TASK 013 (Headquarters, Defeat & Game Over) complete. No next task is approved: only work on tasks the developer explicitly assigns.
+**Current status:** TASK 014 (Efficient Test Execution) complete. No next task is approved: only work on tasks the developer explicitly assigns.
 
 The project was initialized from the Wee Games Starter Kit Basic. The original demo applications have been removed.
 
@@ -113,6 +113,8 @@ npm run build
 npm run preview
 npm run test
 npm run test:e2e
+npm run test:smoke
+npm run test:full
 npm run test:soak
 npm run test:soak:browser
 npx playwright install chromium
@@ -122,7 +124,9 @@ npx playwright install chromium
 - `npm run build`: Production build to `dist/`.
 - `npm run preview`: Preview production build.
 - `npm run test`: Node unit tests.
-- `npm run test:e2e`: Playwright E2E tests. The dev server starts automatically and is reused outside CI.
+- `npm run test:e2e`: Playwright E2E tests, with 3 workers and tracing off by default. The dev server starts automatically and is reused outside CI.
+- `npm run test:smoke`: the 13 tests tagged `@smoke`. It takes about 15 seconds and is for the development inner loop. It never replaces final verification.
+- `npm run test:full`: the full unit suite, then the full regular E2E suite.
 - `npm run test:soak`: Headless combat soak (`tests/soak/domain.soak.js`). Add `-- --quick` for a short subset. Writes `soak-results/domain.json`.
 - `npm run test:soak:browser`: Browser soak (`playwright.soak.config.js`, one worker, own port 5175, no server reuse). Takes a few minutes. Writes `soak-results/browser-*.json`.
 - `npx playwright install chromium`: Install the Chromium browser.
@@ -132,9 +136,10 @@ The soak suites are separate from `npm run test` and `npm run test:e2e`. See `do
 ### Run individual tests
 
 ```bash
-node --test tests/unit/gamePhase.test.js
-npx playwright test tests/e2e/start-button.spec.js
-npx playwright test -g "partial test name"
+npm run test -- hq.test.js
+npm run test:e2e -- tests/e2e/hq.spec.js
+npm run test:e2e -- -g "partial test name"
+npm run test:e2e -- --grep @smoke
 ```
 
 Do not assume a command passed. Execute it and report the actual result.
@@ -519,7 +524,9 @@ Test Shadow functions already no-op outside test mode.
 - Adds `?testMode`
 - Waits for `body[data-scene]`
 - Optionally waits for `window.__qa` when `waitForQA: true`
-- Uses the real HQ-first flow by default. `{hq: false}` adds `?hq=off`, for the ten legacy suites only. New tests must use the real flow, with the helpers in `tests/helpers/hq.js`.
+- Uses the real HQ-first flow by default. New tests must use it, with the helpers in `tests/helpers/hq.js`.
+- `{hq: false}` adds `?hq=off`, a compatibility mode for tests written before HQ existed, or for states real play cannot reach. Each use carries a comment saying why. `power` and `settlement` stay isolated on purpose, because they test BLACKOUT and exact generation, which HQ makes unreachable. `autocannons`, `building-placement`, `economy`, `mutants` and `waves` stay isolated until a justified migration, and one `pollution` test stays isolated because it asserts blackout.
+- Records failure-only diagnostics (`tests/helpers/bootDiagnostics.js`). A failed boot attaches `boot-diagnostics.json` and rethrows the original error. A successful boot adds no output and no waits.
 
 Playwright runs against the normal development server, not a separate test build.
 
@@ -597,6 +604,10 @@ This policy applies to TASK 013 and all future tasks.
 5. Run relevant soak suites only when justified by the changes.
 6. Check for orphaned processes and verify `git diff --check`.
 
+**The smoke suite:**
+
+The `@smoke` tag marks 13 existing tests covering boot, Start, mobile layout, HQ-first construction, placement, power and toggling, nightly settlement, combat, Game Over and restart. Keep it small. Add a tag only for a whole area that is not covered, not to raise a mutation score. Smoke is a fast signal, and it deliberately misses detail, so run it together with the unit suite: `npm run test && npm run test:smoke` takes about 17 seconds. See `docs/performance-baseline.md`.
+
 **When a final gate fails:**
 
 - Diagnose and fix the failure.
@@ -658,11 +669,11 @@ Complete:
 - TASK 012A: Night Wave Director
 - TASK 012B: Combat Soak & Performance Baseline
 - TASK 013: Headquarters, Defeat & Game Over
+- TASK 014: Efficient Test Execution
 
 Later, not yet assigned:
 
 - Repeatable survival loop
-- TASK 014 (reserved): possible improvements to test selection, fixtures and smoke-test tooling
 - Hardening: `Economy` does not bound balances. The constructor accepts unsafe integers and `adjustCredits` validates the delta but not the result, so a balance can pass the safe-integer range and lose precision. `settleNight` prevalidates this for settlement; `Economy` itself is unchanged.
 
 Known balance issues, accepted for now and not final behaviour (see the GDD):

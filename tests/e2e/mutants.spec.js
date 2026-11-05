@@ -47,6 +47,7 @@ async function stepUntilGone(page, id) {
 
 function mutantSuite({pressWorld, pressAction}) {
     async function start(page) {
+        // hq: false: exact layouts and empty-board cases, which cannot exist with HQ.
         await boot(page, {scene: 'game', waitForQA: true, hq: false});
         await pressAction(page, 'start');
         await expect(body(page)).toHaveAttribute('data-phase', 'started');

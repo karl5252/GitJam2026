@@ -41,6 +41,7 @@ const panelText = (r) => [
 
 function settlementSuite({pressWorld, pressAction}) {
     async function start(page) {
+        // hq: false: it tests blackout settlement and exact power figures, so this stays isolated.
         await boot(page, {scene: 'game', waitForQA: true, hq: false, mutants: false});
         await pressAction(page, 'start');
         await expect(body(page)).toHaveAttribute('data-phase', 'started');

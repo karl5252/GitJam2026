@@ -5,7 +5,7 @@ const VIEWPORT = {width: 844, height: 390};
 
 test.use({viewport: VIEWPORT});
 
-test('canvas fits a mobile landscape viewport', async ({page}) => {
+test('canvas fits a mobile landscape viewport', {tag: '@smoke'}, async ({page}) => {
     await boot(page, {scene: 'game'});
 
     const box = await page.locator('canvas').boundingBox();

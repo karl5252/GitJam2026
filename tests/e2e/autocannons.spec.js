@@ -58,6 +58,7 @@ async function stepUntilGone(page, id) {
 
 function autocannonSuite({pressWorld, pressAction}) {
     async function start(page) {
+        // hq: false: unpowered setups rely on a lone cannon having no power, but HQ would power it.
         await boot(page, {scene: 'game', waitForQA: true, hq: false});
         await pressAction(page, 'start');
         await expect(body(page)).toHaveAttribute('data-phase', 'started');

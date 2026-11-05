@@ -17,6 +17,7 @@ const cellCenter = (grid, col, row) => ({
 const hudText = ({credits, ap}) => `Credits: ${credits}   AP: ${ap}`;
 
 async function start(page) {
+    // hq: false: it asserts exact starting state and menu data, without HQ.
     await boot(page, {scene: 'game', waitForQA: true, hq: false});
     await clickAction(page, 'start');
     await expect(body(page)).toHaveAttribute('data-phase', 'started');

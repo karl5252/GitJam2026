@@ -19,7 +19,7 @@ function integratedSuite(input) {
     const {pressAction} = input;
     const {start, buildHq, place, select, nightTo, finishNight, completeNight} = hqFlow(input);
 
-    test('HQ alone powers one Autocannon, which kills the first mutant', async ({page}) => {
+    test('HQ alone powers one Autocannon, which kills the first mutant', {tag: '@smoke'}, async ({page}) => {
         const state = await start(page);
         await buildHq(page, state, HQ);
         await place(page, state, 'autocannon', CANNON);
@@ -35,7 +35,7 @@ function integratedSuite(input) {
         expect(s.buildings.map((b) => b.hp)).toEqual([600, 150]);
     });
 
-    test('HQ cannot run a Factory: LOW POWER stops a cannon until demand is cut', async ({page}) => {
+    test('HQ cannot run a Factory: LOW POWER stops a cannon until demand is cut', {tag: '@smoke'}, async ({page}) => {
         const state = await start(page);
         await buildHq(page, state, HQ);
         await place(page, state, 'autocannon', CANNON);
@@ -57,7 +57,7 @@ function integratedSuite(input) {
         expect(s.mutants[0].hp).toBeLessThan(40);
     });
 
-    test('with a Plant, generation is 120, and settlement and pollution count HQ correctly', async ({page}) => {
+    test('with a Plant, generation is 120, and settlement and pollution count HQ correctly', {tag: '@smoke'}, async ({page}) => {
         const state = await start(page);
         await buildHq(page, state, HQ);
         await place(page, state, 'powerPlant', PLANT);

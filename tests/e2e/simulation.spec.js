@@ -1,5 +1,6 @@
 import {test, expect} from '@playwright/test';
-import {boot, body, clickAction, tapAction} from '../helpers/canvas.js';
+import {boot, body, clickAction, clickWorld, tapAction, tapWorld} from '../helpers/canvas.js';
+import {hqFlow} from '../helpers/hq.js';
 import {sample} from '../helpers/qa.js';
 
 /**
@@ -18,11 +19,16 @@ function expectConsistent(s) {
     expect(s.stepsExecuted).toBe(s.tick); // every tick ran the scene's step callback
 }
 
-function simulationSuite(pressAction) {
+function simulationSuite(input) {
+    const {pressAction} = input;
+    const {buildHq} = hqFlow(input);
+
+    /** The real flow: END DAY needs HQ. The empty schedule keeps ticks free of combat. */
     async function start(page) {
-        await boot(page, {scene: 'game', waitForQA: true, hq: false, mutants: false});
+        await boot(page, {scene: 'game', waitForQA: true, mutants: false});
         await pressAction(page, 'start');
         await expect(body(page)).toHaveAttribute('data-phase', 'started');
+        await buildHq(page, await sample(page), {col: 12, row: 8});
     }
 
     /** Start, then press the real END DAY button: the clock only runs during Night Shift. */
@@ -33,7 +39,7 @@ function simulationSuite(pressAction) {
     }
 
     test('no ticks occur before Start, even when stepped manually', async ({page}) => {
-        await boot(page, {scene: 'game', waitForQA: true, hq: false});
+        await boot(page, {scene: 'game', waitForQA: true});
         await page.waitForTimeout(600);
         expect(await qaSim(page, 'stepTicks', 5)).toBe(0);
         await qaSim(page, 'pause');
@@ -111,7 +117,7 @@ function simulationSuite(pressAction) {
 
 test.describe('desktop', () => {
     test.use({viewport: {width: 1280, height: 720}});
-    simulationSuite(clickAction);
+    simulationSuite({pressWorld: clickWorld, pressAction: clickAction});
 
     test('?seed=N overrides the RNG seed in test mode', async ({page}) => {
         await page.goto('/?testMode&seed=99');
@@ -130,5 +136,5 @@ test.describe('desktop', () => {
 
 test.describe('mobile landscape touch', () => {
     test.use({viewport: {width: 844, height: 390}, hasTouch: true, isMobile: true});
-    simulationSuite(tapAction);
+    simulationSuite({pressWorld: tapWorld, pressAction: tapAction});
 });

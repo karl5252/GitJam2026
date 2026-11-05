@@ -2,7 +2,7 @@ import {test, expect} from '@playwright/test';
 import {boot, body} from '../helpers/canvas.js';
 import {sample} from '../helpers/qa.js';
 
-test('game boots into the game scene in the ready phase with a live QA surface', async ({page}) => {
+test('game boots into the game scene in the ready phase with a live QA surface', {tag: '@smoke'}, async ({page}) => {
     await boot(page, {scene: 'game', waitForQA: true});
 
     await expect(body(page)).toHaveAttribute('data-phase', 'ready');

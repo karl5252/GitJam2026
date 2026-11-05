@@ -10,6 +10,8 @@
     "preview": "vite preview",
     "test": "cd tests/unit && node --test",
     "test:e2e": "playwright test",
+    "test:smoke": "playwright test --grep @smoke",
+    "test:full": "npm run test && npm run test:e2e",
     "test:soak": "node --expose-gc tests/soak/domain.soak.js",
     "test:soak:browser": "playwright test --config playwright.soak.config.js"
   },

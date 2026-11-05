@@ -72,7 +72,7 @@ function hqSuite(input) {
         expect(s.ui.endDayEnabled).toBe(false);
     });
 
-    test('placing HQ is free, unlocks the menu, marks it BUILT and enables END DAY', async ({page}) => {
+    test('placing HQ is free, unlocks the menu, marks it BUILT and enables END DAY', {tag: '@smoke'}, async ({page}) => {
         const state = await start(page);
         await buildHq(page, state, HQ);
         const s = await sample(page);

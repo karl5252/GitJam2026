@@ -122,6 +122,42 @@ That is about 2 ms per tick at 100 times the real cap. It does not justify optim
 
 The recorded numbers above predate HQ, and the scenarios behind them use the legacy HQ-less setup, so they stay comparable. The domain soak adds `legal-hq-survives-20-nights` and `legal-hq-undefended-defeat` on the real HQ rules, and the browser soak adds repeated defeat and restart cycles, with hard checks on objects and listeners.
 
+## Test execution (TASK 014)
+
+Measured on 5 November 2026, wall clock, including dev server startup. Regular E2E runs 199 tests at 3 workers with tracing off.
+
+| Workflow | Tests | Wall time |
+|---|---|---|
+| Unit | 418 | About 2 s |
+| Smoke, first run of a session | 13 | 27.7 s (includes a cold Vite start) |
+| Smoke, repeat runs | 13 | 14.2 s |
+| Unit + smoke | 431 | 17.0 s |
+| Full regular E2E | 199 | 175.5 s before TASK 014, 180.4 s after |
+| `npm run test:full` | 617 | 177.6 s |
+
+Migrated tests now build HQ first, which accounts for the few extra seconds in full E2E. Unit + smoke is about 10 times faster than full E2E.
+
+### What smoke catches
+
+24 mutations across all game systems, run against smoke alone:
+
+- **Caught (15):** HQ lock, HQ supply, HQ menu refresh, purchases not charged, low power stopping nothing, toggle ignored, income ignored, pollution not emitted, AP not restored, night never ending, turrets never firing, mutants never attacking, HQ loss not defeating, restart doing nothing, overlay not shown.
+- **Missed (9):** END DAY gate, grid bounds, upkeep, turret cooldown off by one, collision, dawn cleanup, wave Threat term, Defense Response, later mutants acting after defeat.
+
+The unit suite caught all 9 misses, so unit + smoke caught all 24. These are targeted mutations, not a coverage measure. Smoke was deliberately not tuned to raise this score, and it never replaces full regression.
+
+### Boot failures
+
+Failure-only diagnostics now attach `boot-diagnostics.json` to any failed `boot()`. Forced failures confirmed that a blocked script, a throwing script and a hung request each produce a distinct report, and that the original error is kept.
+
+| Observed | Symptom | Context |
+|---|---|---|
+| TASK 012B stability run | `data-scene` empty after 10 s | Around the time the PC slept, tracing on |
+| TASK 013 first full run | `data-scene` empty after 10 s | No sleep, before any HQ code |
+| TASK 014 first full run | `page.goto: net::ERR_NO_BUFFER_SPACE` | Before any game code |
+
+No failure reproduced in 1,189 stress boots (slowest 821 ms) or 325 stress test runs. `TIME_WAIT` sockets peaked at 862 of 16,384 ports during a full run, so port exhaustion is not the cause. The third failure shows the browser's network layer can fail on this machine. Whether the first two share that cause is unproven, although one failed module request does produce the same `data-scene` symptom. The root cause is unknown.
+
 ## Known gaps
 
 - One machine and one run. Rerun before treating any number as a trend.

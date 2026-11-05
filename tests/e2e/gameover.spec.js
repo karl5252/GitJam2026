@@ -86,7 +86,7 @@ function gameOverSuite(input) {
         expect(s.highlight.visible).toBe(false);
     });
 
-    test('restart returns to the title, and the next run starts clean', async ({page}) => {
+    test('restart returns to the title, and the next run starts clean', {tag: '@smoke'}, async ({page}) => {
         await defeatedRun(page);
         await pressAction(page, 'restart');
         await expect(body(page)).toHaveAttribute('data-phase', 'ready');

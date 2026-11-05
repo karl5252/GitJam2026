@@ -32,6 +32,7 @@ async function stepExactly(page, total) {
 
 function waveSuite({pressWorld, pressAction}) {
     async function start(page, options = {}) {
+        // hq: false: exact budgets and layouts; integrated waves are covered by hq-integrated.spec.js.
         await boot(page, {scene: 'game', waitForQA: true, hq: false, ...options});
         await pressAction(page, 'start');
         await expect(body(page)).toHaveAttribute('data-phase', 'started');

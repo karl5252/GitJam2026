@@ -1,5 +1,6 @@
 import {test, expect} from '@playwright/test';
 import {boot, body, byAction, clickAction, clickWorld, tapAction, tapWorld} from '../helpers/canvas.js';
+import {hqFlow} from '../helpers/hq.js';
 import {sample} from '../helpers/qa.js';
 
 /**
@@ -29,11 +30,16 @@ async function stepExactly(page, total) {
     }, total);
 }
 
-function shiftSuite({pressWorld, pressAction}) {
+function shiftSuite(input) {
+    const {pressWorld, pressAction} = input;
+    const {buildHq} = hqFlow(input);
+
+    /** The real flow, with HQ out of the way of the cells these tests press. */
     async function start(page) {
-        await boot(page, {scene: 'game', waitForQA: true, hq: false, mutants: false});
+        await boot(page, {scene: 'game', waitForQA: true, mutants: false});
         await pressAction(page, 'start');
         await expect(body(page)).toHaveAttribute('data-phase', 'started');
+        await buildHq(page, await sample(page), {col: 20, row: 3});
         return sample(page);
     }
 
@@ -95,8 +101,8 @@ function shiftSuite({pressWorld, pressAction}) {
         await pressWorld(page, cellCenter(state.grid, 5, 5), state);
         await pressWorld(page, cellCenter(state.grid, 12, 8), state);
         const after = await sample(page);
-        expect(after.buildings).toEqual([]);
-        expect(after.grid.occupants).toEqual([]);
+        expect(after.buildings.map((b) => b.type)).toEqual(['hq']); // only HQ, placed by day
+        expect(after.grid.occupants.map((o) => o.id)).toEqual(['hq-1']);
         expect(after.resources).toEqual(before.resources);
         expect(after.hudView).toEqual(before.hudView);
         expect(after.placement.selectedType).toBeNull();
@@ -106,7 +112,7 @@ function shiftSuite({pressWorld, pressAction}) {
         const state = await start(page);
         await pressAction(page, 'build-factory');
         await pressWorld(page, cellCenter(state.grid, 10, 8), state);
-        await expect.poll(async () => (await sample(page)).buildings.length).toBe(1);
+        await expect.poll(async () => (await sample(page)).buildings.length).toBe(2);
         const day1 = await sample(page);
         expect(day1.resources).toEqual({credits: 600, ap: 4});
 
@@ -122,8 +128,8 @@ function shiftSuite({pressWorld, pressAction}) {
         expect(await qaSim(page, 'stepTicks', 1)).toBe(1);
         s = await expectDayUi(page, 2);
         expect(s.simulation).toMatchObject({tick: 3600, stepsExecuted: 3600, paused: true});
-        // Credits carry over. Since TASK 009 a Factory needs power: without a
-        // Power Plant it is in blackout and earns nothing, so Credits stay 600.
+        // Credits carry over. A Factory needs 40 power and HQ only gives 20, so
+        // without a Power Plant it earns nothing and Credits stay 600.
         expect(s.resources).toEqual({credits: 600, ap: 5});
         expect(s.hudView.text).toBe('Credits: 600   AP: 5');
         expect(s.buildings).toEqual(day1.buildings);
@@ -153,7 +159,7 @@ function shiftSuite({pressWorld, pressAction}) {
 
         await pressAction(page, 'build-outpost');
         await pressWorld(page, cellCenter(state.grid, 4, 4), state);
-        await expect.poll(async () => (await sample(page)).buildings.length).toBe(1);
+        await expect.poll(async () => (await sample(page)).buildings.length).toBe(2);
         expect((await sample(page)).resources).toEqual({credits: 900, ap: 4});
     });
 }
