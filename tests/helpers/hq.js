@@ -41,10 +41,17 @@ export function hqFlow({pressWorld, pressAction}) {
         await expect.poll(async () => (await sample(page)).menuState.hq).toBe('built');
     }
 
+    /** Real presses. One that would cause LOW_POWER asks first, so it gets the player's second press. */
     async function place(page, state, type, cell) {
         const count = (await sample(page)).buildings.length;
+        const at = cellCenter(state.grid, cell);
         await pressAction(page, `build-${type}`);
-        await pressWorld(page, cellCenter(state.grid, cell), state);
+        await pressWorld(page, at, state);
+        await expect.poll(async () => {
+            const s = await sample(page);
+            return s.buildings.length > count || s.powerWarning !== null;
+        }).toBe(true);
+        if ((await sample(page)).powerWarning) await pressWorld(page, at, state);
         await expect.poll(async () => (await sample(page)).buildings.length).toBe(count + 1);
         await pressAction(page, 'cancel-placement');
     }

@@ -31,6 +31,10 @@ export const HQ_TYPE = 'hq';
 export const WALL_TYPE = 'wall';
 export const BARRACKS_TYPE = 'barracks';
 
+/** A Barracks is rifles unless it has been refitted, and only then does its record say so. */
+export const BarracksRole = Object.freeze({RIFLE: 'rifle', ROCKET: 'rocket'});
+export const REFIT_COST = Object.freeze({credits: 200, ap: 1});
+
 const NO_OPERATIONS = Object.freeze({income: 0, upkeep: 0});
 const NO_POWER = Object.freeze({supply: 0, demand: 0});
 
@@ -108,6 +112,14 @@ export const BUILDING_TYPES = Object.freeze({
         power: Object.freeze({supply: 0, demand: 20}),
         pollutionPerNight: 0,
         maxHp: 150,
+    }),
+    siegeCannon: Object.freeze({
+        id: 'siegeCannon', name: 'Siege Cannon', width: 2, height: 2,
+        cost: Object.freeze({credits: 600, ap: 1}),
+        operations: NO_OPERATIONS,
+        power: Object.freeze({supply: 0, demand: 20}),
+        pollutionPerNight: 0,
+        maxHp: 250,
     }),
     barracks: Object.freeze({
         id: BARRACKS_TYPE, name: 'Barracks', width: 3, height: 3,

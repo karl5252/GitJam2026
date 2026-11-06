@@ -219,9 +219,9 @@ test('large waves are quiet early and strongest late', () => {
 
 test('a plan reports every term of the formula', () => {
     assert.deepEqual(nightPlan({day: 5, pollution: 60, buildings: cannons(3)}), {
-        day: 5, threatLevel: 3, autocannons: 3, nightBudget: 3, pollutionBudget: 4, defenseResponse: 1,
+        day: 5, threatLevel: 3, autocannons: 3, siegeCannons: 0, nightBudget: 3, pollutionBudget: 4, defenseResponse: 1,
         accelerationBudget: 0, budget: 8, lastSpawnTick: 2700, schedule: [...waveSchedule(8)],
-        spitters: 1, spitterSlots: [4],
+        spitters: 1, spitterSlots: [4], brutes: 0, bruteSlots: [], absorbedSlots: [],
     });
 });
 

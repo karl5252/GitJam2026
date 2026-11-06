@@ -1353,3 +1353,121 @@ test('a layout cannot smuggle in a fifth Barracks', () => {
     snapshot.buildings.push({type: 'barracks', col: 4, row: 10, enabled: true, flag: null});
     assert.equal(loadLayout(fresh(), snapshot).reason, BARRACKS_LIMIT);
 });
+
+// ---- RESET FLAG -------------------------------------------------------------
+
+test('clearing a flag brings the post back to the exit, by Day, for free', () => {
+    const {w, id} = barracksWorld();
+    flag(w, id, 20, 12);
+    const revision = w.placement.revision;
+    const {credits, ap} = w.economy.snapshot();
+    assert.deepEqual(w.placement.clearFlag(id), {ok: true});
+    const [post] = w.infantry.posts();
+    assert.deepEqual([post.flag, post.post, post.blocked], [null, {col: 14, row: 8}, false]);
+    assert.equal(w.placement.revision, revision + 1);
+    assert.deepEqual(w.economy.snapshot(), {credits, ap});
+});
+
+test('clearing an empty flag changes nothing, and an unknown Barracks is refused', () => {
+    const {w, id} = barracksWorld();
+    const revision = w.placement.revision;
+    assert.deepEqual(w.placement.clearFlag(id), {ok: true});
+    assert.equal(w.placement.revision, revision);
+    assert.equal(w.placement.clearFlag('barracks-999').ok, false);
+    const hq = w.placement.buildings().find((b) => b.type === 'hq').id;
+    assert.equal(w.placement.clearFlag(hq).ok, false, 'only a Barracks has a flag');
+});
+
+test('it clears only the selected Barracks', () => {
+    const w = world();
+    const first = build(w, 'barracks', 16, 8);
+    road(w, [[14, 11], [14, 12]]);
+    const second = build(w, 'barracks', 16, 12);
+    flag(w, first, 20, 12);
+    flag(w, second, 7, 3);
+    w.placement.clearFlag(first);
+    const byId = new Map(w.placement.barracks().map((b) => [b.id, b]));
+    assert.equal(byId.get(first).flag, null);
+    assert.deepEqual(byId.get(second).flag, {col: 7, row: 3});
+});
+
+test('at Night soldiers walk home on foot, with no teleport, healing or new soldiers', () => {
+    const {w, id} = barracksWorld();
+    flag(w, id, 8, 3);
+    w.cycle.endDay();
+    until(w, () => soldiers(w).length === INFANTRY.squadSize && soldiers(w).every(({col, row}) => col === 8 && row === 3));
+    w.infantry.damageSoldier(soldiers(w)[0].id, 10);
+    const before = soldiers(w);
+    assert.equal(w.placement.clearFlag(id).ok, true);
+    let furthest = 0;
+    until(w, () => {
+        const now = soldiers(w);
+        now.forEach((s, i) => { furthest = Math.max(furthest, Math.abs(s.x - before[i].x), Math.abs(s.y - before[i].y)); });
+        for (const s of now) assert.ok(Math.abs(s.x - center(w, s.col, s.row).x) <= 32, 'never a jump');
+        return now.every(({col, row}) => col === 14 && row === 8);
+    });
+    assert.ok(furthest >= 150, 'they walked the whole way');
+    assert.deepEqual(ids(soldiers(w)), ids(before), 'the same soldiers');
+    assert.equal(soldiers(w)[0].hp, INFANTRY.maxHp - 10, 'still hurt');
+    assert.equal(w.infantry.snapshot().totals.deployed, INFANTRY.squadSize);
+});
+
+test('a recall moves soldiers one tile at a time, finishing the edge they are on', () => {
+    const {w, id} = barracksWorld();
+    flag(w, id, 8, 3);
+    w.cycle.endDay();
+    until(w, () => soldiers(w).length > 0 && soldiers(w)[0].next !== null);
+    const {x, y} = soldiers(w)[0];
+    w.placement.clearFlag(id);
+    step(w, 1);
+    const [soldier] = soldiers(w);
+    assert.equal(Math.abs(soldier.x - x) + Math.abs(soldier.y - y), INFANTRY.speed);
+});
+
+test('a blocked flag can be reset', () => {
+    const {w, id} = barracksWorld();
+    flag(w, id, 20, 12);
+    for (const [col, row] of [[19, 12], [21, 12], [20, 11], [20, 13]]) build(w, 'wall', col, row);
+    assert.equal(w.infantry.posts()[0].blocked, true);
+    w.placement.clearFlag(id);
+    assert.deepEqual([w.infantry.posts()[0].flag, w.infantry.posts()[0].blocked], [null, false]);
+});
+
+test('a reset always works, even onto a tile another squad is holding', () => {
+    const w = world();
+    const first = build(w, 'barracks', 16, 8);
+    road(w, [[14, 11], [14, 12]]);
+    const second = build(w, 'barracks', 16, 12);
+    flag(w, first, 20, 12);
+    flag(w, second, 14, 8); // the first squad's exit, free while it has a flag
+    assert.equal(w.placement.clearFlag(first).ok, true);
+    assert.deepEqual(w.infantry.posts().map(({post}) => post), [{col: 14, row: 8}, {col: 14, row: 8}]);
+    w.cycle.endDay();
+    step(w, 300);
+    assert.equal(soldiers(w).length, 2 * INFANTRY.squadSize);
+});
+
+test('a reset layout exports flag: null and loads back, at version 2', () => {
+    const {w, id} = barracksWorld();
+    flag(w, id, 20, 12);
+    w.placement.clearFlag(id);
+    const layout = exportLayout(w);
+    assert.equal(layout.version, LAYOUT_VERSION_BARRACKS);
+    assert.equal(layout.buildings.find((b) => b.type === 'barracks').flag, null);
+    const fresh = createWorld({resources: FUNDS, requireHq: true, roads: true});
+    assert.equal(loadLayout(fresh, layout).ok, true);
+    assert.deepEqual(exportLayout(fresh), layout);
+});
+
+test('a recall repeats exactly', () => {
+    const run = () => {
+        const {w, id} = barracksWorld({seed: 98, schedule: [300, 500, 700]});
+        flag(w, id, 8, 3);
+        w.cycle.endDay();
+        step(w, 400);
+        w.placement.clearFlag(id);
+        step(w, 800);
+        return digestOf(canonicalState(worldState(w)));
+    };
+    assert.equal(run(), run());
+});

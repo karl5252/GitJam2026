@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import {calculatePower, PowerStatus} from '../../src/core/power.js';
+import {calculatePower, PowerStatus, causesLowPower} from '../../src/core/power.js';
 import {Grid} from '../../src/core/grid.js';
 import {Economy} from '../../src/core/economy.js';
 import {SimulationClock} from '../../src/core/simulationClock.js';
@@ -250,4 +250,29 @@ test('placement stays atomic: rejected placements never add records or flags', (
     assert.equal(w.placement.placeAt({col: 0, row: 0}).reason, 'out-of-bounds');
     assert.equal(w.placement.placeAt({col: 15, row: 10}).reason, 'insufficient-credits');
     assert.equal(JSON.stringify({b: w.placement.buildings(), g: w.grid.snapshot(), e: w.economy.snapshot()}), before);
+});
+
+// ---- Warning before a purchase ----------------------------------------------
+
+const types = (...list) => list.map((type, i) => ({id: `${type}-${i}`, type}));
+
+test('only a move from NORMAL to LOW_POWER counts', () => {
+    assert.equal(causesLowPower(types('hq'), 'factory'), true, '20 against 40');
+    assert.equal(causesLowPower(types('hq'), 'autocannon'), false, 'exactly enough');
+    assert.equal(causesLowPower(types('hq', 'autocannon'), 'autocannon'), true);
+    assert.equal(causesLowPower(types('hq'), 'wall'), false, 'no demand');
+    assert.equal(causesLowPower(types('hq'), 'powerPlant'), false, 'supply');
+});
+
+test('it stays quiet when power is already down, or nothing generates at all', () => {
+    assert.equal(causesLowPower(types('hq', 'factory'), 'autocannon'), false, 'already LOW_POWER');
+    assert.equal(causesLowPower([], 'factory'), false, 'that would be BLACKOUT, not LOW_POWER');
+});
+
+test('it counts what is switched on, and changes nothing', () => {
+    const list = [...types('hq', 'powerPlant', 'factory', 'factory'), {id: 'x', type: 'factory', enabled: false}];
+    assert.equal(causesLowPower(list, 'factory'), false, 'with the switched-off one ignored, 120 against 120');
+    list.at(-1).enabled = true;
+    assert.equal(causesLowPower(list, 'autocannon'), true, '120 against 140');
+    assert.equal(list.length, 5);
 });

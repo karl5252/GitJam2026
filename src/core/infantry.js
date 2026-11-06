@@ -30,10 +30,20 @@
  * walls and buildings, like Autocannon fire. It picks targets near its POST, so
  * it defends a place. Within leashTiles of the post it stops to fight, or closes
  * on a target that is out of range; beyond that it keeps walking home.
+ *
+ * A Barracks refitted for rockets musters a squad of two, who do all of this the
+ * same way with a different weapon. They pick the nearest Brute they can, over
+ * anything else and any lock. A rocket is a real projectile: it flies over walls to
+ * the point its target stood on and hits only a mutant whose body covers that point
+ * when it lands, so a slow Brute is hit and a walking mutant can be missed. It
+ * outlives its soldier and goes at dawn. Rifle soldiers have no role on their
+ * records, so a base without rockets is exactly what it was.
  */
+import {BarracksRole} from './buildingTypes.js';
 import {calculatePower} from './power.js';
 import {barracksExit} from './roads.js';
 import {Shift} from './shiftCycle.js';
+import {bodyRadius, flightTicks, isBrute, mutantAt} from './shots.js';
 import {isGate, nextStep, openNeighbors, resolvePost, walkMap} from './walkField.js';
 
 export const INFANTRY = Object.freeze({
@@ -51,6 +61,18 @@ export const INFANTRY = Object.freeze({
     bodySize: 12, // px, what a mutant has to reach
 });
 
+/** What a rocket squad changes. Everything else is INFANTRY. */
+export const ROCKET = Object.freeze({
+    role: BarracksRole.ROCKET,
+    squadSize: 2,
+    weaponRange: 128, // px, from the soldier
+    damage: 120,
+    cooldownTicks: 480,
+    rocketSpeed: 5, // px per tick along the longer axis
+});
+
+const weaponOf = ({role}) => (role === ROCKET.role ? ROCKET : INFANTRY);
+
 /** Where each squad member stands on its post, in px from the tile centre. */
 const SLOTS = Object.freeze([[-8, -8], [8, -8], [-8, 8], [8, 8]]);
 
@@ -67,12 +89,13 @@ const emptyTally = () => ({deployed: 0, lost: 0, shots: 0, kills: 0});
  * order. A mutant in weapon range is always nearer than one that is not.
  * @param {{x, y}} soldier
  * @param {{x, y}} post the centre of the post
+ * @param {number} [weaponRange]
  * @returns {object|null}
  */
-export function selectInfantryTarget(soldier, post, mutants) {
+export function selectInfantryTarget(soldier, post, mutants, weaponRange = INFANTRY.weaponRange) {
     let best = null;
     for (const mutant of mutants) {
-        if (squaredDistance(soldier, mutant) > INFANTRY.weaponRange ** 2
+        if (squaredDistance(soldier, mutant) > weaponRange ** 2
             && squaredDistance(post, mutant) > INFANTRY.defendRadius ** 2) continue;
         if (!best || squaredDistance(soldier, mutant) < squaredDistance(soldier, best)) best = mutant;
     }
@@ -87,6 +110,8 @@ export class Infantry {
     #mutants;
     #squads = new Map(); // Barracks id -> squad, Night only
     #soldiers = []; // creation order, Night only
+    #rockets = []; // in firing order, Night only
+    #nextRocketId = 1;
     #map = null;
     #revision = -1;
     #nextId = 1;
@@ -111,7 +136,10 @@ export class Infantry {
 
     /**
      * One simulation tick.
-     * @returns {{shots: Array<{soldierId, mutantId, damage, hp, killed, fromX, fromY, x, y}>}}
+     * A rocket appears in `shots` when it hits, marked `rocket`, and in `impacts`,
+     * which is there only on a tick when one landed.
+     * @returns {{shots: Array<{soldierId, mutantId, damage, hp, killed, fromX, fromY, x, y, rocket?: true}>,
+     *            impacts?: Array<{x, y, mutantId: string|null}>}}
      */
     step() {
         const shift = this.#cycle.shift;
@@ -121,15 +149,22 @@ export class Infantry {
             return NO_EFFECTS;
         }
         const barracks = this.#placement.barracks();
-        if (barracks.length === 0 && this.#squads.size === 0) return NO_EFFECTS;
+        if (barracks.length === 0 && this.#squads.size === 0 && this.#rockets.length === 0) return NO_EFFECTS;
+        const shots = [];
+        const impacts = this.#landRockets(shots);
         this.#sync(barracks);
         this.#refreshNavigation(barracks);
 
-        const shots = [];
         this.#living = this.#mutants.snapshot();
         for (const soldier of this.#soldiers) this.#act(soldier, shots);
         this.#deploy();
+        if (impacts.length) return {shots, impacts};
         return shots.length ? {shots} : NO_EFFECTS;
+    }
+
+    /** Detached rockets in flight, in firing order. */
+    rockets() {
+        return this.#rockets.map((rocket) => ({...rocket}));
     }
 
     /**
@@ -198,8 +233,8 @@ export class Infantry {
     snapshot() {
         return {
             posts: this.posts(),
-            squads: [...this.#squads.values()].map(({id, pending, deployTimer, replaceTimer, orphaned, post, blocked}) => ({
-                id, pending, deployTimer, replaceTimer, orphaned, post: {...post}, blocked,
+            squads: [...this.#squads.values()].map(({id, pending, deployTimer, replaceTimer, orphaned, post, blocked, role}) => ({
+                id, pending, deployTimer, replaceTimer, orphaned, post: {...post}, blocked, ...(role ? {role} : {}),
                 living: this.#soldiers.filter((soldier) => soldier.barracksId === id).length,
             })),
             soldiers: this.soldiers(),
@@ -209,9 +244,10 @@ export class Infantry {
     }
 
     #standDown() {
-        if (this.#squads.size === 0) return;
+        if (this.#squads.size === 0 && this.#rockets.length === 0) return;
         this.#squads.clear();
         this.#soldiers.length = 0;
+        this.#rockets.length = 0;
         this.#living = [];
         this.#night = emptyTally();
     }
@@ -226,13 +262,15 @@ export class Infantry {
         }
         for (const building of barracks) {
             if (this.#squads.has(building.id)) continue;
+            const {squadSize} = weaponOf(building);
             this.#squads.set(building.id, {
                 id: building.id,
+                role: building.role ?? null,
                 exit: barracksExit(building),
-                pending: INFANTRY.squadSize,
+                pending: squadSize,
                 deployTimer: 1,
                 replaceTimer: 0,
-                slots: new Array(INFANTRY.squadSize).fill(false),
+                slots: new Array(squadSize).fill(false),
                 orphaned: false,
                 post: null,
                 blocked: false,
@@ -269,21 +307,27 @@ export class Infantry {
     }
 
     #inWeaponRange(soldier, mutant) {
-        return squaredDistance(soldier, mutant) <= INFANTRY.weaponRange ** 2;
+        return squaredDistance(soldier, mutant) <= weaponOf(soldier).weaponRange ** 2;
     }
 
     /** Keep a lock until the target dies or leaves both the gun and the defended area. */
     #aim(soldier, squad) {
         const post = this.#centerOf(squad.post);
+        const {weaponRange} = weaponOf(soldier);
+        const heavy = soldier.role ? selectInfantryTarget(soldier, post, this.#living.filter(isBrute), weaponRange) : null;
         const locked = this.#living.find((mutant) => mutant.id === soldier.targetId);
         const keep = locked && (this.#inWeaponRange(soldier, locked) || squaredDistance(post, locked) <= INFANTRY.releaseRadius ** 2);
-        const target = keep ? locked : selectInfantryTarget(soldier, post, this.#living);
+        const target = heavy ?? (keep ? locked : selectInfantryTarget(soldier, post, this.#living, weaponRange));
         soldier.targetId = target ? target.id : null;
         return target;
     }
 
     /** @returns {boolean} whether the target died */
     #fire(soldier, target, shots) {
+        if (soldier.role) {
+            this.#launch(soldier, target);
+            return false;
+        }
         soldier.cooldown = INFANTRY.cooldownTicks;
         const result = this.#mutants.damageMutant(target.id, INFANTRY.damage);
         if (!result.ok) throw new Error(`${soldier.id} could not damage ${target.id}: ${result.reason}`);
@@ -300,6 +344,37 @@ export class Infantry {
             soldier.targetId = null;
         }
         return result.killed;
+    }
+
+    /** Aimed at where the target stands now. What it hits is settled when it lands. */
+    #launch(soldier, {x, y}) {
+        soldier.cooldown = ROCKET.cooldownTicks;
+        const ticks = flightTicks(soldier, {x, y}, ROCKET.rocketSpeed);
+        this.#rockets.push({
+            id: `rocket-${this.#nextRocketId++}`, soldierId: soldier.id, fromX: soldier.x, fromY: soldier.y, x, y, flightTicks: ticks, ticksLeft: ticks,
+        });
+        for (const tally of [this.#night, this.#totals]) tally.shots++;
+    }
+
+    /** Oldest first, each seeing what the one before it left. */
+    #landRockets(shots) {
+        if (this.#rockets.length === 0) return [];
+        for (const rocket of this.#rockets) rocket.ticksLeft--;
+        const landing = this.#rockets.filter((rocket) => rocket.ticksLeft === 0);
+        if (landing.length === 0) return [];
+        this.#rockets = this.#rockets.filter((rocket) => rocket.ticksLeft > 0);
+        return landing.map((rocket) => {
+            const {soldierId, fromX, fromY, x, y} = rocket;
+            const victim = mutantAt(rocket, this.#mutants.snapshot(), bodyRadius);
+            if (!victim) return {x, y, mutantId: null};
+            const result = this.#mutants.damageMutant(victim.id, ROCKET.damage);
+            if (!result.ok) throw new Error(`A rocket could not damage ${victim.id}: ${result.reason}`);
+            if (result.killed) for (const tally of [this.#night, this.#totals]) tally.kills++;
+            shots.push({
+                soldierId, mutantId: victim.id, damage: ROCKET.damage, hp: result.hp, killed: result.killed, fromX, fromY, x, y, rocket: true,
+            });
+            return {x, y, mutantId: victim.id};
+        });
     }
 
     #move(soldier, squad, target) {
@@ -393,7 +468,7 @@ export class Infantry {
         for (const squad of this.#squads.values()) {
             if (squad.orphaned) continue;
             const living = squad.slots.filter(Boolean).length;
-            if (squad.pending === 0 && living === INFANTRY.squadSize) continue;
+            if (squad.pending === 0 && living === squad.slots.length) continue;
             powered ??= this.#poweredIds();
             if (!powered.has(squad.id)) continue;
             if (squad.pending > 0) {
@@ -428,6 +503,7 @@ export class Infantry {
             targetId: null,
             next: null,
             held: null,
+            ...(squad.role ? {role: squad.role} : {}),
         });
         for (const tally of [this.#night, this.#totals]) tally.deployed++;
     }

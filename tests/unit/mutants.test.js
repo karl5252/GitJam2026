@@ -110,7 +110,7 @@ const building = (id, type, col, row, width = 1, height = 1) => ({id, type, col,
 
 test('graybox values are the approved ones', () => {
     assert.deepEqual(MUTANT, {maxHp: 40, speed: 0.5, attackRange: 8, attackDamage: 5, attackCooldownTicks: 60});
-    assert.deepEqual(TARGET_BIAS, {hq: 256, powerPlant: 256, factory: 128, autocannon: 64, barracks: 64, outpost: 0});
+    assert.deepEqual(TARGET_BIAS, {hq: 256, powerPlant: 256, factory: 128, autocannon: 64, siegeCannon: 64, barracks: 64, outpost: 0});
     assert.ok(Object.isFrozen(MUTANT) && Object.isFrozen(TARGET_BIAS));
 });
 

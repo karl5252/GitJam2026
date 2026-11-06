@@ -122,7 +122,7 @@ function makeFlagPlayer(w, barracks, home, tally) {
 }
 
 function run({make, active = false}, seed, spitters) {
-    const {w, barracks, home} = make({seed, spitters});
+    const {w, barracks, home} = make({seed, spitters, brutes: spitters}); // "ordinary" stays ordinary past Night 30
     const problems = [];
     const tally = {
         spitters: 0, killedArmed: 0, killedByCannon: 0, killedBySquad: 0, shellsLanded: 0, shellDamage: 0, meleeDamage: 0,

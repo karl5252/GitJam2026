@@ -92,9 +92,9 @@ function waveSuite({pressWorld, pressAction}) {
         await nightTo(page, 599);
         s = await sample(page);
         expect(s.wave).toEqual({
-            day: 1, threatLevel: 1, autocannons: 0, nightBudget: 1, pollutionBudget: 0, defenseResponse: 0,
+            day: 1, threatLevel: 1, autocannons: 0, siegeCannons: 0, nightBudget: 1, pollutionBudget: 0, defenseResponse: 0,
             accelerationBudget: 0, lastSpawnTick: 2700,
-            budget: 1, schedule: [600], spitters: 0, spitterSlots: [],
+            budget: 1, schedule: [600], spitters: 0, spitterSlots: [], brutes: 0, bruteSlots: [], absorbedSlots: [],
         });
         expect(s.waveProgress).toBe(0);
         expect(s.waveView).toEqual({visible: true, text: 'Mutants 0 | Wave 0/1'});
@@ -163,8 +163,8 @@ function waveSuite({pressWorld, pressAction}) {
         await nightTo(page, 599);
         let s = await sample(page);
         expect(s.wave).toEqual({
-            day: 3, threatLevel: 2, autocannons: 0, nightBudget: 2, pollutionBudget: 2, defenseResponse: 0,
-            accelerationBudget: 0, budget: 4, lastSpawnTick: 2700, schedule: [600, 1766, 2466, 2700], spitters: 0, spitterSlots: [],
+            day: 3, threatLevel: 2, autocannons: 0, siegeCannons: 0, nightBudget: 2, pollutionBudget: 2, defenseResponse: 0,
+            accelerationBudget: 0, budget: 4, lastSpawnTick: 2700, schedule: [600, 1766, 2466, 2700], spitters: 0, spitterSlots: [], brutes: 0, bruteSlots: [], absorbedSlots: [],
         });
 
         for (const [tick, count] of [[600, 1], [1765, 1], [1766, 2], [2465, 2], [2466, 3], [2700, 4]]) {

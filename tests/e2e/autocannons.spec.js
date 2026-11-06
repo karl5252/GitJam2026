@@ -281,7 +281,7 @@ function autocannonSuite({pressWorld, pressAction}) {
         await finishNight(page);
         const s = await sample(page);
         expect(s.settlement).toMatchObject({gross: 0, upkeep: 0, net: 0, pollution: {emitted: 12}});
-        expect(s.settlement.counts).toEqual({hq: 0, outpost: 0, factory: 0, powerPlant: 1, autocannon: 1, barracks: 0, wall: 0, gateVertical: 0, gateHorizontal: 0});
+        expect(s.settlement.counts).toEqual({hq: 0, outpost: 0, factory: 0, powerPlant: 1, autocannon: 1, siegeCannon: 0, barracks: 0, wall: 0, gateVertical: 0, gateHorizontal: 0});
         expect(s.resources).toEqual({credits: START - 750, ap: 5});
     });
 

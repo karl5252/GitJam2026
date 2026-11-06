@@ -1,7 +1,20 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import {parseStressSchedule, parseStressSpitters} from '../../src/testShadow/stressParams.js';
-import {spitterSlots, waveSchedule} from '../../src/core/waves.js';
+import {parseStressBrutes, parseStressSchedule, parseStressSpitters} from '../../src/testShadow/stressParams.js';
+import {bruteSlots, spitterSlots, waveSchedule} from '../../src/core/waves.js';
+
+test('waveBrutes uses the real slots after any Spitters, and means nothing alone or when it does not fit', () => {
+    const none = {bruteSlots: [], absorbedSlots: []};
+    const plain = bruteSlots(12, [], 2);
+    assert.deepEqual(parseStressBrutes('?waveBudget=12&waveBrutes=2'), {bruteSlots: [...plain.bruteSlots], absorbedSlots: [...plain.absorbedSlots]});
+    const mixed = bruteSlots(12, spitterSlots(12, 3), 2);
+    assert.deepEqual(parseStressBrutes('?waveBudget=12&waveSpitters=3&waveBrutes=2'), {bruteSlots: [...mixed.bruteSlots], absorbedSlots: [...mixed.absorbedSlots]});
+    assert.deepEqual(parseStressBrutes('?waveBrutes=2'), none);
+    assert.deepEqual(parseStressBrutes('?waveBudget=12'), none);
+    assert.deepEqual(parseStressBrutes('?waveBudget=2&waveBrutes=1'), none, 'three slots do not fit');
+    assert.deepEqual(parseStressBrutes('?stressRamp=10&waveBudget=12&waveBrutes=1'), none);
+    assert.deepEqual(parseStressBrutes('?waveBudget=12&waveBrutes=x'), none);
+});
 
 test('waveSpitters picks the real slots of a waveBudget schedule, and means nothing alone', () => {
     assert.deepEqual(parseStressSpitters('?waveBudget=12&waveSpitters=3'), [...spitterSlots(12, 3)]);

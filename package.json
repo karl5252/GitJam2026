@@ -18,6 +18,8 @@
     "test:soak:fortification": "node tests/soak/fortification.soak.js",
     "test:soak:infantry": "node tests/soak/infantry.soak.js",
     "test:soak:spitters": "node tests/soak/spitter.soak.js",
+    "test:soak:brutes": "node tests/soak/brute.soak.js",
+    "test:soak:heavy": "node tests/soak/heavy.soak.js",
     "test:soak:browser": "playwright test --config playwright.soak.config.js"
   },
   "dependencies": {

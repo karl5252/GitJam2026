@@ -1,4 +1,4 @@
-import {BARRACKS_TYPE, HQ_TYPE, getBuildingType} from './buildingTypes.js';
+import {BARRACKS_TYPE, BarracksRole, HQ_TYPE, REFIT_COST, getBuildingType} from './buildingTypes.js';
 import {ROAD_ACCESS_TYPES, RoadFailure, barracksExit, outgoingDock} from './roads.js';
 import {isFree, resolvePost, walkMap} from './walkField.js';
 
@@ -288,6 +288,65 @@ export class BuildingPlacement {
         if (!check.ok) return check;
         this.#assignFlag(id, cell);
         return check;
+    }
+
+    /**
+     * Send a squad back to its Barracks' exit. Free, in both shifts, and it has no
+     * placement rules: a recall must never fail. Soldiers walk home like anyone
+     * whose post has moved, so nothing else needs telling. A squad whose exit holds
+     * another squad's flag simply shares that tile.
+     * @returns {{ok: true} | {ok: false, reason: string}}
+     */
+    clearFlag(id) {
+        const barracks = this.#buildings.find((b) => b.id === id && b.type === BARRACKS_TYPE);
+        if (!barracks) return {ok: false, reason: UNKNOWN_BUILDING};
+        if (barracks.flag === null) return {ok: true};
+        barracks.flag = null;
+        this.#revision++;
+        return {ok: true};
+    }
+
+    /**
+     * Would refitting this Barracks be accepted? Never mutates.
+     * @returns {{ok: true, role: string} | {ok: false, reason: string}} role is what it would become
+     */
+    canRefit(id) {
+        const barracks = this.#buildings.find((b) => b.id === id && b.type === BARRACKS_TYPE);
+        if (!barracks) return {ok: false, reason: UNKNOWN_BUILDING};
+        if (!this.#isConstructionAllowed()) return {ok: false, reason: CONSTRUCTION_DISABLED};
+        const afford = this.#economy.canAfford(REFIT_COST);
+        if (!afford.ok) return afford;
+        return {ok: true, role: barracks.role === BarracksRole.ROCKET ? BarracksRole.RIFLE : BarracksRole.ROCKET};
+    }
+
+    /**
+     * Swap a Barracks between rifles and rockets. Day only, because no unit state
+     * crosses a Day: the next Night simply musters the other squad. It is not a
+     * placement, so its flag, HP, power and id all stay. A rifle record carries no
+     * role, which keeps a base without rockets exactly as it was.
+     * @returns {{ok: true, role: string} | {ok: false, reason: string}}
+     */
+    refit(id) {
+        const check = this.canRefit(id);
+        if (!check.ok) return check;
+        const spent = this.#economy.spend(REFIT_COST);
+        if (!spent.ok) return spent;
+        this.#assignRole(id, check.role);
+        return check;
+    }
+
+    /** Layout fixtures only: a loaded base has already paid for what it is. */
+    restoreRole(id, role) {
+        if (!this.#barracks().some((b) => b.id === id)) return {ok: false, reason: UNKNOWN_BUILDING};
+        if (!Object.values(BarracksRole).includes(role)) return {ok: false, reason: INVALID_STATE};
+        this.#assignRole(id, role);
+        return {ok: true};
+    }
+
+    #assignRole(id, role) {
+        const barracks = this.#buildings.find((b) => b.id === id);
+        if (role === BarracksRole.ROCKET) barracks.role = role;
+        else delete barracks.role;
     }
 
     /**

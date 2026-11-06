@@ -5,7 +5,7 @@
  *
  *   nightBudget        = 1 + floor((night - 1) / nightsPerExtra)
  *   pollutionBudget    = perThreatLevel * (threatLevel - 1)
- *   defenseResponse    = min(maxResponse, floor(max(0, autocannons - 1) / cannonsPerResponse))
+ *   defenseResponse    = min(maxResponse, floor(max(0, stationary guns - 1) / cannonsPerResponse))
  *   accelerationBudget = floor(max(0, night - accelerationFromNight)^2 / accelerationDivisor)
  *   budget             = min(maxPerNight, the sum of all four)
  *   lastSpawnTick      = max(minLastTick, lastTick - windowShrinkPerNight * max(0, night - accelerationFromNight))
@@ -17,7 +17,8 @@
  * Mutants asks for a plan once, on night tick 1, and keeps it until dawn.
  * Pollution only changes during settlement, construction is off at night and
  * no mutant exists yet on tick 1, so this equals sampling at END DAY. Every
- * existing Autocannon counts, whether or not it is enabled or powered.
+ * existing Autocannon and Siege Cannon counts as one stationary gun, whether or
+ * not it is enabled or powered.
  *
  * A Spitter takes the place of one ordinary mutant, so the budget, the schedule
  * and every spawn position stay what they would have been. The plan only says
@@ -25,6 +26,13 @@
  *
  *   spitters = night < firstNight ? 0
  *            : min(maxPerNight, floor(budget / budgetPerSpitter), 1 + floor((night - firstNight) / nightsPerExtra))
+ *
+ * A Brute is late-game pressure and arrives by the Night alone, so it does not
+ * touch the Nights before it. It costs three slots: it spawns in one, and the other
+ * two are absorbed, which means they keep their tick and their random number but
+ * spawn nothing. The schedule, the spawn positions of everyone else and Wave X/Y
+ * therefore stay as they would have been, and a wave gets heavier without getting
+ * bigger. From Night 29 every base is at the cap, so a Brute always has room.
  *
  * All values are temporary and unbalanced; rebalance them here.
  */
@@ -51,7 +59,17 @@ export const SPITTER_WAVE = Object.freeze({
     maxPerNight: 6,
 });
 
+export const BRUTE_WAVE = Object.freeze({
+    tiers: Object.freeze([ // the most recent one reached applies
+        Object.freeze({fromNight: 40, brutes: 3}),
+        Object.freeze({fromNight: 35, brutes: 2}),
+        Object.freeze({fromNight: 30, brutes: 1}),
+    ]),
+    slotCost: 3,
+});
+
 const AUTOCANNON_TYPE = 'autocannon';
+const SIEGE_CANNON_TYPE = 'siegeCannon';
 
 function assertCount(name, value, min) {
     if (!Number.isSafeInteger(value) || value < min) {
@@ -137,6 +155,44 @@ export function spitterSlots(budget, spitters) {
     return Object.freeze(Array.from({length: spitters}, (_, k) => Math.floor((2 * k + 1) * budget / (2 * spitters))));
 }
 
+/** How many of a night's mutants are Brutes. */
+export function bruteCount(night) {
+    assertCount('night', night, 1);
+    return BRUTE_WAVE.tiers.find(({fromNight}) => night >= fromNight)?.brutes ?? 0;
+}
+
+/**
+ * Where Brutes go, once Spitters have their slots, which never move. They spread
+ * over the first half of the schedule, because a slow mutant spawned late would
+ * never arrive, and never take slot 0. Each takes the first free slot from its
+ * place, then the next free ones to absorb.
+ * @param {number} budget
+ * @param {readonly number[]} taken the slots already spoken for
+ * @param {number} brutes
+ * @returns {{bruteSlots: readonly number[], absorbedSlots: readonly number[]}} frozen, strictly increasing
+ */
+export function bruteSlots(budget, taken, brutes) {
+    assertCount('budget', budget, 0);
+    assertCount('brutes', brutes, 0);
+    const used = new Set(taken);
+    const claim = (from) => {
+        let slot = from;
+        while (used.has(slot)) slot++;
+        if (slot >= budget) throw new RangeError(`${brutes} brutes do not fit a budget of ${budget}`);
+        used.add(slot);
+        return slot;
+    };
+    const slots = [];
+    const absorbed = [];
+    for (let k = 0; k < brutes; k++) {
+        const slot = claim(Math.max(1, Math.floor((2 * k + 1) * budget / (4 * brutes))));
+        slots.push(slot);
+        for (let i = 1; i < BRUTE_WAVE.slotCost; i++) absorbed.push(claim(slot + 1));
+    }
+    const ascending = (a, b) => a - b;
+    return Object.freeze({bruteSlots: Object.freeze(slots.sort(ascending)), absorbedSlots: Object.freeze(absorbed.sort(ascending))});
+}
+
 /**
  * The frozen plan for one night. It holds numbers only, so it shares nothing
  * with the building records it was computed from.
@@ -145,21 +201,28 @@ export function spitterSlots(budget, spitters) {
 export function nightPlan({day, pollution, buildings}) {
     const threat = threatLevel(pollution);
     const autocannons = buildings.filter((b) => b.type === AUTOCANNON_TYPE).length;
-    const budget = waveBudget(day, threat, autocannons);
+    const siegeCannons = buildings.filter((b) => b.type === SIEGE_CANNON_TYPE).length;
+    const guns = autocannons + siegeCannons;
+    const budget = waveBudget(day, threat, guns);
     const spitters = spitterCount(day, budget);
+    const spitterPlaces = spitterSlots(budget, spitters);
+    const brutes = bruteCount(day);
     return Object.freeze({
         day,
         threatLevel: threat,
         autocannons,
+        siegeCannons,
         nightBudget: nightBudget(day),
         pollutionBudget: pollutionBudget(threat),
-        defenseResponse: defenseResponse(autocannons),
+        defenseResponse: defenseResponse(guns),
         accelerationBudget: accelerationBudget(day),
         budget,
         lastSpawnTick: lastSpawnTick(day),
         schedule: waveSchedule(budget, lastSpawnTick(day)),
         spitters,
-        spitterSlots: spitterSlots(budget, spitters),
+        spitterSlots: spitterPlaces,
+        brutes,
+        ...bruteSlots(budget, spitterPlaces, brutes),
     });
 }
 

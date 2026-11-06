@@ -33,6 +33,21 @@ export const PowerStatus = Object.freeze({
  *            buildings: Array<{id: string, type: string, enabled: boolean, powered: boolean}>}}
  */
 export function calculatePower(buildings) {
+    return powerOf(buildings);
+}
+
+/**
+ * Would adding this type take the pool from NORMAL to LOW_POWER? Pure: the choice
+ * stays the player's, so nothing in the rules refuses it.
+ * @param {Array<{type: string, enabled?: boolean}>} buildings
+ * @param {string} typeId
+ */
+export function causesLowPower(buildings, typeId) {
+    if (powerOf(buildings).status !== PowerStatus.NORMAL) return false;
+    return powerOf([...buildings, {type: typeId}]).status === PowerStatus.LOW_POWER;
+}
+
+function powerOf(buildings) {
     if (!Array.isArray(buildings)) throw new TypeError('buildings must be an array');
 
     const entries = buildings.map((building) => {

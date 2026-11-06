@@ -158,6 +158,21 @@ export class ShiftCycle {
         return done;
     }
 
+    /**
+     * QA only: testShadow/dayQa.js is the one caller, and it exists in test mode
+     * alone. Moves the calendar during a Day and does nothing else: no Night runs,
+     * so nothing settles, spawns or earns, and AP stays as it is. The plan for a
+     * Night is made on its first tick, so the next Night reads this day.
+     * @returns {{ok: true} | {ok: false, reason: string}}
+     */
+    jumpToDay(day) {
+        if (!Number.isSafeInteger(day) || day < 1) throw new RangeError(`day must be a positive integer, got ${day}`);
+        if (!this.started) return {ok: false, reason: ShiftFailure.NOT_STARTED};
+        if (this.#shift !== Shift.DAY) return {ok: false, reason: ShiftFailure.NOT_DAY};
+        this.#day = day;
+        return {ok: true};
+    }
+
     /** QA resume: only meaningful during Night; Day Shift never ticks. */
     resume() {
         if (this.#shift === Shift.NIGHT) this.#clock.resume();

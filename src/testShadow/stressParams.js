@@ -10,8 +10,11 @@
 //   ?stressRamp=N  one mutant per tick from tick 1, for N in 1..3599
 //   ?waveSpitters=K  with waveBudget, makes K of those mutants Spitters, in the
 //                    real spitterSlots(N, K), for K in 0..N. Ignored on its own.
+//   ?waveBrutes=K    with waveBudget, makes K of them Brutes, in the real
+//                    bruteSlots after any Spitters. Ignored on its own, or when
+//                    they do not fit.
 
-import {WAVE, spitterSlots, waveSchedule} from '../core/waves.js';
+import {WAVE, bruteSlots, spitterSlots, waveSchedule} from '../core/waves.js';
 
 const MAX_RAMP = 3599; // spawns must land on a night tick before the last
 
@@ -30,6 +33,22 @@ export function parseStressSchedule(search) {
     if (budget === null) return null;
     const lastTick = parseCount(params.get('waveLastTick'), WAVE.minLastTick, WAVE.lastTick);
     return [...waveSchedule(budget, lastTick ?? WAVE.lastTick)];
+}
+
+/** @returns {{bruteSlots: number[], absorbedSlots: number[]}} where a waveBudget schedule's Brutes go; none without a valid override */
+export function parseStressBrutes(search) {
+    const none = {bruteSlots: [], absorbedSlots: []};
+    const params = new URLSearchParams(search);
+    if (parseCount(params.get('stressRamp'), 1, MAX_RAMP) !== null) return none;
+    const budget = parseCount(params.get('waveBudget'), 0, WAVE.maxPerNight);
+    const brutes = parseCount(params.get('waveBrutes'), 0, WAVE.maxPerNight);
+    if (budget === null || brutes === null) return none;
+    try {
+        const placed = bruteSlots(budget, parseStressSpitters(search), brutes);
+        return {bruteSlots: [...placed.bruteSlots], absorbedSlots: [...placed.absorbedSlots]};
+    } catch {
+        return none;
+    }
 }
 
 /** @returns {number[]} which slots of a waveBudget schedule are Spitters; none without a valid override */

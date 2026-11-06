@@ -222,6 +222,45 @@ In Chromium with software rendering, the 4x walled Night ran at 237.5 ticks per 
 
 The ordinary turtle medians match those recorded for TASK 015, which is the control. The developer has since playtested this and kept the Spitter unchanged: a managed base with income reached Day 40, so the early fall of these static bases is accepted. These bases have no income, rebuilding or repairs and nobody plays them, so this is the worst case for a weapon that wears things down. "Active" is a stand-in for a player that sends the flag to a Spitter once it has fired. Simulation stayed under 0.05 ms a tick in every case, so the Spitter adds no measurable cost.
 
+## Brutes (TASK 023 checkpoint)
+
+`npm run test:soak:brutes`, on 6 November 2026, Node, about 90 seconds, 10 seeds. Report-only. "Whole base" is one Night from an undamaged layout, as a player who rebuilds each Day would face it. Lost buildings are per Night, in `golden-fortress-day33-v2`.
+
+| Night | Brutes reaching the base | Median first contact tick | Killed before dawn | Walls lost | Other buildings lost | Cannon shots at Brutes | Ordinary mutant damage |
+|---|---:|---:|---:|---:|---:|---:|---:|
+| 30 | 10 of 10 | 1906 | 10 of 10 | 1.2 | 0 | 30% | 1.4x |
+| 35 | 19 of 20 | 1476 | 19 of 20 | 2.0 | 0.2 | 48% | 3.2x |
+| 40 | 30 of 30 | 1714 | 28 of 30 | 4.1 | 0.9 | 61% | 5.3x |
+
+With nobody playing from Night 28 to Night 45: `golden-fortress-day33-v2` falls at a median of Night 37 (9 of 10 outlast Night 45 without Brutes), `fortress-checkerboard-v1` at 33 (without Brutes 42), and `fortress-logistics-v1` at 30 either way. Bases have no income in these runs.
+
+## Heavy weapons (TASK 023)
+
+`npm run test:soak:heavy`, on 6 November 2026, Node, about 4 minutes, 10 seeds. Synthetic and report-only: no value is a target, and none of this is a playtest. "Static" flags never move. A "scripted flag" is a stand-in that sends the first squad to a Brute, once per target. Rebuild is the estimated Credits to replace what one Night destroyed.
+
+| Night 40, whole `golden-fortress-day33-v2` | Spent | Brutes killed | By cannon / squad / Siege | Brutes reaching the base | Rebuild |
+|---|---:|---:|---|---:|---:|
+| As built | 0 | 28 of 30 | 24 / 4 / 0 | 30 | 418 |
+| 1 more cannon | 250 | 28 of 30 | 25 / 3 / 0 | 30 | 243 |
+| 1 Rocket squad, static | 200 | 28 of 30 | 23 / 5 / 0 | 28 | 250 |
+| 1 Rocket squad, scripted flag | 200 | 27 of 30 | 19 / 8 / 0 | 30 | 343 |
+| 1 Siege | 600 | 29 of 30 | 18 / 1 / 10 | 19 | 178 |
+| 1 Siege + Rocket squad, static | 800 | 29 of 30 | 16 / 6 / 7 | 19 | 165 |
+| 1 Siege + Rocket squad, scripted flag | 800 | 30 of 30 | 15 / 7 / 8 | 19 | 48 |
+| 2 Siege, one cannon demolished | 1200 | 29 of 30 | 11 / 1 / 17 | 15 | 200 |
+
+Rows with an extra Plant are in the result file but are not a fair comparison: the script puts it on the nearest free spot, outside this fortress's walls, where it is lost every Night and takes all power with it. With 10 seeds, one lost Plant moves a row by 50 Credits.
+
+| Siege against Spitters, Nights 1-29 | Median fall | Shots per Spitter | Armed kills: cannon / squad / Siege | Siege shots at Spitters |
+|---|---:|---:|---|---:|
+| 3 cannons | 12 | 4.65 | 7 / 0 / 0 | |
+| 5 cannons | 13 | 4.06 | 26 / 0 / 0 | |
+| 3 cannons + Rifle squad, static | 14 | 4.15 | 11 / 26 / 0 | |
+| 3 cannons + Rifle squad, scripted flag | 16 | 3.18 | 16 / 221 / 0 | |
+| 3 cannons + Siege | 12 | 3.49 | 6 / 0 / 45 | 16% |
+| 3 cannons + Siege + Rifle squad, static | 15 | 2.95 | 10 / 30 / 66 | 18% |
+| 3 cannons + Siege + Rifle squad, scripted flag | 17 | 2.46 | 13 / 178 / 80 | 15% |
+
 ## Known gaps
 
 - One machine and one run. Rerun before treating any number as a trend.

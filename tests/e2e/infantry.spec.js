@@ -38,6 +38,54 @@ function suite(input) {
         await pressCell(page, state, cell);
     }
 
+    test('RESET FLAG shows only with a flag, and works by Day and by Night', async ({page}) => {
+        const {state, id} = await base(page);
+        await select(page, state, BARRACKS, id);
+        expect((await sample(page)).buildingControlsView).toMatchObject({flagLabel: 'Set\nflag', resetVisible: false});
+        await expect(byAction(page, 'reset-flag')).toHaveCount(0);
+
+        await setFlag(page, state, {col: 20, row: 12});
+        await expect.poll(async () => (await sample(page)).buildingControlsView.resetVisible).toBe(true);
+        await pressAction(page, 'reset-flag');
+        await expect.poll(async () => (await sample(page)).buildings.find((b) => b.id === id).flag).toBeNull();
+        expect((await sample(page)).buildingControlsView).toMatchObject({flagLabel: 'Set\nflag', resetVisible: false});
+        expect((await sample(page)).resources).toEqual({credits: 350, ap: 3});
+
+        await setFlag(page, state, {col: 8, row: 3});
+        await expect.poll(async () => (await sample(page)).buildingControlsView.resetVisible).toBe(true);
+        await nightTo(page, 200);
+        const out = await sample(page);
+        expect(out.buildingControlsView.resetVisible).toBe(true);
+        const before = out.infantry.soldiers[0];
+        await pressAction(page, 'reset-flag');
+        await expect.poll(async () => (await sample(page)).infantry.posts[0].post).toEqual({col: 14, row: 8});
+        await stepExactly(page, 2);
+        const after = (await sample(page)).infantry.soldiers.find((s) => s.id === before.id);
+        expect(Math.abs(after.x - before.x) + Math.abs(after.y - before.y)).toBeLessThanOrEqual(2);
+        await stepExactly(page, 700);
+        const home = await sample(page);
+        expect(home.infantry.soldiers.every(({col, row}) => col === 14 && row === 8)).toBe(true);
+        expect(home.infantry.totals.deployed).toBe(4);
+    });
+
+    test('the power toggle still works beside RESET FLAG, and goes back to full width for other buildings', async ({page}) => {
+        const {state, id} = await base(page);
+        await select(page, state, BARRACKS, id);
+        await setFlag(page, state, {col: 20, row: 12});
+        await expect(byAction(page, 'reset-flag')).toHaveCount(1);
+        await pressAction(page, 'toggle-power');
+        await expect.poll(async () => (await sample(page)).buildings.find((b) => b.id === id).enabled).toBe(false);
+        const narrow = await byAction(page, 'toggle-power').boundingBox();
+
+        const plant = (await sample(page)).buildings.find((b) => b.type === 'powerPlant').id;
+        await select(page, state, PLANT, plant);
+        const wide = await byAction(page, 'toggle-power').boundingBox();
+        expect(wide.width).toBeGreaterThan(narrow.width);
+        await expect(byAction(page, 'reset-flag')).toHaveCount(0);
+        await pressAction(page, 'toggle-power');
+        await expect.poll(async () => (await sample(page)).buildings.find((b) => b.id === plant).enabled).toBe(false);
+    });
+
     test('Barracks are locked until HQ stands, and need a road on the left exit', async ({page}) => {
         const state = await start(page, 'mutants=off');
         await expect(byAction(page, 'build-barracks')).toHaveAttribute('data-state', 'locked');
@@ -50,6 +98,8 @@ function suite(input) {
         const rejected = await sample(page);
         expect(rejected.placement.preview.dock).toEqual({col: 16, row: 8});
         expect(rejected.dockPreviewView.visible).toBe(true);
+        await pressCell(page, state, BARRACKS);
+        await expect.poll(async () => (await sample(page)).powerWarning).toMatchObject({type: 'barracks'}); // 30 against HQ's 20
         await pressCell(page, state, BARRACKS);
         await expect.poll(async () => (await sample(page)).buildings.length).toBe(2);
         const s = await sample(page);
@@ -78,7 +128,8 @@ function suite(input) {
         const {state, id} = await base(page);
         await select(page, state, BARRACKS, id);
         expect((await sample(page)).buildingControlsView).toEqual({
-            flagVisible: true, flagLabel: 'Set\nflag', demolishVisible: true, demolishLabel: 'Demolish', demolishArmed: null,
+            flagVisible: true, flagLabel: 'Set\nflag', resetVisible: false, demolishVisible: true, demolishLabel: 'Demolish', demolishArmed: null,
+            refitVisible: true, refitLabel: 'Refit: ROCKET\n200c · 1 AP', refitArmed: null,
         });
         await expect(byAction(page, 'set-flag')).toHaveAttribute('data-target', id);
 
@@ -207,7 +258,13 @@ test.describe('infantry: mobile landscape', () => {
         };
         await check(['set-flag', 'demolish', 'toggle-power', 'end-day', 'build-barracks', 'build-road', 'build-wall', 'build-gateVertical', 'build-gateHorizontal']);
 
+        await tapAction(page, 'set-flag');
+        await expect.poll(async () => (await sample(page)).flagMode).toBe(id);
+        await tapWorld(page, cellCenter(state.grid, {col: 20, row: 12}), state);
+        await expect.poll(async () => (await sample(page)).flagMode).toBeNull();
+        await check(['set-flag', 'reset-flag', 'demolish', 'toggle-power', 'end-day', 'build-barracks', 'build-road', 'build-wall', 'build-gateVertical', 'build-gateHorizontal']);
+
         await flow.nightTo(page, 10);
-        await check(['set-flag', 'toggle-power', 'speed-1', 'speed-2', 'speed-4']);
+        await check(['set-flag', 'reset-flag', 'toggle-power', 'speed-1', 'speed-2', 'speed-4']);
     });
 });

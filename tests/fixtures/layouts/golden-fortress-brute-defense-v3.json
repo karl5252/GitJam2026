@@ -1,0 +1,637 @@
+{
+  "format": "papi-layout",
+  "version": 3,
+  "grid": {
+    "cols": 24,
+    "rows": 16
+  },
+  "buildings": [
+    {
+      "type": "hq",
+      "col": 10,
+      "row": 5,
+      "enabled": true
+    },
+    {
+      "type": "powerPlant",
+      "col": 9,
+      "row": 1,
+      "enabled": true
+    },
+    {
+      "type": "factory",
+      "col": 6,
+      "row": 4,
+      "enabled": true
+    },
+    {
+      "type": "barracks",
+      "col": 14,
+      "row": 6,
+      "enabled": true,
+      "flag": {
+        "col": 7,
+        "row": 11
+      },
+      "role": "rocket"
+    },
+    {
+      "type": "wall",
+      "col": 4,
+      "row": 2,
+      "enabled": true
+    },
+    {
+      "type": "wall",
+      "col": 5,
+      "row": 12,
+      "enabled": true
+    },
+    {
+      "type": "wall",
+      "col": 17,
+      "row": 12,
+      "enabled": true
+    },
+    {
+      "type": "wall",
+      "col": 16,
+      "row": 1,
+      "enabled": true
+    },
+    {
+      "type": "autocannon",
+      "col": 6,
+      "row": 12,
+      "enabled": true
+    },
+    {
+      "type": "autocannon",
+      "col": 15,
+      "row": 1,
+      "enabled": true
+    },
+    {
+      "type": "wall",
+      "col": 4,
+      "row": 8,
+      "enabled": true
+    },
+    {
+      "type": "wall",
+      "col": 3,
+      "row": 7,
+      "enabled": true
+    },
+    {
+      "type": "wall",
+      "col": 3,
+      "row": 3,
+      "enabled": true
+    },
+    {
+      "type": "wall",
+      "col": 10,
+      "row": 13,
+      "enabled": true
+    },
+    {
+      "type": "wall",
+      "col": 11,
+      "row": 14,
+      "enabled": true
+    },
+    {
+      "type": "wall",
+      "col": 9,
+      "row": 0,
+      "enabled": true
+    },
+    {
+      "type": "wall",
+      "col": 10,
+      "row": 0,
+      "enabled": true
+    },
+    {
+      "type": "wall",
+      "col": 11,
+      "row": 0,
+      "enabled": true
+    },
+    {
+      "type": "wall",
+      "col": 18,
+      "row": 7,
+      "enabled": true
+    },
+    {
+      "type": "wall",
+      "col": 17,
+      "row": 6,
+      "enabled": true
+    },
+    {
+      "type": "wall",
+      "col": 17,
+      "row": 8,
+      "enabled": true
+    },
+    {
+      "type": "wall",
+      "col": 16,
+      "row": 5,
+      "enabled": true
+    },
+    {
+      "type": "wall",
+      "col": 13,
+      "row": 14,
+      "enabled": true
+    },
+    {
+      "type": "barracks",
+      "col": 14,
+      "row": 2,
+      "enabled": true,
+      "flag": {
+        "col": 13,
+        "row": 2
+      },
+      "role": "rocket"
+    },
+    {
+      "type": "autocannon",
+      "col": 3,
+      "row": 2,
+      "enabled": true
+    },
+    {
+      "type": "factory",
+      "col": 5,
+      "row": 8,
+      "enabled": true
+    },
+    {
+      "type": "wall",
+      "col": 4,
+      "row": 6,
+      "enabled": true
+    },
+    {
+      "type": "wall",
+      "col": 18,
+      "row": 11,
+      "enabled": true
+    },
+    {
+      "type": "wall",
+      "col": 18,
+      "row": 3,
+      "enabled": true
+    },
+    {
+      "type": "wall",
+      "col": 17,
+      "row": 4,
+      "enabled": true
+    },
+    {
+      "type": "wall",
+      "col": 17,
+      "row": 2,
+      "enabled": true
+    },
+    {
+      "type": "wall",
+      "col": 8,
+      "row": 0,
+      "enabled": true
+    },
+    {
+      "type": "wall",
+      "col": 4,
+      "row": 11,
+      "enabled": true
+    },
+    {
+      "type": "wall",
+      "col": 3,
+      "row": 10,
+      "enabled": true
+    },
+    {
+      "type": "wall",
+      "col": 3,
+      "row": 9,
+      "enabled": true
+    },
+    {
+      "type": "autocannon",
+      "col": 17,
+      "row": 9,
+      "enabled": true
+    },
+    {
+      "type": "wall",
+      "col": 17,
+      "row": 10,
+      "enabled": true
+    },
+    {
+      "type": "wall",
+      "col": 18,
+      "row": 9,
+      "enabled": true
+    },
+    {
+      "type": "wall",
+      "col": 3,
+      "row": 5,
+      "enabled": true
+    },
+    {
+      "type": "wall",
+      "col": 5,
+      "row": 1,
+      "enabled": true
+    },
+    {
+      "type": "wall",
+      "col": 12,
+      "row": 15,
+      "enabled": true
+    },
+    {
+      "type": "wall",
+      "col": 8,
+      "row": 13,
+      "enabled": true
+    },
+    {
+      "type": "wall",
+      "col": 7,
+      "row": 12,
+      "enabled": true
+    },
+    {
+      "type": "wall",
+      "col": 15,
+      "row": 12,
+      "enabled": true
+    },
+    {
+      "type": "wall",
+      "col": 13,
+      "row": 1,
+      "enabled": true
+    },
+    {
+      "type": "wall",
+      "col": 14,
+      "row": 1,
+      "enabled": true
+    },
+    {
+      "type": "wall",
+      "col": 2,
+      "row": 2,
+      "enabled": true
+    },
+    {
+      "type": "wall",
+      "col": 3,
+      "row": 1,
+      "enabled": true
+    },
+    {
+      "type": "wall",
+      "col": 6,
+      "row": 13,
+      "enabled": true
+    },
+    {
+      "type": "autocannon",
+      "col": 16,
+      "row": 12,
+      "enabled": true
+    },
+    {
+      "type": "autocannon",
+      "col": 12,
+      "row": 1,
+      "enabled": true
+    },
+    {
+      "type": "powerPlant",
+      "col": 9,
+      "row": 9,
+      "enabled": true
+    },
+    {
+      "type": "wall",
+      "col": 14,
+      "row": 13,
+      "enabled": true
+    },
+    {
+      "type": "wall",
+      "col": 9,
+      "row": 14,
+      "enabled": true
+    },
+    {
+      "type": "powerPlant",
+      "col": 12,
+      "row": 9,
+      "enabled": true
+    },
+    {
+      "type": "wall",
+      "col": 15,
+      "row": 13,
+      "enabled": true
+    },
+    {
+      "type": "wall",
+      "col": 14,
+      "row": 14,
+      "enabled": true
+    },
+    {
+      "type": "wall",
+      "col": 14,
+      "row": 12,
+      "enabled": true
+    },
+    {
+      "type": "wall",
+      "col": 15,
+      "row": 11,
+      "enabled": true
+    },
+    {
+      "type": "wall",
+      "col": 16,
+      "row": 11,
+      "enabled": true
+    },
+    {
+      "type": "wall",
+      "col": 17,
+      "row": 11,
+      "enabled": true
+    },
+    {
+      "type": "autocannon",
+      "col": 4,
+      "row": 10,
+      "enabled": true
+    },
+    {
+      "type": "wall",
+      "col": 4,
+      "row": 9,
+      "enabled": true
+    },
+    {
+      "type": "siegeCannon",
+      "col": 15,
+      "row": 9,
+      "enabled": true
+    },
+    {
+      "type": "wall",
+      "col": 3,
+      "row": 4,
+      "enabled": true
+    },
+    {
+      "type": "powerPlant",
+      "col": 6,
+      "row": 1,
+      "enabled": true
+    },
+    {
+      "type": "wall",
+      "col": 7,
+      "row": 0,
+      "enabled": true
+    },
+    {
+      "type": "wall",
+      "col": 6,
+      "row": 0,
+      "enabled": true
+    },
+    {
+      "type": "siegeCannon",
+      "col": 4,
+      "row": 3,
+      "enabled": true
+    },
+    {
+      "type": "autocannon",
+      "col": 9,
+      "row": 13,
+      "enabled": true
+    },
+    {
+      "type": "autocannon",
+      "col": 5,
+      "row": 0,
+      "enabled": true
+    },
+    {
+      "type": "autocannon",
+      "col": 15,
+      "row": 5,
+      "enabled": true
+    },
+    {
+      "type": "wall",
+      "col": 16,
+      "row": 13,
+      "enabled": true
+    },
+    {
+      "type": "wall",
+      "col": 15,
+      "row": 0,
+      "enabled": true
+    },
+    {
+      "type": "wall",
+      "col": 12,
+      "row": 2,
+      "enabled": true
+    }
+  ],
+  "roads": [
+    {
+      "col": 13,
+      "row": 3,
+      "kind": "player"
+    },
+    {
+      "col": 9,
+      "row": 4,
+      "kind": "hq-ring"
+    },
+    {
+      "col": 10,
+      "row": 4,
+      "kind": "hq-ring"
+    },
+    {
+      "col": 11,
+      "row": 4,
+      "kind": "hq-ring"
+    },
+    {
+      "col": 12,
+      "row": 4,
+      "kind": "hq-ring"
+    },
+    {
+      "col": 13,
+      "row": 4,
+      "kind": "hq-ring"
+    },
+    {
+      "col": 9,
+      "row": 5,
+      "kind": "hq-ring"
+    },
+    {
+      "col": 13,
+      "row": 5,
+      "kind": "hq-ring"
+    },
+    {
+      "col": 9,
+      "row": 6,
+      "kind": "hq-ring"
+    },
+    {
+      "col": 13,
+      "row": 6,
+      "kind": "hq-ring"
+    },
+    {
+      "col": 4,
+      "row": 7,
+      "kind": "player"
+    },
+    {
+      "col": 5,
+      "row": 7,
+      "kind": "player"
+    },
+    {
+      "col": 6,
+      "row": 7,
+      "kind": "player"
+    },
+    {
+      "col": 7,
+      "row": 7,
+      "kind": "player"
+    },
+    {
+      "col": 8,
+      "row": 7,
+      "kind": "player"
+    },
+    {
+      "col": 9,
+      "row": 7,
+      "kind": "hq-ring"
+    },
+    {
+      "col": 13,
+      "row": 7,
+      "kind": "hq-ring"
+    },
+    {
+      "col": 8,
+      "row": 8,
+      "kind": "player"
+    },
+    {
+      "col": 9,
+      "row": 8,
+      "kind": "hq-ring"
+    },
+    {
+      "col": 10,
+      "row": 8,
+      "kind": "hq-ring"
+    },
+    {
+      "col": 11,
+      "row": 8,
+      "kind": "hq-ring"
+    },
+    {
+      "col": 12,
+      "row": 8,
+      "kind": "hq-ring"
+    },
+    {
+      "col": 13,
+      "row": 8,
+      "kind": "hq-ring"
+    },
+    {
+      "col": 8,
+      "row": 9,
+      "kind": "player"
+    },
+    {
+      "col": 8,
+      "row": 10,
+      "kind": "player"
+    },
+    {
+      "col": 8,
+      "row": 11,
+      "kind": "player"
+    },
+    {
+      "col": 8,
+      "row": 12,
+      "kind": "player"
+    },
+    {
+      "col": 9,
+      "row": 12,
+      "kind": "player"
+    },
+    {
+      "col": 10,
+      "row": 12,
+      "kind": "player"
+    },
+    {
+      "col": 11,
+      "row": 12,
+      "kind": "player"
+    },
+    {
+      "col": 11,
+      "row": 13,
+      "kind": "player"
+    },
+    {
+      "col": 12,
+      "row": 13,
+      "kind": "player"
+    },
+    {
+      "col": 12,
+      "row": 14,
+      "kind": "player"
+    }
+  ]
+}

@@ -4,7 +4,7 @@ import {boot, body, byAction, clickAction, clickWorld} from '../helpers/canvas.j
 import {hqFlow} from '../helpers/hq.js';
 import {sample} from '../helpers/qa.js';
 import {getBuildingType} from '../../src/core/buildingTypes.js';
-import {WAVE, waveSchedule, spitterSlots as spitterSlotsOf} from '../../src/core/waves.js';
+import {WAVE, waveSchedule, bruteSlots as bruteSlotsOf, spitterSlots as spitterSlotsOf} from '../../src/core/waves.js';
 import {Shift} from '../../src/core/shiftCycle.js';
 import {canonicalState, createWorld, digestOf, worldState} from './harness.js';
 import {loadLayout} from '../../src/testShadow/layoutSnapshot.js';
@@ -488,6 +488,74 @@ test('stepped: with Spitters and shells in the air, Chromium and the Node harnes
     expect(errors).toEqual([]);
 });
 
+test('stepped: with Brutes on the map, Chromium and the Node harness reach identical state', async ({page}) => {
+    const errors = watchErrors(page);
+    const checkpoints = [700, 1000, 1500, 2100, 2800, 3599];
+    const schedule = [...waveSchedule(20)];
+    const spitterSlots = [...spitterSlotsOf(20, 3)];
+    const {bruteSlots, absorbedSlots} = bruteSlotsOf(20, spitterSlots, 2);
+
+    const world = createWorld({schedule, spitterSlots, bruteSlots: [...bruteSlots], absorbedSlots: [...absorbedSlots], requireHq: true, roads: true});
+    expect(loadLayout(world, INFANTRY_FIXTURE).ok).toBe(true);
+    world.cycle.endDay();
+    const expected = [];
+    for (const tick of checkpoints) {
+        while (world.cycle.elapsedNightTicks < tick) world.cycle.stepTicks(Math.min(240, tick - world.cycle.elapsedNightTicks), world.tick);
+        expect(world.cycle.shift).toBe(Shift.NIGHT);
+        expected.push(digestOf(canonicalState(worldState(world))));
+    }
+
+    await loadedBase(page, 'waveBudget=20&waveSpitters=3&waveBrutes=2', INFANTRY_FIXTURE);
+    await nightPaused(page);
+    const actual = [];
+    let sawBrute = false;
+    for (const tick of checkpoints) {
+        await stepExactly(page, tick - (await sample(page)).shiftCycle.elapsedNightTicks);
+        const s = await sample(page);
+        sawBrute ||= s.mutants.some(({kind}) => kind === 'brute');
+        actual.push(digestOf(canonicalState({
+            mutants: s.mutants, buildings: s.buildings, autocannons: s.autocannons, rng: s.simulation.rng, soldiers: s.infantry.soldiers, shells: s.shells,
+        })));
+    }
+    writeResult('brute-cross-check', {scenario: 'Node harness against Chromium, with Brutes', checkpoints, expected, actual});
+    expect(sawBrute).toBe(true);
+    expect(actual).toEqual(expected);
+    expect(errors).toEqual([]);
+});
+
+test('stepped: with Siege Cannons and rockets, Chromium and the Node harness reach identical state', async ({page}) => {
+    const errors = watchErrors(page);
+    const checkpoints = [700, 1000, 1500, 2100, 2800, 3599];
+    const schedule = [...waveSchedule(20)];
+    const spitterSlots = [...spitterSlotsOf(20, 3)];
+    const {bruteSlots, absorbedSlots} = bruteSlotsOf(20, spitterSlots, 2);
+
+    const world = createWorld({schedule, spitterSlots, bruteSlots: [...bruteSlots], absorbedSlots: [...absorbedSlots], requireHq: true, roads: true});
+    expect(loadLayout(world, HEAVY_FIXTURE).ok).toBe(true);
+    world.cycle.endDay();
+    const expected = [];
+    for (const tick of checkpoints) {
+        while (world.cycle.elapsedNightTicks < tick) world.cycle.stepTicks(Math.min(240, tick - world.cycle.elapsedNightTicks), world.tick);
+        expected.push(digestOf(canonicalState(worldState(world))));
+    }
+
+    await loadedBase(page, 'waveBudget=20&waveSpitters=3&waveBrutes=2', HEAVY_FIXTURE);
+    await nightPaused(page);
+    const actual = [];
+    for (const tick of checkpoints) {
+        await stepExactly(page, tick - (await sample(page)).shiftCycle.elapsedNightTicks);
+        const s = await sample(page);
+        actual.push(digestOf(canonicalState({
+            mutants: s.mutants, buildings: s.buildings, autocannons: s.autocannons, rng: s.simulation.rng, soldiers: s.infantry.soldiers, shells: s.shells,
+            siegeCannons: s.siegeCannons, siegeShells: s.siegeShells, rockets: s.rockets,
+        })));
+    }
+    writeResult('heavy-cross-check', {scenario: 'Node harness against Chromium, with Siege Cannons and rockets', checkpoints, expected, actual});
+    expect(actual).toEqual(expected);
+    expect(errors).toEqual([]);
+});
+
+const HEAVY_FIXTURE = JSON.parse(readFileSync(new URL('../fixtures/layouts/golden-fortress-brute-defense-v3.json', import.meta.url), 'utf8'));
 const LOGISTICS_FIXTURE = JSON.parse(readFileSync(new URL('../fixtures/layouts/logistics-reference.json', import.meta.url), 'utf8'));
 const FORTIFICATION = JSON.parse(readFileSync(new URL('../fixtures/layouts/fortification-reference.json', import.meta.url), 'utf8'));
 const INFANTRY_FIXTURE = JSON.parse(readFileSync(new URL('../fixtures/layouts/infantry-reference.json', import.meta.url), 'utf8'));

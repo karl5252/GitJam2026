@@ -17,6 +17,14 @@ const LABEL_STYLE = {fontFamily: 'monospace', fontSize: '14px', color: '#ffffff'
 const PIP = {size: 6, gap: 2, inset: 3};
 const PIP_COLOR = 0x81d4fa;
 const PIP_STROKE = 0x212121;
+const ROCKET_SOLDIER_COLOR = 0xffb74d;
+const ROCKET_SOLDIER_SIZE = 11;
+const ROCKET_SIZE = {width: 12, height: 4};
+const ROCKET_COLOR = 0xff7043;
+const ROCKET_STROKE = 0x3e2723;
+const ROCKET_IMPACT_RADIUS = 10;
+const ROCKET_IMPACT_TICKS = 12;
+const ROCKET_MISS_COLOR = 0xb0bec5;
 const STACK_OFFSETS = [[0, 0], [8, -8], [-8, 8], [8, 8], [-8, -8]];
 
 /**
@@ -49,6 +57,8 @@ export class InfantryLayer {
     #soldiers = new Map(); // soldier id -> {body, hp, last}
     #tracers = new Map(); // soldier id -> {view, firedTick}
     #deaths = []; // {view, tick}
+    #rockets = new Map(); // rocket id -> view
+    #impacts = []; // {view, tick}
     #graphics;
     #marks = new Map(); // Barracks id -> {number, roof, flag, pips}
     #flagViews = [];
@@ -61,7 +71,8 @@ export class InfantryLayer {
 
     /** Show a tracer for each of this tick's shots. */
     recordShots(shots, tick) {
-        for (const {soldierId, fromX, fromY, x, y} of shots) {
+        for (const {soldierId, fromX, fromY, x, y, rocket} of shots) {
+            if (rocket) continue; // a rocket is its own view
             const tracer = this.#tracers.get(soldierId) ?? {
                 view: this.#scene.add.rectangle(0, 0, 1, TRACER_HEIGHT, TRACER_COLOR).setOrigin(0, 0.5).setDepth(SOLDIER_DEPTH),
             };
@@ -74,8 +85,26 @@ export class InfantryLayer {
         }
     }
 
-    /** Match the views to the living soldiers. Runs every frame. */
-    sync({soldiers, tick, isNight}) {
+    /** Show where this tick's rockets came down. */
+    recordImpacts(impacts, tick) {
+        for (const {x, y, mutantId} of impacts) {
+            const view = this.#scene.add.circle(x, y, ROCKET_IMPACT_RADIUS).setStrokeStyle(3, mutantId ? ROCKET_COLOR : ROCKET_MISS_COLOR).setDepth(SOLDIER_DEPTH);
+            this.#impacts.push({view, tick});
+        }
+    }
+
+    /** Match the views to the living soldiers and rockets in flight. Runs every frame. */
+    sync({soldiers, rockets = [], tick, isNight}) {
+        this.#syncRockets(rockets);
+        this.#impacts = this.#impacts.filter(({view, tick: landed}) => {
+            const age = (tick - landed) / ROCKET_IMPACT_TICKS;
+            if (isNight && age <= 1) {
+                view.setScale(1 + age).setAlpha(1 - age);
+                return true;
+            }
+            view.destroy();
+            return false;
+        });
         const alive = new Set(soldiers.map((soldier) => soldier.id));
         for (const [id, view] of this.#soldiers) {
             if (alive.has(id)) continue;
@@ -120,6 +149,8 @@ export class InfantryLayer {
         }
         for (const building of barracks) {
             if (!this.#marks.has(building.id)) this.#marks.set(building.id, this.#addMarks(building));
+            const marks = this.#marks.get(building.id);
+            marks.roof.setText(`${marks.number}${building.role ? 'R' : ''}`);
         }
 
         this.#graphics.clear();
@@ -142,11 +173,35 @@ export class InfantryLayer {
             deaths: this.#deaths.map(({view}) => ({x: view.x, y: view.y})),
             flags: this.#flagViews.map((view) => ({...view})),
             pips: Object.fromEntries([...this.#marks].map(([id, {pips}]) => [id, pips.filter((pip) => pip.visible).length])),
+            rockets: [...this.#rockets].map(([id, view]) => ({id, visible: view.visible, x: view.x, y: view.y, rotation: view.rotation})),
+            impacts: this.#impacts.map(({view}) => ({x: view.x, y: view.y})),
+            roofs: Object.fromEntries([...this.#marks].map(([id, {roof}]) => [id, roof.text])),
         };
     }
 
-    #syncSoldier({id, x: domainX, y: domainY, hp, maxHp}, [dx, dy]) {
-        const view = this.#soldiers.get(id) ?? this.#addSoldier(id);
+    #syncRockets(rockets) {
+        const inFlight = new Set(rockets.map(({id}) => id));
+        for (const [id, view] of this.#rockets) {
+            if (inFlight.has(id)) continue;
+            view.destroy();
+            this.#rockets.delete(id);
+        }
+        for (const {id, fromX, fromY, x, y, flightTicks, ticksLeft} of rockets) {
+            let view = this.#rockets.get(id);
+            if (!view) {
+                view = this.#scene.add.rectangle(fromX, fromY, ROCKET_SIZE.width, ROCKET_SIZE.height, ROCKET_COLOR)
+                    .setStrokeStyle(1, ROCKET_STROKE)
+                    .setRotation(Math.atan2(y - fromY, x - fromX))
+                    .setDepth(SOLDIER_DEPTH);
+                this.#rockets.set(id, view);
+            }
+            const flown = 1 - ticksLeft / flightTicks;
+            view.setPosition(fromX + (x - fromX) * flown, fromY + (y - fromY) * flown);
+        }
+    }
+
+    #syncSoldier({id, x: domainX, y: domainY, hp, maxHp, role}, [dx, dy]) {
+        const view = this.#soldiers.get(id) ?? this.#addSoldier(id, role);
         const x = domainX + dx;
         const y = domainY + dy;
         view.last = {x, y};
@@ -156,9 +211,10 @@ export class InfantryLayer {
             .setVisible(hp < maxHp);
     }
 
-    #addSoldier(id) {
+    #addSoldier(id, role) {
+        const size = role ? ROCKET_SOLDIER_SIZE : SOLDIER_SIZE;
         const view = {
-            body: this.#scene.add.rectangle(0, 0, SOLDIER_SIZE, SOLDIER_SIZE, SOLDIER_COLOR)
+            body: this.#scene.add.rectangle(0, 0, size, size, role ? ROCKET_SOLDIER_COLOR : SOLDIER_COLOR)
                 .setStrokeStyle(2, SOLDIER_STROKE)
                 .setRotation(Math.PI / 4)
                 .setDepth(SOLDIER_DEPTH),

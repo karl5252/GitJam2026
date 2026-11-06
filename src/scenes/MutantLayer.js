@@ -1,5 +1,5 @@
 import {getBuildingType} from '../core/buildingTypes.js';
-import {SPITTER} from '../core/mutants.js';
+import {BRUTE, SPITTER} from '../core/mutants.js';
 
 const MUTANT_RADIUS = 8;
 const MUTANT_COLOR = 0xd81b60;
@@ -26,6 +26,12 @@ const IMPACT_RADIUS = 7;
 const IMPACT_GROWTH = 2;
 const IMPACT_STROKE = 3;
 const IMPACT_MISS_COLOR = 0xb0bec5;
+const BRUTE_RADIUS = 15; // an octagon about 30 px across, 16 CSS px at 844x390
+const BRUTE_COLOR = 0xff6f00;
+const BRUTE_STROKE = 0x3e1c00;
+const BRUTE_STROKE_WIDTH = 3;
+const BRUTE_SWELL = 0.25; // winding up a blow
+const BRUTE_BAR = {width: 32, height: 5, offset: 22, back: 0x212121};
 const DEATH_TICKS = 30;
 const DEATH_STYLE = {fontFamily: 'monospace', fontSize: '24px', color: '#c6ff00'};
 
@@ -36,13 +42,15 @@ const DEATH_STYLE = {fontFamily: 'monospace', fontSize: '24px', color: '#c6ff00'
  * Mutants differ by shape, not just colour: a circle, or a triangle for a Spitter.
  * A Spitter swells and draws a line to its fixed aim point during its telegraph,
  * and with its last shot gone it turns over and goes dull, which is the warning
- * that it is coming in.
+ * that it is coming in. A Brute is a large octagon that always shows its HP, and it
+ * swells as it winds up a blow, with a ring when the blow lands.
  */
 export class MutantLayer {
     #scene;
     #grid;
     #mutantViews = new Map();
     #spitters = new Map(); // id -> {view, line, spent, x, y}
+    #brutes = new Map(); // id -> {view, back, bar, timer, x, y}
     #shells = new Map();
     #impacts = []; // {view, tick}
     #deaths = []; // {view, tick}
@@ -56,8 +64,10 @@ export class MutantLayer {
     /** Match the views to the current mutants, shells and buildings. */
     sync(mutants, buildings, {shells = [], tick = 0, isNight = false} = {}) {
         const spitters = mutants.filter(({kind}) => kind === SPITTER.kind);
-        this.#syncMutants(mutants.filter(({kind}) => kind !== SPITTER.kind));
+        const brutes = mutants.filter(({kind}) => kind === BRUTE.kind);
+        this.#syncMutants(mutants.filter(({kind}) => kind === undefined));
         this.#syncSpitters(spitters, tick, isNight);
+        this.#syncBrutes(brutes, tick, isNight);
         this.#syncShells(shells);
         this.#syncFading(tick, isNight);
         this.#syncHpBars(buildings);
@@ -89,6 +99,18 @@ export class MutantLayer {
                 spent,
                 inverted: view.rotation !== 0,
                 aiming: line.visible,
+            })),
+            ...[...this.#brutes].map(([id, {view, bar}]) => ({
+                id,
+                kind: BRUTE.kind,
+                visible: view.visible,
+                x: view.x,
+                y: view.y,
+                radius: BRUTE_RADIUS,
+                scale: view.scaleX,
+                fillColor: view.fillColor,
+                hpBarWidth: bar.width,
+                hpBarVisible: bar.visible,
             })),
         ];
     }
@@ -146,6 +168,39 @@ export class MutantLayer {
             spitter.y = mutant.y;
             this.#drawSpitter(spitter, mutant);
         }
+    }
+
+    #syncBrutes(brutes, tick, isNight) {
+        const alive = new Set(brutes.map(({id}) => id));
+        for (const [id, brute] of this.#brutes) {
+            if (alive.has(id)) continue;
+            if (isNight) this.#addDeath(brute, tick);
+            for (const view of [brute.view, brute.back, brute.bar]) view.destroy();
+            this.#brutes.delete(id);
+        }
+        for (const mutant of brutes) {
+            const brute = this.#brutes.get(mutant.id) ?? this.#addBrute(mutant);
+            const {x, y, hp, attackTimer} = mutant;
+            if (attackTimer > brute.timer) this.#addRing(x, y, BRUTE_COLOR, tick); // a blow landed since the last frame
+            brute.timer = attackTimer;
+            brute.x = x;
+            brute.y = y;
+            brute.view.setPosition(x, y).setScale(1 + BRUTE_SWELL * (1 - attackTimer / BRUTE.attackCooldownTicks));
+            const left = x - BRUTE_BAR.width / 2;
+            brute.back.setPosition(left, y - BRUTE_BAR.offset);
+            brute.bar.setPosition(left, y - BRUTE_BAR.offset).setSize(BRUTE_BAR.width * hp / BRUTE.maxHp, BRUTE_BAR.height);
+        }
+    }
+
+    #addBrute({id, attackTimer}) {
+        const view = this.#scene.add.star(0, 0, 4, BRUTE_RADIUS, BRUTE_RADIUS, BRUTE_COLOR)
+            .setStrokeStyle(BRUTE_STROKE_WIDTH, BRUTE_STROKE)
+            .setDepth(MUTANT_DEPTH);
+        const back = this.#scene.add.rectangle(0, 0, BRUTE_BAR.width, BRUTE_BAR.height, BRUTE_BAR.back).setOrigin(0, 0.5).setDepth(MUTANT_DEPTH);
+        const bar = this.#scene.add.rectangle(0, 0, BRUTE_BAR.width, BRUTE_BAR.height, HP_BAR_COLOR).setOrigin(0, 0.5).setDepth(MUTANT_DEPTH);
+        const brute = {view, back, bar, timer: attackTimer, x: 0, y: 0};
+        this.#brutes.set(id, brute);
+        return brute;
     }
 
     #addSpitter({id}) {

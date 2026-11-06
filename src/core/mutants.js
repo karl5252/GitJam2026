@@ -50,11 +50,18 @@
  * was going to hit has gone, and is removed at dawn. A Spitter with no shots left
  * has no ranged behaviour at all: it runs the melee code like any other mutant.
  * Ordinary mutant records stay exactly as they were.
+ *
+ * A Brute is a melee mutant with `kind`: heavier, slower and harder hitting, which
+ * statsOf() is the only code that knows. It chooses targets, attacks and is lured
+ * like anyone. The one thing it does differently is never go round a fortification:
+ * whatever blocks it becomes its obstacle at once, and the breach it leaves is open
+ * to everyone behind it. Mutants do not collide, so Brutes can share a wall.
  */
 import {HQ_TYPE, getBuildingType} from './buildingTypes.js';
 import {INFANTRY} from './infantry.js';
 import {firstSolid} from './lineOfFire.js';
 import {Shift} from './shiftCycle.js';
+import {BRUTE_KIND, flightTicks} from './shots.js';
 
 export const MUTANT = Object.freeze({
     maxHp: 40,
@@ -77,8 +84,23 @@ export const SPITTER = Object.freeze({
     retaliationRange: 128, // px, to a soldier it has a clear line to
 });
 
+/** Provisional values. Its melee range is MUTANT.attackRange. */
+export const BRUTE = Object.freeze({
+    kind: BRUTE_KIND,
+    maxHp: 600,
+    speed: 0.25, // px per tick; must stay below the smallest footprint size
+    attackDamage: 25,
+    attackCooldownTicks: 120,
+});
+
+/** What a mutant walks and hits with. A Spitter out of shots is as ordinary as any. */
+const statsOf = ({kind}) => (kind === BRUTE.kind ? BRUTE : MUTANT);
+
+/** A slot that keeps its tick and its random number but spawns nothing, for a Brute's cost. */
+const ABSORBED = 'absorbed';
+
 /** Px subtracted from a building's distance: higher is more attractive. */
-export const TARGET_BIAS = Object.freeze({hq: 256, powerPlant: 256, factory: 128, autocannon: 64, barracks: 64, outpost: 0});
+export const TARGET_BIAS = Object.freeze({hq: 256, powerPlant: 256, factory: 128, autocannon: 64, siegeCannon: 64, barracks: 64, outpost: 0});
 
 /** Px from a walking mutant to a soldier it will turn towards. */
 export const LURE_RANGE = 64;
@@ -184,17 +206,24 @@ export function borderSpawns(grid) {
 }
 
 /** One movement step toward the nearest footprint point, along the longer axis (x on ties). */
-function nextPosition({x, y}, rect) {
+function nextPosition({x, y}, rect, speed) {
     const dx = Math.min(Math.max(x, rect.x), rect.x + rect.width) - x;
     const dy = Math.min(Math.max(y, rect.y), rect.y + rect.height) - y;
-    if (Math.abs(dx) >= Math.abs(dy)) return {x: x + Math.sign(dx) * Math.min(MUTANT.speed, Math.abs(dx)), y};
-    return {x, y: y + Math.sign(dy) * Math.min(MUTANT.speed, Math.abs(dy))};
+    if (Math.abs(dx) >= Math.abs(dy)) return {x: x + Math.sign(dx) * Math.min(speed, Math.abs(dx)), y};
+    return {x, y: y + Math.sign(dy) * Math.min(speed, Math.abs(dy))};
 }
 
 /** What a mutant has to reach to hit a soldier. */
 function soldierBody({x, y}) {
     const half = INFANTRY.bodySize / 2;
     return {x: x - half, y: y - half, width: INFANTRY.bodySize, height: INFANTRY.bodySize};
+}
+
+/** What a new record gets from its kind: `extra` is only on records that are not ordinary. */
+function freshStats(kind) {
+    if (kind === SPITTER.kind) return {hp: SPITTER.maxHp, attackTimer: SPITTER.windupTicks, extra: {kind, shots: SPITTER.maxShots, aim: null}};
+    if (kind === BRUTE.kind) return {hp: BRUTE.maxHp, attackTimer: BRUTE.attackCooldownTicks, extra: {kind}};
+    return {hp: MUTANT.maxHp, attackTimer: MUTANT.attackCooldownTicks, extra: {}};
 }
 
 const CELL_STEPS = Object.freeze([[0, -1], [1, 0], [0, 1], [-1, 0]]); // N, E, S, W
@@ -208,7 +237,14 @@ function assertValidSchedule(schedule, nightTicks) {
 function assertValidSlots(slots, schedule) {
     const valid = Array.isArray(slots) && slots.every((slot, i) => Number.isInteger(slot)
         && slot >= 0 && slot < schedule.length && (i === 0 || slot > slots[i - 1]));
-    if (!valid) throw new RangeError(`spitter slots must be strictly increasing indices into a schedule of ${schedule.length}`);
+    if (!valid) throw new RangeError(`slots must be strictly increasing indices into a schedule of ${schedule.length}`);
+}
+
+/** Every kind of slot is valid on its own, and no slot is two things at once. */
+function assertValidComposition({spitterSlots = [], bruteSlots = [], absorbedSlots = []}, schedule) {
+    for (const slots of [spitterSlots, bruteSlots, absorbedSlots]) assertValidSlots(slots, schedule);
+    const all = [...spitterSlots, ...bruteSlots, ...absorbedSlots];
+    if (new Set(all).size !== all.length) throw new RangeError('a slot cannot be two things at once');
 }
 
 export class Mutants {
@@ -217,7 +253,7 @@ export class Mutants {
     #grid;
     #rng;
     #schedule;
-    #spitterSlots;
+    #composition;
     #planNight;
     #plan = null; // frozen for the night on tick 1, cleared at dawn
     #logistics;
@@ -240,15 +276,20 @@ export class Mutants {
      *          gates?: import('./gates.js').Gates | null,
      *          schedule?: readonly number[],
      *          spitterSlots?: readonly number[],
-     *          planNight?: ((day: number) => {schedule: readonly number[], spitterSlots?: readonly number[]}) | null}} deps
-     *   schedule     - fixed spawn ticks, the same every night
-     *   spitterSlots - which of those are Spitters, as indices into schedule
-     *   planNight    - asked once per night, on night tick 1; overrides both
+     *          bruteSlots?: readonly number[],
+     *          absorbedSlots?: readonly number[],
+     *          planNight?: ((day: number) => {schedule: readonly number[], spitterSlots?: readonly number[],
+     *                       bruteSlots?: readonly number[], absorbedSlots?: readonly number[]}) | null}} deps
+     *   schedule      - fixed spawn ticks, the same every night
+     *   spitterSlots  - which of those are Spitters, as indices into schedule
+     *   bruteSlots    - which are Brutes
+     *   absorbedSlots - which spawn nothing, paying for a Brute
+     *   planNight     - asked once per night, on night tick 1; overrides them all
      */
-    constructor({cycle, placement, grid, rng, schedule = [], spitterSlots = [], planNight = null, logistics = null, gates = null}) {
+    constructor({cycle, placement, grid, rng, schedule = [], spitterSlots = [], bruteSlots = [], absorbedSlots = [], planNight = null, logistics = null, gates = null}) {
         assertValidSchedule(schedule, cycle.nightTicks);
-        assertValidSlots(spitterSlots, schedule);
-        this.#spitterSlots = spitterSlots;
+        this.#composition = {spitterSlots, bruteSlots, absorbedSlots};
+        assertValidComposition(this.#composition, schedule);
         this.#cycle = cycle;
         this.#placement = placement;
         this.#grid = grid;
@@ -297,8 +338,16 @@ export class Mutants {
             this.#act(mutant, buildings, byId, effects, trucks, soldiers);
             if (this.#cycle.shift !== Shift.NIGHT) return effects; // HQ fell: the run ended on that hit
         }
-        if (spawnDue) this.#spawn(buildings, byId, effects, this.#plan.spitterSlots?.includes(slot) ?? false);
+        if (spawnDue) this.#spawn(buildings, byId, effects, this.#slotKind(slot));
         return effects;
+    }
+
+    /** What a schedule slot brings: null for an ordinary mutant. */
+    #slotKind(slot) {
+        const {spitterSlots, bruteSlots, absorbedSlots} = this.#plan;
+        if (absorbedSlots?.includes(slot)) return ABSORBED;
+        if (bruteSlots?.includes(slot)) return BRUTE.kind;
+        return spitterSlots?.includes(slot) ? SPITTER.kind : null;
     }
 
     /** The frozen plan for the current night, or null outside a started Night. */
@@ -345,12 +394,12 @@ export class Mutants {
 
     #resolvePlan() {
         if (!this.#planNight) {
-            const slots = this.#spitterSlots.length ? {spitterSlots: Object.freeze([...this.#spitterSlots])} : {};
-            return Object.freeze({schedule: Object.freeze([...this.#schedule]), ...slots});
+            const slots = Object.entries(this.#composition).filter(([, list]) => list.length).map(([name, list]) => [name, Object.freeze([...list])]);
+            return Object.freeze({schedule: Object.freeze([...this.#schedule]), ...Object.fromEntries(slots)});
         }
         const plan = this.#planNight(this.#cycle.day);
         assertValidSchedule(plan.schedule, this.#cycle.nightTicks);
-        assertValidSlots(plan.spitterSlots ?? [], plan.schedule);
+        assertValidComposition(plan, plan.schedule);
         return plan;
     }
 
@@ -374,7 +423,8 @@ export class Mutants {
         const blocker = this.#blockerOf(mutant, next, buildings, byId);
         if (blocker) {
             this.#endDetour(mutant);
-            if (!isFortification(blocker) || !this.#planDetour(mutant, target, byId)) mutant.obstacleId = blocker.id;
+            const breaches = !isFortification(blocker) || mutant.kind === BRUTE.kind;
+            if (breaches || !this.#planDetour(mutant, target, byId)) mutant.obstacleId = blocker.id;
             return;
         }
         mutant.x = next.x;
@@ -399,10 +449,11 @@ export class Mutants {
         }
 
         // The attack timer only runs while stationary.
-        mutant.attackTimer = MUTANT.attackCooldownTicks;
+        const {speed, attackCooldownTicks} = statsOf(mutant);
+        mutant.attackTimer = attackCooldownTicks;
         const lure = this.#lure(mutant, soldiers, buildings, byId);
         if (!lure) return false;
-        Object.assign(mutant, nextPosition(mutant, lure));
+        Object.assign(mutant, nextPosition(mutant, lure, speed));
         return true;
     }
 
@@ -455,7 +506,7 @@ export class Mutants {
         const {x, y, soldier} = mutant.aim;
         const hit = this.#solidOnLine(mutant, mutant.aim, buildings, byId);
         const end = hit ?? {x, y};
-        const flightTicks = Math.max(1, Math.ceil(Math.max(Math.abs(end.x - mutant.x), Math.abs(end.y - mutant.y)) / SPITTER.shellSpeed));
+        const ticks = flightTicks(mutant, end, SPITTER.shellSpeed);
         this.#shells.push({
             id: `shell-${this.#nextShellId++}`,
             mutantId: mutant.id,
@@ -465,8 +516,8 @@ export class Mutants {
             y: end.y,
             buildingId: hit ? hit.building.id : null,
             soldier: soldier && !hit,
-            flightTicks,
-            ticksLeft: flightTicks,
+            flightTicks: ticks,
+            ticksLeft: ticks,
         });
         mutant.aim = null;
         mutant.shots--;
@@ -503,7 +554,7 @@ export class Mutants {
     /** The next step: onto the map, then along a detour if there is one, otherwise straight at the target. */
     #nextStep(mutant, rect) {
         const path = this.#pathing.get(mutant);
-        return this.#stepOntoMap(mutant) ?? nextPosition(mutant, path?.cells ? path.cells[path.index] : rect);
+        return this.#stepOntoMap(mutant) ?? nextPosition(mutant, path?.cells ? path.cells[path.index] : rect, statsOf(mutant).speed);
     }
 
     /** Being outside the map is only ever where a spawn left a mutant: its one move is inward. */
@@ -621,15 +672,17 @@ export class Mutants {
     }
 
     #attackTruck(mutant, truck, trucks) {
-        mutant.attackTimer = MUTANT.attackCooldownTicks;
-        const result = this.#logistics.damageTruck(truck.id, MUTANT.attackDamage);
+        const {attackDamage, attackCooldownTicks} = statsOf(mutant);
+        mutant.attackTimer = attackCooldownTicks;
+        const result = this.#logistics.damageTruck(truck.id, attackDamage);
         if (!result.ok) throw new Error(`Mutant ${mutant.id} could not damage ${truck.id}: ${result.reason}`);
         if (result.destroyed) trucks.splice(trucks.indexOf(truck), 1);
     }
 
     #attackSoldier(mutant, soldier, soldiers) {
-        mutant.attackTimer = MUTANT.attackCooldownTicks;
-        this.#hurtSoldier(mutant.id, soldier, MUTANT.attackDamage, soldiers);
+        const {attackDamage, attackCooldownTicks} = statsOf(mutant);
+        mutant.attackTimer = attackCooldownTicks;
+        this.#hurtSoldier(mutant.id, soldier, attackDamage, soldiers);
     }
 
     #hurtSoldier(mutantId, soldier, damage, soldiers) {
@@ -659,9 +712,10 @@ export class Mutants {
 
     /** Walk the whole way in advance, step for step. At most LURE_RANGE / speed steps. */
     #clearWay(mutant, body, buildings, byId) {
+        const {speed} = statsOf(mutant);
         let at = mutant;
         while (distanceToFootprint(at, body) > MUTANT.attackRange) {
-            const next = nextPosition(at, body);
+            const next = nextPosition(at, body, speed);
             if (this.#blockerOf(at, next, buildings, byId)) return false;
             at = next;
         }
@@ -669,8 +723,9 @@ export class Mutants {
     }
 
     #attack(mutant, buildingId, buildings, byId, effects) {
-        mutant.attackTimer = MUTANT.attackCooldownTicks;
-        this.#hurtBuilding(mutant.id, buildingId, MUTANT.attackDamage, buildings, byId, effects);
+        const {attackDamage, attackCooldownTicks} = statsOf(mutant);
+        mutant.attackTimer = attackCooldownTicks;
+        this.#hurtBuilding(mutant.id, buildingId, attackDamage, buildings, byId, effects);
     }
 
     #hurtBuilding(mutantId, buildingId, damage, buildings, byId, effects) {
@@ -692,8 +747,9 @@ export class Mutants {
      * displace a spawn: the mutant arrives outside it instead, so fortifying the
      * border can neither cancel a wave nor funnel it to the cells left open.
      */
-    #spawn(buildings, byId, effects, spitter) {
+    #spawn(buildings, byId, effects, kind) {
         const start = this.#rng.nextInt(0, this.#spawns.length - 1);
+        if (kind === ABSORBED) return;
         for (let i = 0; i < this.#spawns.length; i++) {
             const spawn = this.#spawns[(start + i) % this.#spawns.length];
             const occupant = this.#grid.occupantAt(spawn.col, spawn.row);
@@ -702,15 +758,16 @@ export class Mutants {
             if (occupant !== null && !fortified) continue;
             const {x, y} = fortified ? this.#outsideMap(spawn) : spawn;
             const id = `mutant-${this.#nextId++}`;
+            const {hp, attackTimer, extra} = freshStats(kind);
             this.#mutants.push({
                 id,
                 x,
                 y,
-                hp: spitter ? SPITTER.maxHp : MUTANT.maxHp,
+                hp,
                 targetId: selectTarget({x, y}, buildings, this.#grid),
                 obstacleId: null,
-                attackTimer: spitter ? SPITTER.windupTicks : MUTANT.attackCooldownTicks,
-                ...(spitter ? {kind: SPITTER.kind, shots: SPITTER.maxShots, aim: null} : {}),
+                attackTimer,
+                ...extra,
             });
             effects.spawned.push(id);
             return;

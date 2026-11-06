@@ -187,7 +187,7 @@ test('a Spitter spawns with its own stats, and the same target rules as anyone',
     assert.deepEqual({...spitter(w)}, {
         id: 'mutant-1', x: 656, y: 104, hp: 30, targetId: plant, obstacleId: null, attackTimer: 45, kind: 'spitter', shots: 5, aim: null,
     });
-    assert.deepEqual(TARGET_BIAS, {hq: 256, powerPlant: 256, factory: 128, autocannon: 64, barracks: 64, outpost: 0});
+    assert.deepEqual(TARGET_BIAS, {hq: 256, powerPlant: 256, factory: 128, autocannon: 64, siegeCannon: 64, barracks: 64, outpost: 0});
 });
 
 test('it walks at the ordinary speed and stops exactly at range, with its aim fixed', () => {

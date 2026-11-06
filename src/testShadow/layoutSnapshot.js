@@ -7,6 +7,9 @@
 // layout without one is version 1 and stays byte for byte what it always was.
 // The version must match the contents, so neither can pass for the other.
 //
+// Version 3 exists only because of rocket squads: every Barracks entry then
+// carries `role`. A layout with no rockets stays version 2, byte for byte.
+//
 // Building order is data. Target ties, blockers and turret firing all follow
 // the building list, so the array keeps creation order and is never sorted.
 // Instance ids are left out: only list order affects combat, and ids are only
@@ -17,7 +20,7 @@
 // is touched. That cannot prove the live replay succeeds, so its result is
 // checked too, and the caller must discard the run if it reports `applied`.
 
-import {BARRACKS_TYPE, HQ_TYPE, getBuildingType} from '../core/buildingTypes.js';
+import {BARRACKS_TYPE, BarracksRole, HQ_TYPE, getBuildingType} from '../core/buildingTypes.js';
 import {BuildingPlacement} from '../core/buildingPlacement.js';
 import {Economy} from '../core/economy.js';
 import {Grid} from '../core/grid.js';
@@ -27,6 +30,7 @@ import {Shift} from '../core/shiftCycle.js';
 export const LAYOUT_FORMAT = 'papi-layout';
 export const LAYOUT_VERSION = 1;
 export const LAYOUT_VERSION_BARRACKS = 2;
+export const LAYOUT_VERSION_ROLES = 3;
 
 export const LayoutFailure = Object.freeze({
     NOT_STARTED: 'not-started',
@@ -45,6 +49,7 @@ export const LayoutFailure = Object.freeze({
 const TOP_LEVEL = ['format', 'version', 'grid', 'buildings', 'roads'];
 const BUILDING_FIELDS = ['type', 'col', 'row', 'enabled'];
 const BARRACKS_FIELDS = [...BUILDING_FIELDS, 'flag'];
+const BARRACKS_ROLE_FIELDS = [...BARRACKS_FIELDS, 'role'];
 const ROAD_FIELDS = ['col', 'row', 'kind'];
 
 const fail = (reason, detail) => ({ok: false, reason, ...(detail ? {detail} : {})});
@@ -53,10 +58,20 @@ const hasExactly = (value, fields) => value !== null && typeof value === 'object
 const isCell = ({col, row}) => Number.isInteger(col) && Number.isInteger(row);
 const byCell = (cols) => (a, b) => (a.row * cols + a.col) - (b.row * cols + b.col);
 const isBarracks = ({type}) => type === BARRACKS_TYPE;
-const versionFor = (buildings) => (buildings.some(isBarracks) ? LAYOUT_VERSION_BARRACKS : LAYOUT_VERSION);
+/** Anything but rifles needs version 3, so a bad role is reported as one, not as a version mismatch. */
+const hasRoles = (buildings) => buildings.some((b) => isBarracks(b) && b.role !== undefined && b.role !== BarracksRole.RIFLE);
+const versionFor = (buildings) => {
+    if (hasRoles(buildings)) return LAYOUT_VERSION_ROLES;
+    return buildings.some(isBarracks) ? LAYOUT_VERSION_BARRACKS : LAYOUT_VERSION;
+};
 const flagOf = (flag) => (flag ? {col: flag.col, row: flag.row} : null);
-const buildingEntry = ({type, col, row, enabled, flag}) => ({
-    type, col, row, enabled, ...(type === BARRACKS_TYPE ? {flag: flagOf(flag)} : {}),
+const buildingEntry = (withRoles) => ({type, col, row, enabled, flag, role}) => ({
+    type,
+    col,
+    row,
+    enabled,
+    ...(type === BARRACKS_TYPE ? {flag: flagOf(flag)} : {}),
+    ...(type === BARRACKS_TYPE && withRoles ? {role: role ?? BarracksRole.RIFLE} : {}),
 });
 
 /** A deterministic snapshot of the live layout. */
@@ -66,7 +81,7 @@ export function exportLayout({grid, placement, roads}) {
         format: LAYOUT_FORMAT,
         version: versionFor(buildings),
         grid: {cols: grid.cols, rows: grid.rows},
-        buildings: buildings.map(buildingEntry),
+        buildings: buildings.map(buildingEntry(hasRoles(buildings))),
         roads: roads.tiles().map(({col, row, kind}) => ({col, row, kind})),
     };
 }
@@ -74,7 +89,7 @@ export function exportLayout({grid, placement, roads}) {
 /** Shape checks only. Spatial rules are left to the real placement code. */
 function checkShape(snapshot) {
     if (snapshot === null || typeof snapshot !== 'object') return fail(LayoutFailure.INVALID_SNAPSHOT, 'not an object');
-    if (snapshot.format !== LAYOUT_FORMAT || ![LAYOUT_VERSION, LAYOUT_VERSION_BARRACKS].includes(snapshot.version)) {
+    if (snapshot.format !== LAYOUT_FORMAT || ![LAYOUT_VERSION, LAYOUT_VERSION_BARRACKS, LAYOUT_VERSION_ROLES].includes(snapshot.version)) {
         return fail(LayoutFailure.UNSUPPORTED_SCHEMA, `${snapshot.format} v${snapshot.version}`);
     }
     if (!hasExactly(snapshot, TOP_LEVEL) || !hasExactly(snapshot.grid, ['cols', 'rows'])
@@ -84,10 +99,12 @@ function checkShape(snapshot) {
     if (snapshot.version !== versionFor(snapshot.buildings)) {
         return fail(LayoutFailure.UNSUPPORTED_SCHEMA, `v${snapshot.version} does not match its buildings`);
     }
+    const barracksFields = snapshot.version === LAYOUT_VERSION_ROLES ? BARRACKS_ROLE_FIELDS : BARRACKS_FIELDS;
     for (const building of snapshot.buildings) {
-        const fields = isBarracks(building) ? BARRACKS_FIELDS : BUILDING_FIELDS;
+        const fields = isBarracks(building) ? barracksFields : BUILDING_FIELDS;
         const badFlag = isBarracks(building) && building.flag !== null && !(hasExactly(building.flag, ['col', 'row']) && isCell(building.flag));
-        if (!hasExactly(building, fields) || !isCell(building) || typeof building.enabled !== 'boolean' || badFlag) {
+        const badRole = fields === BARRACKS_ROLE_FIELDS && !Object.values(BarracksRole).includes(building.role);
+        if (!hasExactly(building, fields) || !isCell(building) || typeof building.enabled !== 'boolean' || badFlag || badRole) {
             return fail(LayoutFailure.INVALID_SNAPSHOT, `bad building ${JSON.stringify(building)}`);
         }
         if (!getBuildingType(building.type)) return fail(LayoutFailure.UNKNOWN_BUILDING_TYPE, String(building.type));
@@ -149,6 +166,10 @@ function replay({placement, roads, economy}, snapshot, faultAfter = null) {
             if (!switched.ok) return fail(switched.reason, `${building.type} cannot be disabled`);
         }
         if (building.flag) flags.push({id: landed.id, flag: building.flag});
+        if (building.role) {
+            const restored = placement.restoreRole(landed.id, building.role);
+            if (!restored.ok) return fail(restored.reason, `role ${building.role}`);
+        }
         return {ok: true};
     };
 
@@ -187,7 +208,7 @@ const canonical = (snapshot) => ({
     format: snapshot.format,
     version: snapshot.version,
     grid: {cols: snapshot.grid.cols, rows: snapshot.grid.rows},
-    buildings: snapshot.buildings.map(buildingEntry),
+    buildings: snapshot.buildings.map(buildingEntry(hasRoles(snapshot.buildings))),
     roads: [...snapshot.roads].sort(byCell(snapshot.grid.cols)).map(({col, row, kind}) => ({col, row, kind})),
 });
 

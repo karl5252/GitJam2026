@@ -92,7 +92,7 @@ function settlementSuite({pressWorld, pressAction}) {
         s = await sample(page);
         const expected = {
             day: 1, gross: 0, upkeep: 20, net: -20, creditsBefore: LEFT, creditsAfter: LEFT - 20,
-            counts: {hq: 0, outpost: 1, factory: 1, powerPlant: 1, autocannon: 0, barracks: 0, wall: 0, gateVertical: 0, gateHorizontal: 0},
+            counts: {hq: 0, outpost: 1, factory: 1, powerPlant: 1, autocannon: 0, siegeCannon: 0, barracks: 0, wall: 0, gateVertical: 0, gateHorizontal: 0},
             power: {generation: 100, demand: 50, status: 'normal'},
             pollution: {before: 0, emitted: 20, after: 20, threatLevel: 1},
         };
@@ -120,7 +120,7 @@ function settlementSuite({pressWorld, pressAction}) {
         const s = await sample(page);
         expect(s.settlement).toEqual({
             day: 1, gross: 0, upkeep: 20, net: -20, creditsBefore: START - 500, creditsAfter: START - 520,
-            counts: {hq: 0, outpost: 1, factory: 1, powerPlant: 0, autocannon: 0, barracks: 0, wall: 0, gateVertical: 0, gateHorizontal: 0},
+            counts: {hq: 0, outpost: 1, factory: 1, powerPlant: 0, autocannon: 0, siegeCannon: 0, barracks: 0, wall: 0, gateVertical: 0, gateHorizontal: 0},
             power: {generation: 0, demand: 50, status: 'blackout'},
             pollution: {before: 0, emitted: 0, after: 0, threatLevel: 1},
         });
@@ -149,7 +149,7 @@ function settlementSuite({pressWorld, pressAction}) {
         const s = await sample(page);
         expect(s.settlement).toEqual({
             day: 1, gross: 0, upkeep: 0, net: 0, creditsBefore: START, creditsAfter: START,
-            counts: {hq: 0, outpost: 0, factory: 0, powerPlant: 0, autocannon: 0, barracks: 0, wall: 0, gateVertical: 0, gateHorizontal: 0},
+            counts: {hq: 0, outpost: 0, factory: 0, powerPlant: 0, autocannon: 0, siegeCannon: 0, barracks: 0, wall: 0, gateVertical: 0, gateHorizontal: 0},
             power: {generation: 0, demand: 0, status: 'normal'},
             pollution: {before: 0, emitted: 0, after: 0, threatLevel: 1},
         });

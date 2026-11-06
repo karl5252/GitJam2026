@@ -115,6 +115,8 @@ function shiftSuite(input) {
         const state = await start(page);
         await pressAction(page, 'build-factory');
         await pressWorld(page, cellCenter(state.grid, 16, 3), state); // dock 18,3 is on the ring of HQ at 20,3
+        await expect.poll(async () => (await sample(page)).powerWarning).toMatchObject({type: 'factory'}); // 40 against HQ's 20
+        await pressWorld(page, cellCenter(state.grid, 16, 3), state);
         await expect.poll(async () => (await sample(page)).buildings.length).toBe(2);
         const day1 = await sample(page);
         expect(day1.resources).toEqual({credits: START - 400, ap: 4});
