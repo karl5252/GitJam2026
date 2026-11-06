@@ -128,7 +128,7 @@ function suite(input) {
         const {state, id} = await base(page);
         await select(page, state, BARRACKS, id);
         expect((await sample(page)).buildingControlsView).toEqual({
-            flagVisible: true, flagLabel: 'Set\nflag', resetVisible: false, demolishVisible: true, demolishLabel: 'Demolish', demolishArmed: null,
+            flagVisible: true, flagLabel: 'Set\nflag', resetVisible: false, resetLabel: 'RESET\nFLAG', demolishVisible: true, demolishLabel: 'Demolish', demolishArmed: null,
             refitVisible: true, refitLabel: 'Refit: ROCKET\n200c · 1 AP', refitArmed: null,
         });
         await expect(byAction(page, 'set-flag')).toHaveAttribute('data-target', id);

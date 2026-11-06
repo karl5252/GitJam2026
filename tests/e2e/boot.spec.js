@@ -18,6 +18,8 @@ test('game boots into the game scene in the ready phase with a live QA surface',
         terrainView: null,
         fog: null,
         fogView: null,
+        workers: null,
+        workerViews: null,
         selectedCell: null,
         highlight: null,
         ui: {

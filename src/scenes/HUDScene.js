@@ -4,6 +4,7 @@ import {BARRACKS_TYPE, BUILDING_TYPES, REFIT_COST, getBuildingType} from '../cor
 import {PlacementFailure} from '../core/grid.js';
 import {PowerStatus} from '../core/power.js';
 import {RoadFailure} from '../core/roads.js';
+import {WorkFlagFailure} from '../core/workers.js';
 import {Shift} from '../core/shiftCycle.js';
 import {addProxy} from '../testShadow/TestProxy.js';
 import {BuildingControls} from './BuildingControls.js';
@@ -33,6 +34,8 @@ const PLACEMENT_HINTS = {
     [FlagFailure.OCCUPIED]: 'Flags go on open ground or roads',
     [FlagFailure.TAKEN]: 'Another squad holds this tile',
     [FlagFailure.UNREACHABLE]: 'Soldiers cannot reach this tile',
+    [WorkFlagFailure.OCCUPIED]: 'Work flags go on open ground, roads or jungle',
+    [WorkFlagFailure.UNREACHABLE]: 'Workers cannot reach this tile',
 };
 
 const POWER_STATUS_LABELS = {
@@ -406,8 +409,8 @@ export class HUDScene extends Phaser.Scene {
     onSelection(selection) {
         this.selection = selection;
         if (!this.ui) return;
-        const {building, canFlag, canDemolish, confirmDemolish, refitTo, switchable} = selection;
-        this.ui.controls.update(building, {canFlag, canDemolish, confirmDemolish, refitTo});
+        const {building, canFlag, workers, canDemolish, confirmDemolish, refitTo, switchable} = selection;
+        this.ui.controls.update(building, {canFlag, workers, canDemolish, confirmDemolish, refitTo});
         const narrow = this.layout.touch || building?.type === BARRACKS_TYPE;
         if (switchable) this.layoutToggle(narrow);
         this.showButton(this.ui.toggle, switchable);

@@ -18,6 +18,7 @@ import {Mutants} from '../core/mutants.js';
 import {nightPlan, waveProgress} from '../core/waves.js';
 import {Autocannons} from '../core/autocannons.js';
 import {DEFAULT_MAP, TILE_SIZE, WORLD_MAPS, createTerrain} from '../core/worldMap.js';
+import {WORKER, Workers} from '../core/workers.js';
 import {FogOfWar, buildingVision, fortificationTiles, startingKnown, unitVision} from '../core/vision.js';
 import {SIEGE, SIEGE_CANNON_TYPE, SiegeCannons} from '../core/siegeCannons.js';
 import {TEST_MODE} from '../testMode.js';
@@ -34,6 +35,7 @@ import {AutocannonLayer} from './AutocannonLayer.js';
 import {SiegeLayer} from './SiegeLayer.js';
 import {RoadLayer} from './RoadLayer.js';
 import {FogLayer} from './FogLayer.js';
+import {WorkerLayer} from './WorkerLayer.js';
 import {TerrainLayer} from './TerrainLayer.js';
 import {TruckLayer} from './TruckLayer.js';
 import {GateLayer} from './GateLayer.js';
@@ -136,7 +138,10 @@ export class GameScene extends Phaser.Scene {
         this.gateLayer = null;
         this.infantry = null;
         this.infantryLayer = null;
-        this.flagBarracksId = null; // the Barracks being given a flag, in flag mode
+        this.workers = null;
+        this.workerLayer = null;
+        this.renderedWorkFlagKey = null; // last revision, flag and selection the work flag was drawn for
+        this.flagBarracksId = null; // the Barracks or HQ being given a flag, in flag mode
         this.powerWarning = null; // {type, col, row}: a purchase waiting for its second press
         this.renderedPostsKey = null; // last revision and selection the flags were drawn for
         this.dragCell = null;
@@ -388,6 +393,10 @@ export class GameScene extends Phaser.Scene {
         }) : null;
         this.mutants.setInfantry(this.infantry);
         this.infantryLayer = this.infantry ? new InfantryLayer(this, this.grid) : null;
+        // HQ's squad, on the same terms: no roads means no HQ.
+        this.workers = this.roads ? new Workers({cycle: this.cycle, placement: this.placement, grid: this.grid, gates: this.gates}) : null;
+        this.mutants.setWorkers(this.workers);
+        this.workerLayer = this.workers ? new WorkerLayer(this, this.grid) : null;
 
         // Terrain paints its own tiles, and only where there is open ground to build on.
         if (this.terrain) {
@@ -476,7 +485,9 @@ export class GameScene extends Phaser.Scene {
      * frame rate or the speed. It only costs anything when a unit has changed tile.
      */
     updateUnitVision() {
-        if (this.fog && this.infantry) this.fog.setSources('soldiers', unitVision(this.infantry.soldiers(), this.grid));
+        if (!this.fog || !this.infantry) return;
+        this.fog.setSources('soldiers', unitVision(this.infantry.soldiers(), this.grid));
+        this.fog.setSources('workers', unitVision(this.workers.workers(), this.grid, WORKER.visionRadius));
     }
 
     /** Is this world point on a tile being watched right now? Null on a map with no fog. */
@@ -604,6 +615,7 @@ export class GameScene extends Phaser.Scene {
             isNight: this.cycle.shift === Shift.NIGHT,
         });
         if (this.infantry) this.syncInfantry();
+        if (this.workers) this.syncWorkers();
     }
 
     /** Once per change of shift, so the player's own zoom is never fought. */
@@ -633,6 +645,18 @@ export class GameScene extends Phaser.Scene {
             tick: this.clock.tick,
             isNight: this.cycle.shift === Shift.NIGHT,
         });
+    }
+
+    /** Workers every frame; their flag only when it, the walls or the selection changed. */
+    syncWorkers() {
+        const selected = this.selection().type?.id === HQ_TYPE || this.flagsWorkers();
+        const key = `${this.placement.revision}:${JSON.stringify(this.workers.flag)}:${selected}`;
+        if (key !== this.renderedWorkFlagKey) {
+            this.renderedWorkFlagKey = key;
+            this.workerLayer.syncFlag(this.workers.route(), selected);
+        }
+        const {workers, lost} = this.workers.snapshot();
+        this.workerLayer.sync({workers, lost, maxHp: WORKER.maxHp, tick: this.clock.tick, isNight: this.cycle.shift === Shift.NIGHT});
     }
 
     /** Runs once: the Day/Night key changes only once into the defeated state. */
@@ -672,9 +696,11 @@ export class GameScene extends Phaser.Scene {
     presentSelection() {
         const {building, type, demolishable} = this.selection();
         const isBarracks = type?.id === BARRACKS_TYPE;
+        const isHq = type?.id === HQ_TYPE && this.workers !== null;
         this.present(State.SELECTION, {
-            building: building ? {id: building.id, type: building.type, enabled: building.enabled, flag: building.flag ?? null} : null,
-            canFlag: isBarracks,
+            building: building ? {id: building.id, type: building.type, enabled: building.enabled, flag: isHq ? this.workers.flag : building.flag ?? null} : null,
+            canFlag: isBarracks || isHq,
+            workers: isHq,
             canDemolish: demolishable,
             confirmDemolish: !type?.fortification,
             refitTo: isBarracks && this.cycle.isConstructionAllowed
@@ -698,7 +724,8 @@ export class GameScene extends Phaser.Scene {
         const {building} = this.selection();
         if (!building) return;
         EventBus.emit(Notice.DISARM);
-        this.placement.clearFlag(building.id);
+        if (building.type === HQ_TYPE) this.workers.recall();
+        else this.placement.clearFlag(building.id);
         this.presentSelection();
     }
 
@@ -779,10 +806,15 @@ export class GameScene extends Phaser.Scene {
         this.showHint(null);
     }
 
-    /** Back to the Barracks, if it still stands. */
+    /** Is the flag being placed HQ's work flag? */
+    flagsWorkers() {
+        return this.flagBarracksId?.startsWith(`${HQ_TYPE}-`) ?? false;
+    }
+
+    /** Back to the Barracks or HQ, if it still stands. */
     exitFlagMode() {
         if (!this.flagBarracksId) return;
-        const barracks = this.placement.barracks().find((b) => b.id === this.flagBarracksId);
+        const barracks = this.placement.buildings().find((b) => b.id === this.flagBarracksId);
         this.flagBarracksId = null;
         this.presentMenu();
         this.previewRect.setVisible(false);
@@ -792,7 +824,7 @@ export class GameScene extends Phaser.Scene {
     }
 
     applyFlagCell(cell) {
-        const result = this.placement.setFlag(this.flagBarracksId, cell);
+        const result = this.flagsWorkers() ? this.workers.setFlag(cell) : this.placement.setFlag(this.flagBarracksId, cell);
         this.lastResult = result;
         if (result.ok) {
             this.exitFlagMode();
@@ -808,7 +840,8 @@ export class GameScene extends Phaser.Scene {
             this.previewRect.setVisible(false);
             return;
         }
-        this.previewResult = {footprint: {...cell, width: 1, height: 1}, ...this.placement.canSetFlag(this.flagBarracksId, cell)};
+        const check = this.flagsWorkers() ? this.workers.canSetFlag(cell) : this.placement.canSetFlag(this.flagBarracksId, cell);
+        this.previewResult = {footprint: {...cell, width: 1, height: 1}, ...check};
         this.drawPreview();
     }
 
@@ -1398,11 +1431,15 @@ export class GameScene extends Phaser.Scene {
         const defense = this.autocannons?.step();
         if (defense?.shots.length) this.autocannonLayer.recordShots(defense.shots, this.clock.tick);
         const wanted = this.logistics?.gateDemands();
-        if (wanted) this.infantry.addGateDemands(wanted);
+        if (wanted) {
+            this.infantry.addGateDemands(wanted);
+            this.workers.addGateDemands(wanted);
+        }
         this.gates?.step(wanted);
         const squads = this.infantry?.step();
         if (squads?.shots.length) this.infantryLayer.recordShots(squads.shots, this.clock.tick);
         if (squads?.impacts) this.infantryLayer.recordImpacts(squads.impacts, this.clock.tick);
+        this.workers?.step();
         const effects = this.mutants?.step();
         if (effects?.impacts) this.mutantLayer.recordImpacts(effects.impacts, this.clock.tick);
         if (effects?.destroyed.length) this.handleBuildingsDestroyed(effects.destroyed);
@@ -1521,6 +1558,8 @@ export class GameScene extends Phaser.Scene {
             // Domain squads, then the rendered soldiers and flags.
             infantry: this.infantry ? this.infantry.snapshot() : null,
             infantryViews: this.infantryLayer ? this.infantryLayer.views() : null,
+            workers: this.workers ? this.workers.snapshot() : null,
+            workerViews: this.workerLayer ? this.workerLayer.views() : null,
             flagMode: this.flagBarracksId,
             roadMode: this.roadMode,
             ringPreviewView: this.roadLayer ? this.roadLayer.ringPreviewView() : null,

@@ -10,7 +10,8 @@ const CONFIRM_STROKE = 0xffeb3b;
 /**
  * What a selected building offers besides its power switch: Demolish during Day,
  * and for a Barracks its rally flag and, once it has one, RESET FLAG, in Day and
- * Night, and a paid refit during Day. Presentation only, and where each button
+ * Night, and a paid refit during Day. HQ's work flag uses the same two flag buttons,
+ * labelled for its workers. Presentation only, and where each button
  * goes is the layout's business. On desktop Refit sits where Speed does at Night, so
  * a late press at dawn can land on it, which is one more reason it takes two presses.
  *
@@ -53,10 +54,11 @@ export class BuildingControls {
 
     /**
      * @param {{id: string, flag?: object|null} | null} building the selected building, if any
-     * @param {{canFlag: boolean, canDemolish: boolean, confirmDemolish: boolean, refitTo: string|null}} options
+     * @param {{canFlag: boolean, workers: boolean, canDemolish: boolean, confirmDemolish: boolean, refitTo: string|null}} options
+     *   workers - the flag is HQ's work flag
      *   refitTo - the role a refit would give this building, or null when it cannot have one
      */
-    update(building, {canFlag, canDemolish, confirmDemolish, refitTo}) {
+    update(building, {canFlag, workers, canDemolish, confirmDemolish, refitTo}) {
         this.#targetId = canDemolish ? building.id : null;
         this.#confirm = confirmDemolish;
         this.#refitTargetId = refitTo ? building.id : null;
@@ -67,7 +69,13 @@ export class BuildingControls {
         this.#show(this.#demolish, canDemolish, building?.id);
         this.#show(this.#refit, Boolean(refitTo), building?.id);
         this.#paintRefit();
-        if (canFlag) this.#flag.text.setText(building.flag ? 'Move\nflag' : 'Set\nflag');
+        if (canFlag) this.#labelFlags(building.flag, workers);
+    }
+
+    #labelFlags(flag, workers) {
+        if (workers) this.#flag.text.setText(flag ? 'MOVE\nFLAG' : 'SEND\nWORKERS');
+        else this.#flag.text.setText(flag ? 'Move\nflag' : 'Set\nflag');
+        this.#reset.text.setText(workers ? 'RECALL\nWORKERS' : 'RESET\nFLAG');
     }
 
     /** Back to a plain Demolish button. Safe to call at any time. */
@@ -85,6 +93,7 @@ export class BuildingControls {
             flagVisible: this.#flag.rect.visible,
             flagLabel: this.#flag.text.text,
             resetVisible: this.#reset.rect.visible,
+            resetLabel: this.#reset.text.text,
             demolishVisible: this.#demolish.rect.visible,
             demolishLabel: this.#demolish.text.text,
             demolishArmed: this.#armedId,

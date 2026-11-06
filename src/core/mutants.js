@@ -263,6 +263,7 @@ export class Mutants {
     #logistics;
     #gates;
     #infantry = null;
+    #workers = null;
     #spawns;
     #spawnBounds;
     #bounds;
@@ -316,6 +317,11 @@ export class Mutants {
         this.#infantry = infantry;
     }
 
+    /** Workers carry no weapon, but to a mutant they are one more soldier to reach and hit. */
+    setWorkers(workers) {
+        this.#workers = workers;
+    }
+
     /**
      * One simulation tick. Shells land first, then existing mutants act in spawn
      * order, then any scheduled spawn is added, so a new mutant first acts on the
@@ -340,7 +346,7 @@ export class Mutants {
         const buildings = this.#placement.buildings();
         const byId = new Map(buildings.map((building) => [building.id, building]));
         const trucks = this.#logistics?.attackableTrucks() ?? [];
-        const soldiers = this.#infantry?.attackableSoldiers() ?? [];
+        const soldiers = [...(this.#infantry?.attackableSoldiers() ?? []), ...(this.#workers?.attackable() ?? [])];
         this.#landShells(buildings, byId, effects, soldiers);
         if (this.#cycle.shift !== Shift.NIGHT) return effects; // HQ fell to a shell
         for (const mutant of this.#mutants) {
@@ -695,7 +701,7 @@ export class Mutants {
     }
 
     #hurtSoldier(mutantId, soldier, damage, soldiers) {
-        const result = this.#infantry.damageSoldier(soldier.id, damage);
+        const result = soldier.worker ? this.#workers.damageWorker(soldier.id, damage) : this.#infantry.damageSoldier(soldier.id, damage);
         if (!result.ok) throw new Error(`Mutant ${mutantId} could not damage ${soldier.id}: ${result.reason}`);
         if (result.killed) soldiers.splice(soldiers.indexOf(soldier), 1);
     }

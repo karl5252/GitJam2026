@@ -28,6 +28,7 @@ import {ShiftCycle} from '../../src/core/shiftCycle.js';
 import {SimulationClock} from '../../src/core/simulationClock.js';
 import {AUTOCANNON} from '../../src/core/autocannons.js';
 import {SiegeCannons, SIEGE} from '../../src/core/siegeCannons.js';
+import {Workers} from '../../src/core/workers.js';
 import {nightPlan} from '../../src/core/waves.js';
 
 const GRID = {cols: 24, rows: 16, tileSize: 32, originX: 256, originY: 104};
@@ -106,6 +107,8 @@ export function createWorld({seed = 731, schedule = null, resources = STARTING_R
     const siegeCannons = new SiegeCannons({cycle, placement, grid, mutants});
     const infantry = roads ? new Infantry({cycle, placement, grid, gates, mutants}) : null;
     mutants.setInfantry(infantry);
+    const workers = roads ? new Workers({cycle, placement, grid, gates}) : null;
+    mutants.setWorkers(workers);
     cycle.begin();
 
     const soldierKills = new Set(); // this tick's: a turret that had one locked has not stepped since
@@ -116,9 +119,13 @@ export function createWorld({seed = 731, schedule = null, resources = STARTING_R
         const siege = siegeCannons.step();
         const defense = autocannons.step();
         const wanted = logistics?.gateDemands();
-        if (wanted) infantry.addGateDemands(wanted);
+        if (wanted) {
+            infantry.addGateDemands(wanted);
+            workers.addGateDemands(wanted);
+        }
         gates.step(wanted);
         const infantryShots = infantry?.step().shots ?? [];
+        workers?.step();
         soldierKills.clear();
         for (const {killed, mutantId} of infantryShots) if (killed) soldierKills.add(mutantId);
         const effects = mutants.step();
@@ -134,7 +141,7 @@ export function createWorld({seed = 731, schedule = null, resources = STARTING_R
         return result;
     };
 
-    return {clock, economy, pollution, grid, rng, placement, roads, logistics, gates, cycle, mutants, autocannons, siegeCannons, infantry, soldierKills, tick, place};
+    return {clock, economy, pollution, grid, rng, placement, roads, logistics, gates, cycle, mutants, autocannons, siegeCannons, infantry, workers, soldierKills, tick, place};
 }
 
 /** The state compared between runs and between Node and Chromium. */

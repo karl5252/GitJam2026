@@ -29,7 +29,7 @@ export const State = Object.freeze({
     SETTLEMENT: 'settlement:changed', // {report, delivered}
     WAVE: 'wave:changed', // {visible, mutants, reached, total}
     MENU: 'menu:changed', // {visible, states, selected, road, endDay, cancel, speed}
-    SELECTION: 'selection:changed', // {building, canFlag, canDemolish, confirmDemolish, refitTo, switchable}
+    SELECTION: 'selection:changed', // {building, canFlag, workers, canDemolish, confirmDemolish, refitTo, switchable}
     HINT: 'hint:changed', // {reason}
     SPEED: 'speed:changed', // {speed}
     GAME_OVER: 'game:over', // {completedShifts}
