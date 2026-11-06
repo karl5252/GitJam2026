@@ -204,6 +204,24 @@ The first case of a run is slower (0.8 ms p99), which looks like JIT warm-up. Pa
 
 In Chromium with software rendering, the 4x walled Night ran at 237.5 ticks per second, with a simulation mean of 0.11 ms, against 236.9 and 0.033 ms for the logistics reference. One run on one machine, with no mobile hardware.
 
+## Spitters (TASK 022)
+
+`npm run test:soak:spitters`, on 6 November 2026, Node, about 3 minutes. Each base runs on the real planner with Spitters and with the same waves of ordinary mutants. Survival is report-only and never a target. "Fell" is the median Night, with 31 meaning it survived all 30.
+
+| Base | Seeds | Fell, ordinary | Fell, Spitters | Armed Spitters killed | Shell damage |
+|---|---:|---:|---:|---:|---:|
+| Turtle, centre | 30 | 20 (18-21) | 12 (11-14) | 0 of 493 | 23450 |
+| Turtle, north-west corner | 30 | 24 (21-26) | 13 (11-15) | 92 of 516 | 16490 |
+| Turtle, south-east corner | 30 | 24 (21-26) | 13 (11-15) | 110 of 561 | 17390 |
+| Compact, 3 cannons | 10 | 21 (19-22) | 12 (11-14) | 7 of 156 | 7220 |
+| Compact, 6 cannons | 10 | 31 (all survived) | 14 (10-16) | 47 of 191 | 7150 |
+| Barracks-free, 3 cannons + 38 walls | 10 | 21 (19-23) | 17 (14-19) | 16 of 334 | 15810 |
+| Squad, static flag | 10 | 16 (11-18) | 13 (12-15) | 25 of 181 | 7550 |
+| Squad, active flag | 10 | 16 (11-18) | 13 (11-14) | 142 of 174 | 4890 |
+| `fortress-checkerboard-v1` | 10 | 31 (27-31) | 31 (26-31) | 843 of 1050 | 20620 |
+
+The ordinary turtle medians match those recorded for TASK 015, which is the control. The developer has since playtested this and kept the Spitter unchanged: a managed base with income reached Day 40, so the early fall of these static bases is accepted. These bases have no income, rebuilding or repairs and nobody plays them, so this is the worst case for a weapon that wears things down. "Active" is a stand-in for a player that sends the flag to a Spitter once it has fired. Simulation stayed under 0.05 ms a tick in every case, so the Spitter adds no measurable cost.
+
 ## Known gaps
 
 - One machine and one run. Rerun before treating any number as a trend.

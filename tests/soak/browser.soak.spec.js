@@ -4,7 +4,7 @@ import {boot, body, byAction, clickAction, clickWorld} from '../helpers/canvas.j
 import {hqFlow} from '../helpers/hq.js';
 import {sample} from '../helpers/qa.js';
 import {getBuildingType} from '../../src/core/buildingTypes.js';
-import {WAVE, waveSchedule} from '../../src/core/waves.js';
+import {WAVE, waveSchedule, spitterSlots as spitterSlotsOf} from '../../src/core/waves.js';
 import {Shift} from '../../src/core/shiftCycle.js';
 import {canonicalState, createWorld, digestOf, worldState} from './harness.js';
 import {loadLayout} from '../../src/testShadow/layoutSnapshot.js';
@@ -415,7 +415,7 @@ test('stepped: Chromium and the Node harness reach identical state', async ({pag
     for (const tick of checkpoints) {
         await stepExactly(page, tick - (await sample(page)).shiftCycle.elapsedNightTicks);
         const s = await sample(page);
-        actual.push(digestOf(canonicalState({mutants: s.mutants, buildings: s.buildings, autocannons: s.autocannons, rng: s.simulation.rng})));
+        actual.push(digestOf(canonicalState({mutants: s.mutants, buildings: s.buildings, autocannons: s.autocannons, rng: s.simulation.rng, shells: s.shells})));
     }
     writeResult('cross-check', {scenario: 'Node harness against Chromium', checkpoints, expected, actual});
     expect(actual).toEqual(expected);
@@ -445,12 +445,46 @@ test('stepped: with soldiers on the map, Chromium and the Node harness reach ide
         const s = await sample(page);
         expect(s.infantry.soldiers.length).toBeGreaterThan(0);
         actual.push(digestOf(canonicalState({
-            mutants: s.mutants, buildings: s.buildings, autocannons: s.autocannons, rng: s.simulation.rng, soldiers: s.infantry.soldiers,
+            mutants: s.mutants, buildings: s.buildings, autocannons: s.autocannons, rng: s.simulation.rng, soldiers: s.infantry.soldiers, shells: s.shells,
         })));
     }
     writeResult('infantry-cross-check', {scenario: 'Node harness against Chromium, with soldiers', checkpoints, expected, actual});
     expect(actual).toEqual(expected);
     expect(new Set(actual).size).toBe(checkpoints.length);
+    expect(errors).toEqual([]);
+});
+
+test('stepped: with Spitters and shells in the air, Chromium and the Node harness reach identical state', async ({page}) => {
+    const errors = watchErrors(page);
+    const checkpoints = [700, 1000, 1500, 2100, 2800, 3599];
+    const schedule = [...waveSchedule(20)];
+    const spitterSlots = [...spitterSlotsOf(20, 6)];
+
+    const world = createWorld({schedule, spitterSlots, requireHq: true, roads: true});
+    expect(loadLayout(world, INFANTRY_FIXTURE).ok).toBe(true);
+    world.cycle.endDay();
+    const expected = [];
+    for (const tick of checkpoints) {
+        while (world.cycle.elapsedNightTicks < tick) world.cycle.stepTicks(Math.min(240, tick - world.cycle.elapsedNightTicks), world.tick);
+        expect(world.cycle.shift).toBe(Shift.NIGHT);
+        expected.push(digestOf(canonicalState(worldState(world))));
+    }
+
+    await loadedBase(page, 'waveBudget=20&waveSpitters=6', INFANTRY_FIXTURE);
+    await nightPaused(page);
+    const actual = [];
+    let sawSpitter = false;
+    for (const tick of checkpoints) {
+        await stepExactly(page, tick - (await sample(page)).shiftCycle.elapsedNightTicks);
+        const s = await sample(page);
+        sawSpitter ||= s.mutants.some(({kind}) => kind === 'spitter');
+        actual.push(digestOf(canonicalState({
+            mutants: s.mutants, buildings: s.buildings, autocannons: s.autocannons, rng: s.simulation.rng, soldiers: s.infantry.soldiers, shells: s.shells,
+        })));
+    }
+    writeResult('spitter-cross-check', {scenario: 'Node harness against Chromium, with Spitters', checkpoints, expected, actual});
+    expect(sawSpitter).toBe(true);
+    expect(actual).toEqual(expected);
     expect(errors).toEqual([]);
 });
 

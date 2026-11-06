@@ -221,6 +221,7 @@ test('a plan reports every term of the formula', () => {
     assert.deepEqual(nightPlan({day: 5, pollution: 60, buildings: cannons(3)}), {
         day: 5, threatLevel: 3, autocannons: 3, nightBudget: 3, pollutionBudget: 4, defenseResponse: 1,
         accelerationBudget: 0, budget: 8, lastSpawnTick: 2700, schedule: [...waveSchedule(8)],
+        spitters: 1, spitterSlots: [4],
     });
 });
 
@@ -545,8 +546,16 @@ test('a late night spawns on exactly the planned ticks, and the same seed repeat
 
 /**
  * A no-income turtle: the whole 1250-Credit budget on three Autocannons and a
- * Plant on Day 1, with no further commands. Provisional balance target, not final gameplay: it should
- * hold for many nights, then fall to combat at any tested HQ position.
+ * Plant on Day 1, with no further commands. Nobody plays it, so it is a benchmark
+ * of the waves and not a target for real play.
+ *
+ * Two contracts, because they guard different things. Ordinary waves alone, the
+ * same waves with the Spitters taken out, must still hold it for many Nights and
+ * then beat it: that is the TASK 015 escalation. The real waves must beat it much
+ * sooner, but not at once. Falling early is the approved difference between a
+ * static base and a managed one (a developer playtest with a managed economy
+ * reached Day 40), so it is protected from both sides: a Spitter that stopped
+ * mattering fails here, and so does one that collapsed a base as soon as it came.
  */
 const TURTLES = {
     centre: {hq: [12, 8], cannons: [[10, 6], [14, 6], [10, 10]], plant: [12, 4]},
@@ -554,23 +563,50 @@ const TURTLES = {
     'south-east corner': {hq: [22, 14], cannons: [[20, 12], [22, 12], [20, 14]], plant: [22, 10]},
 };
 
+function playTurtle(layout, seed, spitters) {
+    const w = createWorld({seed, requireHq: true, spitters});
+    assert.equal(w.place('hq', ...layout.hq).ok, true);
+    assert.equal(w.place('powerPlant', ...layout.plant).ok, true);
+    for (const cell of layout.cannons) assert.equal(w.place('autocannon', ...cell).ok, true);
+    const run = {w, shots: 0, shellsLanded: 0, plantFell: null};
+    for (let night = 1; night <= 25 && w.cycle.shift === Shift.DAY; night++) {
+        w.cycle.endDay();
+        while (w.cycle.shift === Shift.NIGHT) {
+            w.cycle.stepTicks(240, (t) => {
+                const {defense, effects} = w.tick(t);
+                run.shots += defense.shots.length;
+                run.shellsLanded += effects.impacts?.length ?? 0;
+                if (effects.destroyed.some((id) => id.startsWith('powerPlant'))) run.plantFell ??= night;
+            });
+        }
+    }
+    return run;
+}
+
 for (const [name, layout] of Object.entries(TURTLES)) {
-    test(`a no-income turtle eventually falls to combat: ${name}`, () => {
+    test(`on ordinary waves a no-income turtle holds for many nights, then falls to combat: ${name}`, () => {
         for (const seed of [1, 98]) {
-            const w = createWorld({seed, requireHq: true});
-            assert.equal(w.place('hq', ...layout.hq).ok, true);
-            assert.equal(w.place('powerPlant', ...layout.plant).ok, true);
-            for (const cell of layout.cannons) assert.equal(w.place('autocannon', ...cell).ok, true);
-            let shots = 0;
-            const tick = (t) => { shots += w.tick(t).defense.shots.length; };
-            for (let night = 1; night <= 25 && w.cycle.shift === Shift.DAY; night++) {
-                w.cycle.endDay();
-                while (w.cycle.shift === Shift.NIGHT) w.cycle.stepTicks(240, tick);
-            }
+            const {w, shots, shellsLanded} = playTurtle(layout, seed, false);
             assert.equal(w.cycle.shift, Shift.DEFEATED, `seed ${seed} should fall by night 25`);
             assert.ok(w.cycle.defeatReport.day >= 15, `seed ${seed} fell on night ${w.cycle.defeatReport.day}`);
             assert.ok(shots > 500, `seed ${seed} only fired ${shots} shots`);
+            assert.equal(shellsLanded, 0);
             assert.equal(w.economy.credits, 0); // spent everything on Day 1, and never earned anything
+        }
+    });
+
+    test(`Spitters beat a static turtle much sooner, but not at once: ${name}`, () => {
+        for (const seed of [1, 98]) {
+            const ordinary = playTurtle(layout, seed, false).w.cycle.defeatReport.day;
+            const {w, shots, shellsLanded, plantFell} = playTurtle(layout, seed, true);
+            assert.equal(w.cycle.shift, Shift.DEFEATED, `seed ${seed} should fall`);
+            const {day} = w.cycle.defeatReport;
+            assert.ok(day >= 10, `seed ${seed} collapsed on night ${day}`); // 30 seeds: never before 11
+            assert.ok(ordinary - day >= 5, `seed ${seed} fell on night ${day}, ordinary waves on ${ordinary}`);
+            assert.ok(shellsLanded >= 20, `seed ${seed} landed ${shellsLanded} shells`);
+            assert.ok(shots > 150, `seed ${seed} only fired ${shots} shots`);
+            assert.ok(plantFell !== null && plantFell <= day, 'the Plant goes first or with HQ: it is what silences the cannons');
+            assert.equal(w.economy.credits, 0);
         }
     });
 }

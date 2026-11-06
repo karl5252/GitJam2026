@@ -19,7 +19,7 @@ import {Gates} from '../../src/core/gates.js';
 import {Grid} from '../../src/core/grid.js';
 import {Infantry} from '../../src/core/infantry.js';
 import {Logistics} from '../../src/core/logistics.js';
-import {Mutants, MUTANT, distanceToFootprint} from '../../src/core/mutants.js';
+import {Mutants, MUTANT, SPITTER, distanceToFootprint} from '../../src/core/mutants.js';
 import {Pollution} from '../../src/core/pollution.js';
 import {RoadNetwork} from '../../src/core/roads.js';
 import {SeededRandom} from '../../src/core/seededRandom.js';
@@ -34,8 +34,12 @@ const GRID = {cols: 24, rows: 16, tileSize: 32, originX: 256, originY: 104};
 /**
  * @param {{seed?: number, schedule?: readonly number[]|null, resources?: {credits: number, ap: number},
  *          openConstruction?: boolean, requireHq?: boolean, roads?: boolean, pollution?: number,
- *          firstNight?: number, rng?: {nextInt: Function, snapshot: Function}}} options
+ *          firstNight?: number, rng?: {nextInt: Function, snapshot: Function},
+ *          spitterSlots?: readonly number[], spitters?: boolean}} options
  *   schedule - fixed spawn ticks; null uses the real nightPlan
+ *   spitterSlots - which of a fixed schedule's slots are Spitters
+ *   spitters - false takes them out of the real nightPlan, which leaves the same
+ *   waves of ordinary mutants, as a comparison. Nothing a player can do.
  *   requireHq - the real HQ-first rules, as GameScene uses them
  *   roads - the real road rules, as GameScene uses them. Off by default, which
  *   is how the historical combat benchmarks keep a layout that predates them.
@@ -44,7 +48,7 @@ const GRID = {cols: 24, rows: 16, tileSize: 32, originX: 256, originY: 104};
  *   can start late on the real calendar
  *   rng - replaces the seeded RNG, so a test can choose spawn positions
  */
-export function createWorld({seed = 731, schedule = null, resources = STARTING_RESOURCES, openConstruction = false, requireHq = false, roads: useRoads = false, pollution: startingPollution = 0, firstNight = 1, rng: fixedRng = null} = {}) {
+export function createWorld({seed = 731, schedule = null, resources = STARTING_RESOURCES, openConstruction = false, requireHq = false, roads: useRoads = false, pollution: startingPollution = 0, firstNight = 1, rng: fixedRng = null, spitterSlots = [], spitters = true} = {}) {
     const clock = new SimulationClock();
     const economy = new Economy(resources);
     const pollution = new Pollution(startingPollution);
@@ -69,9 +73,12 @@ export function createWorld({seed = 731, schedule = null, resources = STARTING_R
         logistics,
         gates,
         schedule: schedule ?? [],
-        planNight: schedule ? null : (day) => (day < firstNight
-            ? {schedule: []}
-            : nightPlan({day, pollution: pollution.value, buildings: placement.buildings()})),
+        spitterSlots,
+        planNight: schedule ? null : (day) => {
+            if (day < firstNight) return {schedule: []};
+            const plan = nightPlan({day, pollution: pollution.value, buildings: placement.buildings()});
+            return spitters ? plan : {...plan, spitters: 0, spitterSlots: []};
+        },
     });
     const autocannons = new Autocannons({cycle, placement, grid, mutants});
     const infantry = roads ? new Infantry({cycle, placement, grid, gates, mutants}) : null;
@@ -103,9 +110,9 @@ export function createWorld({seed = 731, schedule = null, resources = STARTING_R
 }
 
 /** The state compared between runs and between Node and Chromium. */
-export function canonicalState({mutants, buildings, autocannons, rng, soldiers = []}) {
-    // A base with no soldiers keeps the digests it has always had.
-    return JSON.stringify({mutants, buildings, autocannons, rng, ...(soldiers.length ? {soldiers} : {})});
+export function canonicalState({mutants, buildings, autocannons, rng, soldiers = [], shells = []}) {
+    // A base with no soldiers and no shells in the air keeps the digests it has always had.
+    return JSON.stringify({mutants, buildings, autocannons, rng, ...(soldiers.length ? {soldiers} : {}), ...(shells.length ? {shells} : {})});
 }
 
 export const digestOf = (text) => createHash('sha256').update(text).digest('hex').slice(0, 16);
@@ -117,6 +124,7 @@ export function worldState(world) {
         autocannons: world.autocannons.snapshot(),
         rng: world.rng.snapshot(),
         soldiers: world.infantry?.soldiers() ?? [],
+        shells: world.mutants.shells(),
     };
 }
 
@@ -143,8 +151,13 @@ export function checkInvariants(world) {
     const rects = buildings.filter((b) => !getBuildingType(b.type).gate).map((b) => [b.id, grid.footprintRect(b)]);
     if (new Set(living.map((m) => m.id)).size !== living.length) problems.push('duplicate mutant ids');
     for (const mutant of living) {
-        if (!Number.isInteger(mutant.hp) || mutant.hp < 1 || mutant.hp > MUTANT.maxHp) problems.push(`${mutant.id} has hp ${mutant.hp}`);
-        if (mutant.attackTimer < 1 || mutant.attackTimer > MUTANT.attackCooldownTicks) problems.push(`${mutant.id} has attackTimer ${mutant.attackTimer}`);
+        const spitter = mutant.kind === SPITTER.kind;
+        const maxHp = spitter ? SPITTER.maxHp : MUTANT.maxHp;
+        const maxTimer = mutant.shots > 0 ? SPITTER.cycleTicks : MUTANT.attackCooldownTicks;
+        if (!Number.isInteger(mutant.hp) || mutant.hp < 1 || mutant.hp > maxHp) problems.push(`${mutant.id} has hp ${mutant.hp}`);
+        if (mutant.attackTimer < 1 || mutant.attackTimer > maxTimer) problems.push(`${mutant.id} has attackTimer ${mutant.attackTimer}`);
+        if (spitter && (mutant.shots < 0 || mutant.shots > SPITTER.maxShots)) problems.push(`${mutant.id} has ${mutant.shots} shots`);
+        if (mutant.aim && mutant.attackTimer > SPITTER.windupTicks) problems.push(`${mutant.id} aims outside its telegraph`);
         // One step outside is where a mutant arrives at a fortified border cell.
         if (distanceToFootprint(mutant, bounds) > MUTANT.speed) problems.push(`${mutant.id} left the grid at ${mutant.x},${mutant.y}`);
         for (const [id, rect] of rects) {

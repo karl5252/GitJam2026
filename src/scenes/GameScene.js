@@ -22,7 +22,7 @@ import {addProxy, markScene, setBodyState} from '../testShadow/TestProxy.js';
 import {createEconomyQa} from '../testShadow/economyQa.js';
 import {createLayoutQa} from '../testShadow/layoutSnapshot.js';
 import {createPerfProbe} from '../testShadow/PerfProbe.js';
-import {parseStressSchedule} from '../testShadow/stressParams.js';
+import {parseStressSchedule, parseStressSpitters} from '../testShadow/stressParams.js';
 import {QASurface} from '../testShadow/QASurface.js';
 import {MutantLayer} from './MutantLayer.js';
 import {AutocannonLayer} from './AutocannonLayer.js';
@@ -329,6 +329,7 @@ export class GameScene extends Phaser.Scene {
             grid: this.grid,
             rng: this.rng,
             schedule: fixedSchedule ?? [],
+            spitterSlots: fixedSchedule?.length ? parseStressSpitters(window.location.search) : [],
             logistics: this.logistics,
             gates: this.gates,
             planNight: fixedSchedule ? null : (day) => nightPlan({
@@ -528,7 +529,11 @@ export class GameScene extends Phaser.Scene {
         this.updateShiftHud();
         const mutants = this.mutants.snapshot();
         const buildings = this.placement.buildings();
-        this.mutantLayer.sync(mutants, buildings);
+        this.mutantLayer.sync(mutants, buildings, {
+            shells: this.mutants.shells(),
+            tick: this.clock.tick,
+            isNight: this.cycle.shift === Shift.NIGHT,
+        });
         this.updateWaveHud(mutants);
         if (this.logistics) this.truckLayer.sync(this.logistics.snapshot());
         this.gateLayer.sync(this.gates.snapshot());
@@ -1123,6 +1128,7 @@ export class GameScene extends Phaser.Scene {
         const squads = this.infantry?.step();
         if (squads?.shots.length) this.infantryLayer.recordShots(squads.shots, this.clock.tick);
         const effects = this.mutants?.step();
+        if (effects?.impacts) this.mutantLayer.recordImpacts(effects.impacts, this.clock.tick);
         if (effects?.destroyed.length) this.handleBuildingsDestroyed(effects.destroyed);
         if (this.logistics?.step().deliveries) this.updateHud();
     }
@@ -1197,6 +1203,9 @@ export class GameScene extends Phaser.Scene {
             // Domain mutants, then the rendered circles and building HP bars.
             mutants: this.mutants ? this.mutants.snapshot() : null,
             mutantViews: this.mutantLayer ? this.mutantLayer.mutantViews() : null,
+            // Shells in flight, then their rendered effects.
+            shells: this.mutants ? this.mutants.shells() : null,
+            spitterEffectViews: this.mutantLayer ? this.mutantLayer.effectViews() : null,
             hpBarViews: this.mutantLayer ? this.mutantLayer.hpBarViews() : null,
             // The frozen night plan, slots reached so far, and the actual HUD text.
             wave: this.mutants ? this.mutants.plan() : null,

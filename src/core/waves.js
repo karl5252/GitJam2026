@@ -19,6 +19,13 @@
  * no mutant exists yet on tick 1, so this equals sampling at END DAY. Every
  * existing Autocannon counts, whether or not it is enabled or powered.
  *
+ * A Spitter takes the place of one ordinary mutant, so the budget, the schedule
+ * and every spawn position stay what they would have been. The plan only says
+ * which slots they fill, which is why they cost no random numbers:
+ *
+ *   spitters = night < firstNight ? 0
+ *            : min(maxPerNight, floor(budget / budgetPerSpitter), 1 + floor((night - firstNight) / nightsPerExtra))
+ *
  * All values are temporary and unbalanced; rebalance them here.
  */
 import {threatLevel} from './pollution.js';
@@ -35,6 +42,13 @@ export const WAVE = Object.freeze({
     accelerationFromNight: 6,
     accelerationDivisor: 12,
     maxPerNight: 40,
+});
+
+export const SPITTER_WAVE = Object.freeze({
+    firstNight: 5,
+    budgetPerSpitter: 4,
+    nightsPerExtra: 3,
+    maxPerNight: 6,
 });
 
 const AUTOCANNON_TYPE = 'autocannon';
@@ -102,6 +116,27 @@ export function waveSchedule(budget, lastTick = WAVE.lastTick) {
     return Object.freeze(ticks);
 }
 
+/** How many of a night's mutants are Spitters. */
+export function spitterCount(night, budget) {
+    assertCount('night', night, 1);
+    assertCount('budget', budget, 0);
+    if (night < SPITTER_WAVE.firstNight) return 0;
+    const ramp = 1 + Math.floor((night - SPITTER_WAVE.firstNight) / SPITTER_WAVE.nightsPerExtra);
+    return Math.min(SPITTER_WAVE.maxPerNight, Math.floor(budget / SPITTER_WAVE.budgetPerSpitter), ramp);
+}
+
+/**
+ * Which slots of a schedule are Spitters: evenly spread and centred. In a real
+ * wave at most a quarter are Spitters, so the first attacker is always melee.
+ * @returns {readonly number[]} frozen, strictly increasing indices into the schedule
+ */
+export function spitterSlots(budget, spitters) {
+    assertCount('budget', budget, 0);
+    assertCount('spitters', spitters, 0);
+    if (spitters > budget) throw new RangeError(`${spitters} spitters do not fit a budget of ${budget}`);
+    return Object.freeze(Array.from({length: spitters}, (_, k) => Math.floor((2 * k + 1) * budget / (2 * spitters))));
+}
+
 /**
  * The frozen plan for one night. It holds numbers only, so it shares nothing
  * with the building records it was computed from.
@@ -111,6 +146,7 @@ export function nightPlan({day, pollution, buildings}) {
     const threat = threatLevel(pollution);
     const autocannons = buildings.filter((b) => b.type === AUTOCANNON_TYPE).length;
     const budget = waveBudget(day, threat, autocannons);
+    const spitters = spitterCount(day, budget);
     return Object.freeze({
         day,
         threatLevel: threat,
@@ -122,6 +158,8 @@ export function nightPlan({day, pollution, buildings}) {
         budget,
         lastSpawnTick: lastSpawnTick(day),
         schedule: waveSchedule(budget, lastSpawnTick(day)),
+        spitters,
+        spitterSlots: spitterSlots(budget, spitters),
     });
 }
 

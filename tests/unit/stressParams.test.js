@@ -1,7 +1,16 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import {parseStressSchedule} from '../../src/testShadow/stressParams.js';
-import {waveSchedule} from '../../src/core/waves.js';
+import {parseStressSchedule, parseStressSpitters} from '../../src/testShadow/stressParams.js';
+import {spitterSlots, waveSchedule} from '../../src/core/waves.js';
+
+test('waveSpitters picks the real slots of a waveBudget schedule, and means nothing alone', () => {
+    assert.deepEqual(parseStressSpitters('?waveBudget=12&waveSpitters=3'), [...spitterSlots(12, 3)]);
+    assert.deepEqual(parseStressSpitters('?waveBudget=1&waveSpitters=1'), [0]);
+    assert.deepEqual(parseStressSpitters('?waveBudget=5'), []);
+    assert.deepEqual(parseStressSpitters('?waveSpitters=3'), []);
+    assert.deepEqual(parseStressSpitters('?stressRamp=10&waveBudget=5&waveSpitters=1'), [], 'a ramp is a different schedule');
+    for (const bad of ['6', '-1', 'x', '']) assert.deepEqual(parseStressSpitters(`?waveBudget=5&waveSpitters=${bad}`), [], bad);
+});
 
 test('no parameters means no override', () => {
     assert.equal(parseStressSchedule(''), null);
