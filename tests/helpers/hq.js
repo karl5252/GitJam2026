@@ -27,8 +27,8 @@ export async function stepExactly(page, total) {
 }
 
 export function hqFlow({pressWorld, pressAction}) {
-    async function start(page, query = '') {
-        await boot(page, {scene: 'game', waitForQA: true, query});
+    async function start(page, query = '', options = {}) {
+        await boot(page, {scene: 'game', waitForQA: true, query, ...options});
         await pressAction(page, 'start');
         await expect(body(page)).toHaveAttribute('data-phase', 'started');
         return sample(page);

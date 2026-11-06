@@ -7,6 +7,7 @@ import {MUTANT} from '../../src/core/mutants.js';
 import {ROUTE_COST, RoadFailure} from '../../src/core/roads.js';
 import {Shift} from '../../src/core/shiftCycle.js';
 import {LayoutFailure, exportLayout, loadLayout} from '../../src/testShadow/layoutSnapshot.js';
+import {MapId, WORLD_MAPS, createTerrain} from '../../src/core/worldMap.js';
 import {canonicalState, checkInvariants, createWorld, digestOf, worldState} from '../soak/harness.js';
 import {FORTRESS_22_EXACT} from '../fixtures/legacy/fortress22-exact.js';
 import {getBuildingType} from '../../src/core/buildingTypes.js';
@@ -759,6 +760,7 @@ const FIXTURES = {
     'infantry-reference.json': {status: 'valid'},
     'golden-fortress-day33-v2.json': {status: 'valid'},
     'golden-fortress-brute-defense-v3.json': {status: 'valid'},
+    'golden-fortress-jungle-v3.json': {status: 'valid', map: WORLD_MAPS[MapId.JUNGLE]},
     'fortress-corner-v1.json': {status: 'stale', reason: RoadFailure.NO_ROAD_ACCESS},
     'fortress22-road-legal.json': {status: 'stale', reason: RoadFailure.NO_ROAD_ACCESS},
 };
@@ -769,10 +771,10 @@ test('every layout fixture has a declared status', () => {
     assert.deepEqual(files, Object.keys(FIXTURES).sort());
 });
 
-for (const [name, {status, reason}] of Object.entries(FIXTURES)) {
+for (const [name, {status, reason, map}] of Object.entries(FIXTURES)) {
     test(`fixture ${name} is ${status}`, () => {
         const snapshot = JSON.parse(readFileSync(new URL(`../fixtures/layouts/${name}`, import.meta.url), 'utf8'));
-        const w = fresh();
+        const w = map ? createWorld({requireHq: true, roads: true, map, terrain: createTerrain(map)}) : fresh();
         const result = loadLayout(w, snapshot);
         if (status === 'valid') {
             assert.equal(result.ok, true, `${result.reason}: ${result.detail}`);

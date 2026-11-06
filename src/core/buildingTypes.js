@@ -84,7 +84,7 @@ export const BUILDING_TYPES = Object.freeze({
     outpost: Object.freeze({
         id: 'outpost', name: 'Outpost', width: 1, height: 1,
         cost: Object.freeze({credits: 100, ap: 1}),
-        operations: Object.freeze({income: 0, upkeep: 20}),
+        operations: NO_OPERATIONS,
         power: Object.freeze({supply: 0, demand: 10}),
         pollutionPerNight: 0,
         maxHp: 100,

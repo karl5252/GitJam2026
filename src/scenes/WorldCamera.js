@@ -33,6 +33,11 @@ export class WorldCamera {
         this.#show(fitView(this.#viewport, this.#world));
     }
 
+    /** Frame part of the world. It is a view like any other: the player can still zoom out past it. */
+    showArea(area) {
+        this.#show(clampView(fitView(this.#viewport, area), this.#viewport, this.#world));
+    }
+
     /** Closer in for placing buildings, where the layout asks for it. Otherwise the view stays. */
     showDay(focus) {
         if (this.#dayZoom === null) return;

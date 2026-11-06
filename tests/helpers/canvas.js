@@ -158,11 +158,13 @@ export const body = (page) => page.locator('body');
  *   tests should use. false adds ?hq=off, a compatibility mode for legacy
  *   suites written before HQ existed. Do not use it for new tests.
  * @param {string} [opts.query] - extra query parameters, e.g. 'waveBudget=20'
+ * @param {string|null} [opts.map] - suites run on the original open map unless they
+ *   ask for another. null adds nothing, which is the map a real new game gets.
  */
-export async function boot(page, {path = '/', scene, waitForQA = false, mutants = true, hq = true, query = ''} = {}) {
+export async function boot(page, {path = '/', scene, waitForQA = false, mutants = true, hq = true, query = '', map = 'open'} = {}) {
     const watch = watchBoot(page);
     try {
-        await page.goto(`${path}?testMode${mutants ? '' : '&mutants=off'}${hq ? '' : '&hq=off'}${query ? `&${query}` : ''}`);
+        await page.goto(`${path}?testMode${map ? `&map=${map}` : ''}${mutants ? '' : '&mutants=off'}${hq ? '' : '&hq=off'}${query ? `&${query}` : ''}`);
         if (scene) {
             await expect(body(page)).toHaveAttribute('data-scene', scene, {timeout: 10_000});
         }

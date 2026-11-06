@@ -17,6 +17,8 @@ import {Pollution, calculateEmissions, threatLevel} from '../core/pollution.js';
 import {Mutants} from '../core/mutants.js';
 import {nightPlan, waveProgress} from '../core/waves.js';
 import {Autocannons} from '../core/autocannons.js';
+import {DEFAULT_MAP, TILE_SIZE, WORLD_MAPS, createTerrain} from '../core/worldMap.js';
+import {FogOfWar, buildingVision, fortificationTiles, startingKnown, unitVision} from '../core/vision.js';
 import {SIEGE, SIEGE_CANNON_TYPE, SiegeCannons} from '../core/siegeCannons.js';
 import {TEST_MODE} from '../testMode.js';
 import {markScene, setBodyState} from '../testShadow/TestProxy.js';
@@ -25,11 +27,14 @@ import {createEconomyQa} from '../testShadow/economyQa.js';
 import {createLayoutQa} from '../testShadow/layoutSnapshot.js';
 import {createPerfProbe} from '../testShadow/PerfProbe.js';
 import {parseStressBrutes, parseStressSchedule, parseStressSpitters} from '../testShadow/stressParams.js';
+import {parseWorldParams} from '../testShadow/worldParams.js';
 import {QASurface} from '../testShadow/QASurface.js';
 import {MutantLayer} from './MutantLayer.js';
 import {AutocannonLayer} from './AutocannonLayer.js';
 import {SiegeLayer} from './SiegeLayer.js';
 import {RoadLayer} from './RoadLayer.js';
+import {FogLayer} from './FogLayer.js';
+import {TerrainLayer} from './TerrainLayer.js';
 import {TruckLayer} from './TruckLayer.js';
 import {GateLayer} from './GateLayer.js';
 import {InfantryLayer} from './InfantryLayer.js';
@@ -37,10 +42,6 @@ import {Command, EventBus, Hint, Hud, Notice, State} from './EventBus.js';
 import {WorldCamera} from './WorldCamera.js';
 import {currentLayout} from './hudLayout.js';
 import {isOrientationBlocked} from './orientationGuard.js';
-
-const GRID_COLS = 24;
-const GRID_ROWS = 16;
-const TILE_SIZE = 32;
 
 const GRID_LINE_COLOR = 0x78909c;
 const HIGHLIGHT_COLOR = 0xffeb3b;
@@ -105,6 +106,10 @@ export class GameScene extends Phaser.Scene {
     create() {
         this.phase = GamePhase.READY;
         this.grid = null;
+        this.terrain = null;
+        this.terrainLayer = null;
+        this.fog = null;
+        this.fogLayer = null;
         this.placement = null;
         this.economy = null;
         this.pollution = null;
@@ -157,13 +162,19 @@ export class GameScene extends Phaser.Scene {
         this.rng = new SeededRandom(seedOverride ?? DEFAULT_SEED);
         this.simulationSteps = 0;
 
+        // A shipped game always plays the default map on its fixed seed.
+        const worldParams = TEST_MODE ? parseWorldParams(window.location.search) : {};
+        this.map = worldParams.map ?? WORLD_MAPS[DEFAULT_MAP];
+        this.worldSeed = worldParams.worldSeed ?? this.map.seed;
+
         const {width, height} = this.scale;
+        const {cols, rows, tileSize} = this.map;
         this.layout = currentLayout();
         this.worldCamera = new WorldCamera(this.cameras.main, this.layout, {
-            x: (width - GRID_COLS * TILE_SIZE) / 2 - WORLD_MARGIN,
-            y: (height - GRID_ROWS * TILE_SIZE) / 2 - WORLD_MARGIN,
-            width: GRID_COLS * TILE_SIZE + 2 * WORLD_MARGIN,
-            height: GRID_ROWS * TILE_SIZE + 2 * WORLD_MARGIN,
+            x: (width - cols * tileSize) / 2 - WORLD_MARGIN,
+            y: (height - rows * tileSize) / 2 - WORLD_MARGIN,
+            width: cols * tileSize + 2 * WORLD_MARGIN,
+            height: rows * tileSize + 2 * WORLD_MARGIN,
         });
 
         this.input.mouse?.disableContextMenu();
@@ -283,12 +294,15 @@ export class GameScene extends Phaser.Scene {
 
     createGrid() {
         const {width, height} = this.scale;
+        const {cols, rows, tileSize, spawnFrame} = this.map;
+        this.terrain = createTerrain(this.map, this.worldSeed);
         this.grid = new Grid({
-            cols: GRID_COLS,
-            rows: GRID_ROWS,
-            tileSize: TILE_SIZE,
-            originX: (width - GRID_COLS * TILE_SIZE) / 2,
-            originY: (height - GRID_ROWS * TILE_SIZE) / 2,
+            cols,
+            rows,
+            tileSize,
+            originX: (width - cols * tileSize) / 2,
+            originY: (height - rows * tileSize) / 2,
+            terrain: this.terrain,
         });
         this.economy = new Economy();
         this.pollution = new Pollution();
@@ -342,6 +356,7 @@ export class GameScene extends Phaser.Scene {
             ...(fixedSchedule?.length ? parseStressBrutes(window.location.search) : {}),
             logistics: this.logistics,
             gates: this.gates,
+            spawnFrame,
             planNight: fixedSchedule ? null : (day) => nightPlan({
                 day,
                 pollution: this.pollution.value,
@@ -374,21 +389,15 @@ export class GameScene extends Phaser.Scene {
         this.mutants.setInfantry(this.infantry);
         this.infantryLayer = this.infantry ? new InfantryLayer(this, this.grid) : null;
 
-        const bounds = this.grid.footprintRect({col: 0, row: 0, width: GRID_COLS, height: GRID_ROWS});
-        const lines = this.add.graphics();
-        lines.lineStyle(1, GRID_LINE_COLOR, 0.6);
-        lines.beginPath();
-        for (let col = 0; col <= GRID_COLS; col++) {
-            const x = bounds.x + col * TILE_SIZE;
-            lines.moveTo(x, bounds.y);
-            lines.lineTo(x, bounds.y + bounds.height);
+        // Terrain paints its own tiles, and only where there is open ground to build on.
+        if (this.terrain) {
+            this.terrainLayer = new TerrainLayer(this, this.grid, this.terrain);
+            this.fog = new FogOfWar({cols, rows, explored: startingKnown(this.terrain)});
+            this.fogLayer = new FogLayer(this, this.grid, this.fog);
+            this.worldCamera.showArea(this.combatArea()); // the whole world is far too small to start in
+        } else {
+            this.drawGridLines();
         }
-        for (let row = 0; row <= GRID_ROWS; row++) {
-            const y = bounds.y + row * TILE_SIZE;
-            lines.moveTo(bounds.x, y);
-            lines.lineTo(bounds.x + bounds.width, y);
-        }
-        lines.strokePath();
 
         this.selectionHighlight = this.add.rectangle(0, 0, TILE_SIZE, TILE_SIZE, HIGHLIGHT_COLOR, 0.35)
             .setOrigin(0, 0)
@@ -401,6 +410,33 @@ export class GameScene extends Phaser.Scene {
             .setVisible(false)
             .setDepth(3);
         this.segmentGraphics = this.add.graphics().setDepth(3);
+    }
+
+    drawGridLines() {
+        const {cols, rows, tileSize} = this.grid;
+        const bounds = this.grid.footprintRect({col: 0, row: 0, width: cols, height: rows});
+        const lines = this.add.graphics();
+        lines.lineStyle(1, GRID_LINE_COLOR, 0.6);
+        lines.beginPath();
+        for (let col = 0; col <= cols; col++) {
+            const x = bounds.x + col * tileSize;
+            lines.moveTo(x, bounds.y);
+            lines.lineTo(x, bounds.y + bounds.height);
+        }
+        for (let row = 0; row <= rows; row++) {
+            const y = bounds.y + row * tileSize;
+            lines.moveTo(bounds.x, y);
+            lines.lineTo(bounds.x + bounds.width, y);
+        }
+        lines.strokePath();
+    }
+
+    /** Where a Night is fought: the spawn frame and a margin. Null when that is the whole world. */
+    combatArea() {
+        const frame = this.map.spawnFrame;
+        if (!frame) return null;
+        const {x, y, width, height} = this.grid.footprintRect({col: frame.col, row: frame.row, width: frame.cols, height: frame.rows});
+        return {x: x - WORLD_MARGIN, y: y - WORLD_MARGIN, width: width + 2 * WORLD_MARGIN, height: height + 2 * WORLD_MARGIN};
     }
 
     // ---- What the HUD shows -------------------------------------------------
@@ -423,7 +459,33 @@ export class GameScene extends Phaser.Scene {
             if (enabled && !powered) view.setStrokeStyle(3, UNPOWERED_STROKE);
             else view.setStrokeStyle(2, BUILDING_STROKE);
         }
+        this.updateBuildingVision(power);
         this.presentSelection();
+    }
+
+    /** Whatever changes a building's vision also changes power or the building list, so it comes through here. */
+    updateBuildingVision(power) {
+        if (!this.fog) return;
+        const buildings = this.placement.buildings();
+        this.fog.setSources('buildings', buildingVision(buildings, power));
+        this.fog.markExplored(fortificationTiles(buildings));
+    }
+
+    /**
+     * Every tick, not every frame, so that what a unit discovers cannot depend on the
+     * frame rate or the speed. It only costs anything when a unit has changed tile.
+     */
+    updateUnitVision() {
+        if (this.fog && this.infantry) this.fog.setSources('soldiers', unitVision(this.infantry.soldiers(), this.grid));
+    }
+
+    /** Is this world point on a tile being watched right now? Null on a map with no fog. */
+    seenBy() {
+        if (!this.fog) return null;
+        return ({x, y}) => {
+            const cell = this.grid.worldToCell(x, y);
+            return cell !== null && this.fog.isVisible(cell.col, cell.row);
+        };
     }
 
     updateHud() {
@@ -482,10 +544,10 @@ export class GameScene extends Phaser.Scene {
         });
     }
 
-    /** Where the camera looks for placing: HQ once it stands, otherwise the middle of the map. */
+    /** Where the camera looks for placing: HQ once it stands, otherwise the clearing or the middle of the map. */
     dayFocus() {
         const hq = this.placement.buildings().find((b) => b.type === HQ_TYPE);
-        const rect = this.grid.footprintRect(hq ?? {col: 0, row: 0, width: GRID_COLS, height: GRID_ROWS});
+        const rect = this.grid.footprintRect(hq ?? this.terrain?.core ?? {col: 0, row: 0, width: this.grid.cols, height: this.grid.rows});
         return {x: rect.x + rect.width / 2, y: rect.y + rect.height / 2};
     }
 
@@ -515,12 +577,15 @@ export class GameScene extends Phaser.Scene {
         this.present(State.SPEED, {speed: this.clock.speed});
         const mutants = this.mutants.snapshot();
         const buildings = this.placement.buildings();
+        const isSeen = this.seenBy();
+        this.fogLayer?.sync();
         this.mutantLayer.sync(mutants, buildings, {
             shells: this.mutants.shells(),
             tick: this.clock.tick,
             isNight: this.cycle.shift === Shift.NIGHT,
+            isSeen,
         });
-        this.updateWaveHud(mutants);
+        this.updateWaveHud(isSeen ? mutants.filter(isSeen) : mutants); // the count must not give away what the fog hides
         if (this.logistics) this.truckLayer.sync(this.logistics.snapshot());
         this.gateLayer.sync(this.gates.snapshot());
         this.autocannonLayer.sync({
@@ -545,7 +610,14 @@ export class GameScene extends Phaser.Scene {
     handleShiftChange(isDay) {
         this.renderedShift = this.cycle.shift;
         if (isDay) this.worldCamera.showDay(this.dayFocus());
-        else if (this.cycle.shift === Shift.NIGHT) this.worldCamera.fit();
+        else if (this.cycle.shift === Shift.NIGHT) this.showNight();
+    }
+
+    /** All of the fighting and none of the empty jungle: at FIT a large map is too small to read. */
+    showNight() {
+        const area = this.combatArea();
+        if (area) this.worldCamera.showArea(area);
+        else this.worldCamera.fit();
     }
 
     /** Soldiers every frame; flags only when walking or the selection changed. */
@@ -972,8 +1044,8 @@ export class GameScene extends Phaser.Scene {
         const {x, y} = this.worldCamera.snapshot();
         const accepted = (cell) => (this.roadMode ? !this.roads.has(cell) && this.placement.previewRoad(cell).ok : this.placement.preview(cell)?.ok);
         const cells = [];
-        for (let row = 0; row < GRID_ROWS; row++) {
-            for (let col = 0; col < GRID_COLS; col++) {
+        for (let row = 0; row < this.grid.rows; row++) {
+            for (let col = 0; col < this.grid.cols; col++) {
                 const center = this.grid.cellCenter(col, row);
                 if (this.worldCamera.isVisible(center)) cells.push({col, row, distance: (center.x - x) ** 2 + (center.y - y) ** 2});
             }
@@ -1335,6 +1407,7 @@ export class GameScene extends Phaser.Scene {
         if (effects?.impacts) this.mutantLayer.recordImpacts(effects.impacts, this.clock.tick);
         if (effects?.destroyed.length) this.handleBuildingsDestroyed(effects.destroyed);
         if (this.logistics?.step().deliveries) this.updateHud();
+        this.updateUnitVision();
     }
 
     /** Domain already removed these buildings, destroyed or demolished; bring the presentation in line. */
@@ -1362,6 +1435,11 @@ export class GameScene extends Phaser.Scene {
             width: this.scale.width,
             height: this.scale.height,
             grid: this.grid ? this.grid.snapshot() : null,
+            map: {id: this.map.id, cols: this.map.cols, rows: this.map.rows, seed: this.worldSeed, spawnFrame: this.map.spawnFrame},
+            terrain: this.terrain ? this.terrain.snapshot() : null,
+            terrainView: this.terrainLayer ? this.terrainLayer.view() : null,
+            fog: this.fog ? this.fog.snapshot() : null,
+            fogView: this.fogLayer ? this.fogLayer.view() : null,
             selectedCell: this.selectedCell ? {...this.selectedCell} : null,
             highlight: this.selectionHighlight ? rectView(this.selectionHighlight) : null,
             ui: {...hud.ui, endDayEnabled: this.cycle ? this.cycle.canEndDay : false},

@@ -124,7 +124,7 @@ function mutantSuite({pressWorld, pressAction}) {
 
         await finishNight(page);
         s = await sample(page);
-        expect(s.settlement.upkeep).toBe(0); // the destroyed Outpost costs nothing
+        expect(s.settlement.upkeep).toBe(0);
         expect(s.settlement.counts.outpost).toBe(0);
 
         await place(page, state, 'outpost', 12, 8);

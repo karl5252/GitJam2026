@@ -657,13 +657,13 @@ test('settlement and pollution use only the buildings left at the end of the nig
     assert.equal(w.economy.credits, before + report.net);
 });
 
-test('a destroyed Outpost stops its upkeep; a destroyed Factory stops income and emissions', () => {
+test('a destroyed Outpost leaves the settlement; a destroyed Factory stops income and emissions', () => {
     const outpostWorld = world({rng: fixedRng(topSpawn(12))});
     const outpost = outpostWorld.place('outpost', 12, 3);
     outpostWorld.cycle.endDay();
     destroyDuringNight(outpostWorld, outpost);
     outpostWorld.step(outpostWorld.cycle.remainingNightTicks);
-    assert.equal(outpostWorld.reports[0].upkeep, 0);
+    assert.equal(outpostWorld.reports[0].counts.outpost, 0);
 
     const factoryWorld = world({schedule: [1, 2], rng: fixedRng(leftSpawn(3))});
     const factory = factoryWorld.place('factory', 2, 3);

@@ -120,10 +120,10 @@ function powerSuite({pressWorld, pressAction}) {
         await expect(byAction(page, 'toggle-power')).toHaveCount(0);
     });
 
-    test('Day toggle: plant OFF -> blackout (free), and upkeep alone puts the night in debt; ON again -> power returns', async ({page}) => {
+    test('Day toggle: plant OFF -> blackout (free), and the night costs nothing; ON again -> power returns', async ({page}) => {
         const state = await start(page);
         await poweredBase(page, state);
-        // Spend the rest of the budget, so the blackout night really goes into debt.
+        // Spend the rest of the budget, so a charge would show as debt.
         await place(page, state, 'autocannon', 3, 12);
         expect((await sample(page)).resources.credits).toBe(0);
         await select(page, state, 17, 8, 'powerPlant-1');
@@ -146,7 +146,7 @@ function powerSuite({pressWorld, pressAction}) {
 
         await completeNight(page);
         s = await sample(page);
-        expect(s.settlement).toMatchObject({gross: 0, upkeep: 20, net: -20, creditsBefore: 0, creditsAfter: -20});
+        expect(s.settlement).toMatchObject({gross: 0, upkeep: 0, net: 0, creditsBefore: 0, creditsAfter: 0});
         expect(s.settlement.power).toEqual({generation: 0, demand: 70, status: 'blackout'});
         expect(s.buildings.find((b) => b.id === 'powerPlant-1').enabled).toBe(false); // persisted
 
@@ -159,7 +159,7 @@ function powerSuite({pressWorld, pressAction}) {
         expect(view(s, 'powerPlant-1').alpha).toBe(1);
 
         await completeNight(page);
-        expect((await sample(page)).settlement).toMatchObject({day: 2, gross: 0, net: -20, creditsBefore: -20, creditsAfter: -40});
+        expect((await sample(page)).settlement).toMatchObject({day: 2, gross: 0, net: 0, creditsBefore: 0, creditsAfter: 0});
     });
 
     test('Night toggle: switching works during Night Shift and affects power immediately', async ({page}) => {
@@ -196,7 +196,7 @@ function powerSuite({pressWorld, pressAction}) {
         await stepExactly(page, 3600 - elapsed);
         s = await sample(page);
         expect(s.shiftCycle.shift).toBe('day');
-        expect(s.settlement).toMatchObject({gross: 0, upkeep: 20, net: -20});
+        expect(s.settlement).toMatchObject({gross: 0, upkeep: 0, net: 0});
         expect(s.settlement.power).toEqual({generation: 100, demand: 10, status: 'normal'});
     });
 }

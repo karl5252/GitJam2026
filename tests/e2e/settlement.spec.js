@@ -91,14 +91,14 @@ function settlementSuite({pressWorld, pressAction}) {
         expect(await qaSim(page, 'stepTicks', 1)).toBe(1);
         s = await sample(page);
         const expected = {
-            day: 1, gross: 0, upkeep: 20, net: -20, creditsBefore: LEFT, creditsAfter: LEFT - 20,
+            day: 1, gross: 0, upkeep: 0, net: 0, creditsBefore: LEFT, creditsAfter: LEFT,
             counts: {hq: 0, outpost: 1, factory: 1, powerPlant: 1, autocannon: 0, siegeCannon: 0, barracks: 0, wall: 0, gateVertical: 0, gateHorizontal: 0},
             power: {generation: 100, demand: 50, status: 'normal'},
             pollution: {before: 0, emitted: 20, after: 20, threatLevel: 1},
         };
         expect(s.settlement).toEqual(expected);
-        expect(s.resources).toEqual({credits: LEFT - 20, ap: 5});
-        expect(s.hudView.text).toBe(`Credits: ${LEFT - 20}   AP: 5`);
+        expect(s.resources).toEqual({credits: LEFT, ap: 5});
+        expect(s.hudView.text).toBe(`Credits: ${LEFT}   AP: 5`);
         expect(s.settlementView).toEqual({visible: true, text: panelText(expected)});
         expect(s.shiftCycle).toMatchObject({day: 2, shift: 'day'});
         expect(s.buildings.length).toBe(3);
@@ -106,11 +106,11 @@ function settlementSuite({pressWorld, pressAction}) {
         // Day 2 does nothing more: no extra settlement over time or manual steps.
         await page.waitForTimeout(300);
         expect(await qaSim(page, 'stepTicks', 240)).toBe(0);
-        expect((await sample(page)).resources.credits).toBe(LEFT - 20);
+        expect((await sample(page)).resources.credits).toBe(LEFT);
         expect((await sample(page)).settlement).toEqual(expected);
     });
 
-    test('unpowered Factory + Outpost (no plant): no income, upkeep still charged', async ({page}) => {
+    test('unpowered Factory + Outpost (no plant): no income and no charge', async ({page}) => {
         const state = await start(page);
         await place(page, state, 'factory', 10, 8);
         await place(page, state, 'outpost', 3, 3);
@@ -119,12 +119,12 @@ function settlementSuite({pressWorld, pressAction}) {
         await nightTo(page, 3600);
         const s = await sample(page);
         expect(s.settlement).toEqual({
-            day: 1, gross: 0, upkeep: 20, net: -20, creditsBefore: START - 500, creditsAfter: START - 520,
+            day: 1, gross: 0, upkeep: 0, net: 0, creditsBefore: START - 500, creditsAfter: START - 500,
             counts: {hq: 0, outpost: 1, factory: 1, powerPlant: 0, autocannon: 0, siegeCannon: 0, barracks: 0, wall: 0, gateVertical: 0, gateHorizontal: 0},
             power: {generation: 0, demand: 50, status: 'blackout'},
             pollution: {before: 0, emitted: 0, after: 0, threatLevel: 1},
         });
-        expect(s.hudView.text).toBe(`Credits: ${START - 520}   AP: 5`);
+        expect(s.hudView.text).toBe(`Credits: ${START - 500}   AP: 5`);
         expect(s.settlementView.text).toBe(panelText(s.settlement));
     });
 
@@ -133,12 +133,12 @@ function settlementSuite({pressWorld, pressAction}) {
         await poweredBase(page, state);
 
         await nightTo(page, 3600);
-        expect((await sample(page)).settlement).toMatchObject({day: 1, creditsBefore: LEFT, creditsAfter: LEFT - 20});
+        expect((await sample(page)).settlement).toMatchObject({day: 1, creditsBefore: LEFT, creditsAfter: LEFT});
         await nightTo(page, 3600);
         const s = await sample(page);
-        expect(s.settlement).toMatchObject({day: 2, net: -20, creditsBefore: LEFT - 20, creditsAfter: LEFT - 40});
-        expect(s.resources).toEqual({credits: LEFT - 40, ap: 5});
-        expect(s.hudView.text).toBe(`Credits: ${LEFT - 40}   AP: 5`);
+        expect(s.settlement).toMatchObject({day: 2, net: 0, creditsBefore: LEFT, creditsAfter: LEFT});
+        expect(s.resources).toEqual({credits: LEFT, ap: 5});
+        expect(s.hudView.text).toBe(`Credits: ${LEFT}   AP: 5`);
         expect(s.settlementView.text).toBe(panelText(s.settlement));
         expect(s.shiftCycle.day).toBe(3);
     });

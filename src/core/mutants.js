@@ -194,14 +194,18 @@ export function gridBlockerAt({x, y}, buildings, byId, grid, passes = () => fals
 /**
  * Every spawn position, clockwise from the top-left: the midpoint of each
  * border cell's outer edge. Corner cells appear once per edge they touch.
+ * The border is the map's, unless a frame of tiles inside it is given.
+ * @param {{col, row, cols, rows}|null} [frame]
  */
-export function borderSpawns(grid) {
-    const {x: left, y: top, width, height} = grid.footprintRect({col: 0, row: 0, width: grid.cols, height: grid.rows});
+export function borderSpawns(grid, frame = null) {
+    const {col: firstCol, row: firstRow, cols, rows} = frame ?? {col: 0, row: 0, cols: grid.cols, rows: grid.rows};
+    const [lastCol, lastRow] = [firstCol + cols - 1, firstRow + rows - 1];
+    const {x: left, y: top, width, height} = grid.footprintRect({col: firstCol, row: firstRow, width: cols, height: rows});
     const spawns = [];
-    for (let col = 0; col < grid.cols; col++) spawns.push({col, row: 0, x: grid.cellCenter(col, 0).x, y: top});
-    for (let row = 0; row < grid.rows; row++) spawns.push({col: grid.cols - 1, row, x: left + width, y: grid.cellCenter(0, row).y});
-    for (let col = grid.cols - 1; col >= 0; col--) spawns.push({col, row: grid.rows - 1, x: grid.cellCenter(col, 0).x, y: top + height});
-    for (let row = grid.rows - 1; row >= 0; row--) spawns.push({col: 0, row, x: left, y: grid.cellCenter(0, row).y});
+    for (let col = firstCol; col <= lastCol; col++) spawns.push({col, row: firstRow, x: grid.cellCenter(col, 0).x, y: top});
+    for (let row = firstRow; row <= lastRow; row++) spawns.push({col: lastCol, row, x: left + width, y: grid.cellCenter(0, row).y});
+    for (let col = lastCol; col >= firstCol; col--) spawns.push({col, row: lastRow, x: grid.cellCenter(col, 0).x, y: top + height});
+    for (let row = lastRow; row >= firstRow; row--) spawns.push({col: firstCol, row, x: left, y: grid.cellCenter(0, row).y});
     return spawns;
 }
 
@@ -260,6 +264,7 @@ export class Mutants {
     #gates;
     #infantry = null;
     #spawns;
+    #spawnBounds;
     #bounds;
     #mutants = [];
     #nextId = 1;
@@ -285,8 +290,9 @@ export class Mutants {
      *   bruteSlots    - which are Brutes
      *   absorbedSlots - which spawn nothing, paying for a Brute
      *   planNight     - asked once per night, on night tick 1; overrides them all
+     *   spawnFrame    - {col, row, cols, rows}: spawn on this frame, not the map's edge
      */
-    constructor({cycle, placement, grid, rng, schedule = [], spitterSlots = [], bruteSlots = [], absorbedSlots = [], planNight = null, logistics = null, gates = null}) {
+    constructor({cycle, placement, grid, rng, schedule = [], spitterSlots = [], bruteSlots = [], absorbedSlots = [], planNight = null, logistics = null, gates = null, spawnFrame = null}) {
         assertValidSchedule(schedule, cycle.nightTicks);
         this.#composition = {spitterSlots, bruteSlots, absorbedSlots};
         assertValidComposition(this.#composition, schedule);
@@ -298,8 +304,11 @@ export class Mutants {
         this.#planNight = planNight;
         this.#logistics = logistics;
         this.#gates = gates;
-        this.#spawns = borderSpawns(grid);
+        this.#spawns = borderSpawns(grid, spawnFrame);
         this.#bounds = grid.footprintRect({col: 0, row: 0, width: grid.cols, height: grid.rows});
+        this.#spawnBounds = spawnFrame
+            ? grid.footprintRect({col: spawnFrame.col, row: spawnFrame.row, width: spawnFrame.cols, height: spawnFrame.rows})
+            : this.#bounds;
     }
 
     /** Soldiers shoot mutants and mutants hit soldiers, so one of the two is connected later. */
@@ -780,7 +789,7 @@ export class Mutants {
      * of it, and its first step in is an ordinary blocked step.
      */
     #outsideMap({x, y}) {
-        const {x: left, y: top, height} = this.#bounds;
+        const {x: left, y: top, height} = this.#spawnBounds;
         if (y === top) return {x, y: y - MUTANT.speed};
         if (y === top + height) return {x, y: y + MUTANT.speed};
         return {x: x === left ? x - MUTANT.speed : x + MUTANT.speed, y};

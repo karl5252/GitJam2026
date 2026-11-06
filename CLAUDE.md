@@ -18,6 +18,46 @@ This file provides project context, architectural constraints, and working rules
 - Keep task IDs consistent with the current development sequence.
 - A clean Git working tree does not imply that the next roadmap task has been authorized.
 - 
+## MANDATORY: RISK-BASED TESTING ONLY
+
+All development tasks MUST use risk-based testing unless the user explicitly instructs otherwise.
+
+**Default behavior:**
+
+- Run only tests directly relevant to changed code and its immediate dependencies.
+- Prefer targeted unit tests and narrowly scoped E2E specifications.
+- Reuse existing test coverage wherever practical.
+- Do not run the entire unit suite automatically.
+- Do not run the full E2E suite automatically.
+- Do not run broad smoke suites, browser soaks, mutation campaigns or lengthy simulation benchmarks automatically.
+- Do not rerun passing tests without a relevant code change or demonstrated reason.
+- Do not add unrelated tests merely to increase coverage numbers.
+
+**When broader testing appears necessary:**
+
+1. Identify the specific regression risk.
+2. Explain why targeted coverage is insufficient.
+3. Ask for explicit user authorization before running the broader suite.
+
+A task being finished is NOT sufficient justification for a full regression run.
+
+A test suite existing is NOT sufficient justification for running it.
+
+A successful process exit code is NOT sufficient evidence that all tests passed.
+
+**Agent efficiency requirements:**
+
+- Implement the smallest correct change.
+- Avoid unrelated refactoring.
+- Do not expand task scope without authorization.
+- Stop after the agreed acceptance criteria are demonstrated.
+- Report actual test counts, failures and unresolved risks.
+- Never terminate a development server or process that the agent did not start.
+
+**This policy applies to all subsequent tasks unless the user explicitly overrides it.** It takes precedence over anything else in this file about when tests run, including section 9.
+
+---
+
 ## 1. Project
 
 **PAPI Industries: The Green Shift** is an industrial survival tower-defense game developed for GitHub Game Off 2026.
@@ -31,7 +71,7 @@ This file provides project context, architectural constraints, and working rules
 
 **Target platforms:** Desktop browsers and mobile browsers in landscape orientation.
 
-**Current status:** TASK 023 (HEAVY METAL) is complete. TASK 024 (HUD Reconstruction & Mobile UX) and TASK 024.1 (Mobile Building Ghost & Two-Step Placement) are implemented and uncommitted, awaiting the developer's review and a real-device test. TASK 020 (Mines & Deposits) is in the backlog and is not a prerequisite for anything. Only work on tasks the developer explicitly assigns.
+**Current status:** TASK 023 (HEAVY METAL) is complete. TASK 024 (HUD Reconstruction & Mobile UX) and TASK 024.1 (Mobile Building Ghost & Two-Step Placement) are implemented and uncommitted, awaiting the developer's review and a real-device test. TASK 025.1 (Bigger World & Jungle) and TASK 025.2 (Fog of War & Outpost Rework) are implemented and uncommitted, awaiting the developer's review. TASK 020 (Mines & Deposits) is in the backlog and is not a prerequisite for anything. Only work on tasks the developer explicitly assigns.
 
 The project was initialized from the Wee Games Starter Kit Basic. The original demo applications have been removed.
 
@@ -132,7 +172,7 @@ npx playwright install chromium
 - `npm run preview`: Preview production build.
 - `npm run test`: Node unit tests.
 - `npm run test:e2e`: Playwright E2E tests, with 3 workers and tracing off by default. The dev server starts automatically and is reused outside CI.
-- `npm run test:smoke`: the 21 tests tagged `@smoke`. It takes about 15 seconds and is for the development inner loop. It never replaces final verification.
+- `npm run test:smoke`: the 22 tests tagged `@smoke`. It takes about 15 seconds and is for the development inner loop. It never replaces final verification.
 - `npm run test:full`: the full unit suite, then the full regular E2E suite.
 - `npm run test:soak`: Headless combat soak (`tests/soak/domain.soak.js`). Add `-- --quick` for a short subset. Writes `soak-results/domain.json`.
 - `npm run test:soak:browser`: Browser soak (`playwright.soak.config.js`, one worker, own port 5175, no server reuse). Takes a few minutes. Writes `soak-results/browser-*.json`.
@@ -194,10 +234,21 @@ Avoid implementing gameplay rules directly inside Phaser scenes.
 ### Current implementation
 
 - `src/core/gamePhase.js`: Bootstrap game phase logic.
-- `src/core/grid.js`: `Grid` class (Phaser-free). Configurable `cols`/`rows`/`tileSize` with an origin offset (`originX`/`originY`). World↔cell conversion (`worldToCell`, `cellToWorld`, `cellCenter`, `footprintRect`). NxM footprints `{col, row, width, height}`, anchored at the top-left cell. `canPlace`/`place` are atomic and return `{ok}` or `{ok: false, reason}`, where reason is one of `PlacementFailure`: `invalid-footprint`, `out-of-bounds`, `occupied` (plus `blockers`), `duplicate-id`. Also `remove`, `occupantAt` and `snapshot()`, which returns detached JSON data. The grid is the source of truth for occupancy and validity.
+- `src/core/vision.js`: Fog of War. Pure, and nothing in the simulation reads it. `FogOfWar({cols, rows, explored})` holds each tile as UNEXPLORED, EXPLORED or VISIBLE. What is visible is the union of every source in every group; `setSources(group, sources)` replaces one group and recalculates only if its sources differ, so a unit that stays on its tile costs nothing. A source is `{col, row, width, height, radius}`, and a tile is seen if its distance to the footprint is within the radius, circularly, in whole numbers. EXPLORED is never lost. `markExplored(cells)` makes tiles known without making them VISIBLE. `stateAt`, `isVisible`, `revision`, `snapshot()` (rows of `#`, `~`, `O`).
+  - **Radii:** `VISION_RADIUS` is the one place they live: `unit` 6, `building` 6, `turret` 7, `outpost` 12, in tiles, all provisional. `visionRadiusOf(type)` is `null` for walls and gates.
+  - **Sources:** `buildingVision(buildings, power)`: every standing building sees, powered or not, except an Outpost, which needs to be `powered`, so LOW_POWER and BLACKOUT blind it. `unitVision(units, grid, radius)` turns anything with `{x, y}` into moving sources. `fortificationTiles` gives wall and gate tiles, which become known and scout nothing. `startingKnown(terrain)` is the clearing and the trees at its edge, EXPLORED from the start, so there is something to see before HQ.
+  - **Updates:** `GameScene.refreshPower` updates the `buildings` group, because anything that changes a building's vision also goes through it. `stepSimulation` updates the `soldiers` group every tick, last, so what a unit discovers cannot depend on frame rate or speed. A new mobile unit is one more group and one more `unitVision` call. Vision radius is the only radius here: a work radius belongs to the unit.
+  - **Concealment:** EXPLORED only dims, so `MutantLayer.sync` takes `isSeen` and hides mutants, Spitter aim lines, shells, rings and deaths on any tile not VISIBLE, and the wave HUD counts only seen mutants. `Wave X/Y` is unchanged. QA's `mutants` still reports them all. The open map has no fog: `isSeen` is null and nothing is hidden.
+- `src/core/worldMap.js`: what a run is played on, as data. `open` is the original 24×16 battlefield with no terrain, and `jungle` (`DEFAULT_MAP`) is 48×32. Tile size is 32 on both. `createTerrain(map, seed)` gives a map's terrain, or `null`. A shipped game always plays `jungle` on `DEFAULT_SEED`. In TEST_MODE only, `?map=open|jungle` and `?worldSeed=N` override that (`src/testShadow/worldParams.js`); `?worldSeed` is the terrain and `?seed` is the wave RNG, and neither affects the other. `boot()` adds `map=open`, so suites stay on the open map unless they pass `{map: null}` for what a new game gets, or `{map: 'jungle'}`.
+  - **`spawnFrame`:** the night's length and walking speed were set for the open map, and from the border of a 48×32 map a late wave would never arrive. So on `jungle` mutants spawn on a centred 24×16 frame, `{col: 12, row: 8, cols: 24, rows: 16}`, which lands on the same world pixels and the same 80 positions as the open map's border. `tests/unit/terrain.test.js` holds a translated base to the same tick-by-tick combat digests on both maps. A building on the frame (only possible where the path crosses it) is handled like one on the open map's border: a fortification puts the mutant one step outside the frame, and it then walks or detours as usual.
+- `src/core/terrain.js`: `generateJungle({cols, rows, seed, spawnFrame})` gives an immutable `Terrain`: `kindAt(col, row)` (`jungle`, `clearing`, `path`, or `null` off the map), `isBuildable`, `center`, `core`, `path` (the track's middle, from the map edge) and `snapshot()`, whose rows are strings of `#`, `.` and `=`. It draws from its own `SeededRandom`, never the game's, and uses integers and `sqrt` only, so a seed is the same map on every engine. A seed that is not a uint32 throws `RangeError`.
+  - **Clearing:** one run of open tiles per row, each holding the centre column, so it is one piece. `CLEARING.core` (13×9) is always open, which fits HQ and its ring, a Factory on a road, a Plant, cannons and a Barracks on any seed. It stays inside the frame, with jungle between them.
+  - **Path:** two tiles wide, unbroken, from a seeded map edge into the clearing. It is open ground and nothing more: not a road, no dock access, no income, no cost. Buildings and roads go on it like any open ground. Trees the track curls round become open ground too, so there are never pockets of jungle.
+  - **Jungle** blocks buildings and roads, and nothing else. Mutants, soldiers, shells, spawns and rally flags ignore it, and it does not occupy the Grid. There is no way to clear it yet.
+- `src/core/grid.js`: `Grid` class (Phaser-free). Configurable `cols`/`rows`/`tileSize` with an origin offset (`originX`/`originY`). World↔cell conversion (`worldToCell`, `cellToWorld`, `cellCenter`, `footprintRect`). NxM footprints `{col, row, width, height}`, anchored at the top-left cell. `canPlace`/`place` are atomic and return `{ok}` or `{ok: false, reason}`, where reason is one of `PlacementFailure`: `invalid-footprint`, `out-of-bounds`, `occupied` (plus `blockers`), `duplicate-id`. Also `remove`, `occupantAt` and `snapshot()`, which returns detached JSON data. The grid is the source of truth for occupancy and validity. With an optional `terrain`, `isBuildable(col, row)` answers for the ground, `canPlace` refuses a footprint with `terrain-blocked` (after `occupied`), and `RoadNetwork` refuses a road or an HQ ring tile the same way. Without one, nothing changes.
 - `src/core/buildingTypes.js`: frozen plain data, with temporary graybox values. `getBuildingType(id)` returns the type or `null`.
   - `hq`: 3×3, costs `{credits: 0, ap: 0}`, operations `{income: 0, upkeep: 0}`, power `{supply: 20, demand: 0}`, `pollutionPerNight: 0`, `maxHp: 600`, `switchable: false`, `demolishable: false`. Its power joins the global pool, so `power.js` has no special case. Generation never reaches 0 while HQ stands, so BLACKOUT does not occur in normal play.
-  - `outpost`: 1×1, costs `{credits: 100, ap: 1}`, operations `{income: 0, upkeep: 20}` per completed night, power `{supply: 0, demand: 10}`, `pollutionPerNight: 0`, `maxHp: 100`.
+  - `outpost`: 1×1, costs `{credits: 100, ap: 1}`, operations `{income: 0, upkeep: 0}`, power `{supply: 0, demand: 10}`, `pollutionPerNight: 0`, `maxHp: 100`.
   - `factory`: 3×3, costs `{credits: 400, ap: 1}`, operations `{income: 0, upkeep: 0}` (it earns through deliveries, see `src/core/logistics.js`), power `{supply: 0, demand: 40}`, `pollutionPerNight: 8`, `maxHp: 300`.
   - `powerPlant`: 3×3, costs `{credits: 500, ap: 1}`, operations `{income: 0, upkeep: 0}`, power `{supply: 100, demand: 0}`, `pollutionPerNight: 12`, `maxHp: 300`.
   - `autocannon`: 1×1, costs `{credits: 250, ap: 1}`, operations `{income: 0, upkeep: 0}`, power `{supply: 0, demand: 20}`, `pollutionPerNight: 0`, `maxHp: 150`. It is a separate defensive building; Outpost is not a turret.
@@ -283,7 +334,7 @@ Avoid implementing gameplay rules directly inside Phaser scenes.
   - `canAfford(cost)` never changes anything. It checks in a fixed order: `invalid-cost` → `insufficient-credits` → `insufficient-ap` (`EconomyFailure`).
   - `spend(cost)` deducts both resources together, or neither.
   - `restoreAp(ap)` sets AP (used at the start of each Day) and leaves Credits untouched.
-  - `adjustCredits(delta)` takes a safe integer only. It may take Credits **negative**, which is debt from nightly upkeep. Affordability is unchanged (`cost.credits <= credits`), so every purchase is rejected while in debt. Starting balances stay non-negative. Debt never ends the run: HQ destruction is the only approved Game Over.
+  - `adjustCredits(delta)` takes a safe integer only. It may take Credits **negative**, which is debt. No building has upkeep now, so nothing in normal play causes it; the mechanism stays for future costs. Affordability is unchanged (`cost.credits <= credits`), so every purchase is rejected while in debt. Starting balances stay non-negative. Debt never ends the run: HQ destruction is the only approved Game Over.
   - `snapshot()` returns detached data.
 - `src/core/buildingPlacement.js`:
   - `footprintAt(type, cell)` centers a footprint on the pointer cell: anchor = cell − floor((size − 1) / 2). For even sizes, the pointer cell is the left/top cell of the central pair.
@@ -352,11 +403,13 @@ Avoid implementing gameplay rules directly inside Phaser scenes.
 - `src/scenes/EventBus.js`: the only link between `GameScene` and `HUDScene`, as in BarrelStorm. `State` flows down, as presentation data; `Command` flows up, as intentions; `Notice` is the few things that are not state; `Hud.READY` and `Hud.SNAPSHOT` are the handshake. It outlives scenes, so whoever subscribes unsubscribes on shutdown.
 - `src/scenes/HUDScene.js`: everything in screen coordinates, in its own scene above `GameScene`: title, resources, shift, wave, power, pollution, settlement, hints, build menu, Cancel, END DAY, the selection's actions, speed, camera buttons and Game Over. It draws what it is told and sends commands; it never touches the simulation, and `GameScene` never touches its objects. All its state arrives as events, so it can be restarted at any time. `views()` is what QA reads. Phaser stops at the first scene that captures an input, so a press on any interactive object here never reaches the world. Leaving a control also counts as a capture, so `Notice.POINTER_LEFT_HUD` hands that one move on.
 - `src/scenes/hudLayout.js`: pure data. `DESKTOP` is the bands round the grid. `TOUCH`, for a coarse pointer on a viewport at most 540 px on its short side, is a top bar, two columns of controls at least 90 logical pixels (45 CSS at 740×360) and a build drawer by category. Each gives `viewport`, the screen rectangle the world is drawn in, which only the drawer and the hint ever cover.
-- `src/scenes/cameraView.js`: pure camera maths: fit, clamp, zoom at a point, pan, and world/screen conversion. `src/scenes/WorldCamera.js` applies it to `GameScene`'s main camera, in the layout's viewport. The world rectangle is the grid plus 16 px. On desktop the fitted view is exactly the plain screen, so a world point keeps its pixel. Zoom runs from the fit to 3.2. Night opens at FIT and Day at the layout's `dayZoom` (2 on touch, none on desktop), once per change of shift, so the player's own zoom is never fought. Screen points become world points here, never through `pointer.worldX`, which belongs to whichever scene looked last.
+- `src/scenes/cameraView.js`: pure camera maths: fit, clamp, zoom at a point, pan, and world/screen conversion. `src/scenes/WorldCamera.js` applies it to `GameScene`'s main camera, in the layout's viewport. The world rectangle is the grid plus 16 px. On desktop the fitted view is exactly the plain screen, so a world point keeps its pixel. Zoom runs from the fit to 3.2. Night opens at FIT and Day at the layout's `dayZoom` (2 on touch, none on desktop), once per change of shift, so the player's own zoom is never fought. On a map with a `spawnFrame`, FIT is too small to fight at, so Night opens on `showArea` of the frame plus 16 px instead, the same zoom the open map fits at, and the first desktop Day starts there too. The FIT button and the zoom limit still use the whole world. Screen points become world points here, never through `pointer.worldX`, which belongs to whichever scene looked last.
 - `src/scenes/orientationGuard.js`: on a coarse pointer in portrait, a DOM screen from `index.html` shows, `GameScene.update` stops feeding frames to the clock, and world input is ignored. The clock's speed and pause state are not touched, so a run comes back exactly as it was, paused or not. A desktop window can be any shape. QA stepping is not suspended.
 - `src/scenes/MutantLayer.js`: graybox circles for mutants, HP bars on damaged buildings, and Spitters: a lime triangle about 22 px across, whose fill thins as shots go. In its telegraph it swells and draws an aim line; shells, impact rings and a fading × follow. With no shots left it turns over and goes olive, with a ring, which is the warning that it is coming in. A Brute is an orange octagon about 30 px across that always shows its HP, swells as it winds up a blow, and rings when one lands. Timing counts simulation ticks. Presentation only; `sync(mutants, buildings, {shells, tick, isNight})` takes detached snapshots.
 - `src/scenes/AutocannonLayer.js`: graybox barrels, quantized to 8 directions, and short tracers lasting 6 simulation ticks. Presentation only; facing and tracer timing never affect gameplay.
 - `src/scenes/SiegeLayer.js`: barrel, reload bar, shell, a ring at the landing point the size of the impact radius, and a burst on impact. Presentation only.
+- `src/scenes/TerrainLayer.js`: the terrain, painted once into one `CanvasTexture` at 2 texels per world pixel and shown as one image at the grid's origin, depth -1, so it costs one quad a frame and cannot drift from the grid at any zoom. The canopy is clipped to jungle tiles, so it ends on the tile that stops building. A restart reuses the texture. Open ground draws its own tile lines; `GameScene` draws the plain grid lines only on a map with no terrain. Its shapes come from its own generator. Presentation only.
+- `src/scenes/FogLayer.js`: the fog, as one canvas texture with one texel per tile, stretched over the map as one world image at the grid's origin, so it costs one quad a frame, stays on the grid at any zoom, and the stretching softens its edges. Depth 2.5: over buildings and trucks, under every placement preview. Redrawn only when `fog.revision` changes. Presentation only.
 - `src/scenes/TruckLayer.js`: truck rectangles, amber when loaded, and storage pips on Factories. Presentation only, synced from `Logistics.snapshot()`.
 - `src/scenes/RoadLayer.js`: road tiles under buildings, dock markers, the Factory dock preview and the 5x5 HQ preview outline. Presentation only, redrawn only when roads change.
 - `src/scenes/InfantryLayer.js`: soldiers (blue diamonds, against round magenta mutants), cyan tracers, HP bars when hurt, a fading × on a death, rally flags with the number of their Barracks, and roof pips counting living soldiers. Selecting a Barracks brightens its flag and draws a line to it; a blocked flag is red and crossed. Flags redraw only on a revision or selection change. Rocket soldiers are larger and orange, a rocket Barracks' roof shows `1R`, and rockets are drawn in flight with a ring where they land. Presentation only.
@@ -398,6 +451,7 @@ Avoid implementing gameplay rules directly inside Phaser scenes.
   - Scene-level pointer handlers ignore events whose hit list (`currentlyOver`) contains a UI object, so a press on a button never counts as grid input.
   - QASurface exposes:
     - `grid`, `selectedCell`, `highlight`
+    - `map` (`{id, cols, rows, seed, spawnFrame}`), `terrain` (`Terrain.snapshot()`, `null` before Start and on the open map) and `terrainView` (the rendered image), `fog` (`FogOfWar.snapshot()`) and `fogView` (the rendered image), both `null` on the open map
     - `ui` (title, Start, Cancel, END DAY, build menu and power toggle visibility)
     - `power` (the domain `calculatePower` result, including per-building `enabled` and `powered`), `powerView` (the actual summary text) and `selectedBuilding`
     - `placement` (`selectedType`, the domain `preview` result, and `lastResult` from the last placement attempt)
@@ -440,7 +494,8 @@ Avoid implementing gameplay rules directly inside Phaser scenes.
       - Walls and gates are ordinary `buildings` entries, so they need no new version. Gates load CLOSED at full HP.
       - **Version 2** exists only because of Barracks, whose entries add `flag: {col, row} | null`. A layout with no Barracks exports as version 1, byte for byte as before. The version must match the contents, so a version 1 snapshot holding a Barracks, or a version 2 one holding none, is `unsupported-schema`. Flags load after all buildings, through `restoreFlag`. Soldiers are never saved.
       - **Version 3** exists only because of rocket squads: every Barracks entry then adds `role` (`rifle` or `rocket`). A layout with no rockets exports as version 2, byte for byte, and the version must match the contents. Loading restores roles through `restoreRole`, at no cost.
-      - **Fixtures:** schema compatibility does not mean a layout is still legal, and rules are never relaxed to admit an old one. `tests/unit/gates.test.js` declares every file in `tests/fixtures/layouts/`: `logistics-reference`, `fortress-logistics-v1`, `fortress-checkerboard-v1`, `fortification-reference` and `infantry-reference` and the player-exported `golden-fortress-day33-v2` (both version 2) and `golden-fortress-brute-defense-v3` (version 3) load; `fortress-corner-v1` and `fortress22-road-legal` are stale and are rejected with `no-road-access`. `tests/fixtures/legacy/fortress22-exact.js` is a combat benchmark that only builds with no roads.
+      - **Maps:** the format has no map field and needs none. Every fixture is 24×16, so on `jungle` it is refused with `grid-mismatch` and nothing is moved or resized. A jungle layout exports in the same format, with `grid: {cols: 48, rows: 32}`, and terrain is one more rule the replay and its dry run meet, so a layout that fits one world seed may be refused with `terrain-blocked` on another. The seed is not saved.
+      - **Fixtures:** schema compatibility does not mean a layout is still legal, and rules are never relaxed to admit an old one. `tests/unit/gates.test.js` declares every file in `tests/fixtures/layouts/`: `logistics-reference`, `fortress-logistics-v1`, `fortress-checkerboard-v1`, `fortification-reference` and `infantry-reference` and the player-exported `golden-fortress-day33-v2` (both version 2) and `golden-fortress-brute-defense-v3` (version 3) load, and `golden-fortress-jungle-v3` (48×32, version 3) loads on the jungle map at the default seed; `fortress-corner-v1` and `fortress22-road-legal` are stale and are rejected with `no-road-access`. `tests/fixtures/legacy/fortress22-exact.js` is a combat benchmark that only builds with no roads.
 
     `window.__qa.perf` (`src/testShadow/PerfProbe.js`) provides `start()`, `stop()`, `counts()` and `renderer()` for the browser soak. It reports simulation, scene update, render callbacks and frame time separately, and classifies the rest as unattributed. Use it for real-time runs only; never derive frame rates from `stepTicks`.
 
@@ -692,7 +747,7 @@ Once the simulation system exists, test:
 
 ### Efficient test execution
 
-This policy applies to TASK 013 and all future tasks.
+The mandatory risk-based testing policy at the top of this file takes precedence over this section. Anything broader than targeted tests below needs the user's explicit authorization first.
 
 **Risk-based regression:**
 
@@ -713,7 +768,7 @@ Do not run the full suite unless that justification exists. Do not rerun tests t
 **The rules:**
 
 - Run targeted tests during development.
-- Run one full verification pass at task completion.
+- Do not run a full verification pass at task completion unless the user authorizes it.
 - After test-only fixes, rerun the affected tests only.
 - Run long browser soaks only when justified by major changes or release verification.
 - Never repeat expensive test suites automatically, including to obtain a clean report.
@@ -728,7 +783,7 @@ Do not run the full suite unless that justification exists. Do not rerun tests t
 - Do not run performance soak suites unless the change affects their contracts, lifecycle behavior, or measured performance.
 - Use existing test selection mechanisms. Do not build a new test runner or introduce dependencies.
 
-**Final verification, once the implementation is stable:**
+**Final verification, only when the user authorizes it:**
 
 1. Run the complete unit test suite.
 2. Run the Playwright scope the risk-based rules above call for. Run the complete regular suite, with 3 workers and tracing disabled, only with the justification they require.
@@ -739,7 +794,7 @@ Do not run the full suite unless that justification exists. Do not rerun tests t
 
 **The smoke suite:**
 
-The `@smoke` tag marks 21 existing tests covering boot, Start, mobile layout, HQ-first construction, placement, power and toggling, nightly settlement, combat, Game Over, restart, a truck crossing a gate and a squad deploying to its flag. Keep it small. Add a tag only for a whole area that is not covered, not to raise a mutation score. Smoke is a fast signal, and it deliberately misses detail, so run it together with the unit suite: `npm run test && npm run test:smoke` takes about 17 seconds. See `docs/performance-baseline.md`.
+The `@smoke` tag marks 22 existing tests covering boot, Start, a new game on the jungle map, mobile layout, HQ-first construction, placement, power and toggling, nightly settlement, combat, Game Over, restart, a truck crossing a gate and a squad deploying to its flag. Keep it small. Add a tag only for a whole area that is not covered, not to raise a mutation score. Smoke is a fast signal, and it deliberately misses detail, so run it together with the unit suite: `npm run test && npm run test:smoke` takes about 17 seconds. See `docs/performance-baseline.md`.
 
 **When a final gate fails:**
 
@@ -817,6 +872,8 @@ Implemented, awaiting the developer's review:
 
 - TASK 024: HUD Reconstruction & Mobile UX (HUDScene, world camera, touch layout, landscape guard)
 - TASK 024.1: Mobile Building Ghost & Two-Step Placement
+- TASK 025.1: Bigger World & Jungle
+- TASK 025.2: Fog of War & Outpost Rework
 
 Later, not yet assigned:
 
@@ -836,6 +893,7 @@ Known balance issues, accepted for now and not final behaviour (see the GDD):
 - Infantry: in scripted bases with no flag moves, Barracks are much weaker than Autocannons (median fall Night 22 for three cannons, Night 9 for two Barracks), and soldiers almost never die, because mutants at their targets are not lured. They do die on a lane. Barracks do not raise the wave budget. See GDD section 14 and `npm run test:soak:infantry`; real play must judge this.
 - Spitters (accepted, not a target): static no-income bases fall much earlier. In scripted runs the three established 3-cannon turtles fall at a median of Night 12 to 13, against 20 and 24 on the same waves of ordinary mutants, because most Spitters spend all five shots unanswered, the Plant goes first, and every cannon falls silent. The developer playtested this and kept the Spitter unchanged: an actively managed, economically developed base survived through Day 40, so this is the intended gap between a static base and a managed one. One playtest is context, not a balance target. `tests/unit/waves.test.js` guards both sides: ordinary waves keep the Night 15 floor, and with Spitters a turtle must fall no earlier than Night 10 and at least 5 Nights sooner.
 - Brutes and their counters (approved with these values, balance still provisional): real play reached Day 32 with an evolved fortress under Brutes, which supports the current values. In scripted runs on `golden-fortress-day33-v2`, 1 Siege Cannon and a Rocket squad on a scripted flag cut the estimated Night 40 rebuild bill from about 418 to about 48 Credits, so concentrated heavy weapons may make Nights 35 to 40 too comfortable. A Siege Cannon also takes most armed Spitter kills where no squad is active, though active flags keep their value. See GDD section 14 and `npm run test:soak:heavy`.
+- Jungle map: the spawn frame keeps combat identical to the open map for a base in the clearing, so the map's far jungle plays no part in a Night yet. The clearing has about half the open map's buildable tiles, which squeezes late bases and is not yet playtested. Production always plays one world seed, so the map, like the waves, is the same every run. Rally flags can be set in the jungle.
 - Starting budget: 1250 Credits is approved. Power Plant + Factory + Autocannon costs 1150, so the first Day can include all three. A no-income turtle can buy three Autocannons and a Plant, with a median defeat of Night 20 from the centre and Nights 23-24 from corners in scripted runs.
 
 Advanced systems, additional content, and visual polish must not be introduced ahead of their assigned tasks.

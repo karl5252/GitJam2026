@@ -15,6 +15,10 @@
 // Instance ids are left out: only list order affects combat, and ids are only
 // ever compared for equality. Roads have no such effect and sort canonically.
 //
+// The map is not saved, because the format needs nothing new: a snapshot's grid
+// size already keeps open and jungle layouts apart (grid-mismatch), nothing is
+// ever moved or resized to fit, and terrain is just one more rule the replay meets.
+//
 // Loading replays the snapshot through the real placement and road rules. A
 // dry run on throwaway objects catches anything invalid before the live game
 // is touched. That cannot prove the live replay succeeds, so its result is
@@ -197,7 +201,7 @@ function replay({placement, roads, economy}, snapshot, faultAfter = null) {
 
 /** Validate against throwaway objects, so nothing live can be touched. */
 function dryRun(snapshot, grid) {
-    const scratchGrid = new Grid({cols: grid.cols, rows: grid.rows, tileSize: grid.tileSize});
+    const scratchGrid = new Grid({cols: grid.cols, rows: grid.rows, tileSize: grid.tileSize, terrain: grid.terrain});
     const economy = new Economy({credits: 0, ap: 0});
     const roads = new RoadNetwork({grid: scratchGrid});
     const placement = new BuildingPlacement(scratchGrid, economy, {requireHq: true, roads});

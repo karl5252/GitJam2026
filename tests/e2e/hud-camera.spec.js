@@ -417,7 +417,7 @@ test.describe('orientation', () => {
     const portrait = {width: 390, height: 844};
 
     test('portrait start shows the screen, and turning the phone enters the game', async ({page}) => {
-        await page.goto('/?testMode&mutants=off');
+        await page.goto('/?testMode&map=open&mutants=off');
         const screen = page.locator('#orientation-guard');
         await expect(screen).toBeVisible();
         await expect(screen).toContainText('ROTATE YOUR DEVICE');

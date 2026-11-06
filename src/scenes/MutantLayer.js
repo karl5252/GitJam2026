@@ -62,7 +62,7 @@ export class MutantLayer {
     }
 
     /** Match the views to the current mutants, shells and buildings. */
-    sync(mutants, buildings, {shells = [], tick = 0, isNight = false} = {}) {
+    sync(mutants, buildings, {shells = [], tick = 0, isNight = false, isSeen = null} = {}) {
         const spitters = mutants.filter(({kind}) => kind === SPITTER.kind);
         const brutes = mutants.filter(({kind}) => kind === BRUTE.kind);
         this.#syncMutants(mutants.filter(({kind}) => kind === undefined));
@@ -71,6 +71,23 @@ export class MutantLayer {
         this.#syncShells(shells);
         this.#syncFading(tick, isNight);
         this.#syncHpBars(buildings);
+        if (isSeen) this.#conceal(isSeen);
+    }
+
+    /** Fog dims what it covers without hiding it, so nothing the enemy does may show on a tile not being watched. */
+    #conceal(isSeen) {
+        for (const view of this.#mutantViews.values()) view.setVisible(isSeen(view));
+        for (const {view, line} of this.#spitters.values()) {
+            const seen = isSeen(view);
+            view.setVisible(seen);
+            line.setVisible(line.visible && seen);
+        }
+        for (const {view, back, bar} of this.#brutes.values()) {
+            const seen = isSeen(view);
+            for (const part of [view, back, bar]) part.setVisible(seen);
+        }
+        for (const view of this.#shells.values()) view.setVisible(isSeen(view));
+        for (const {view} of [...this.#impacts, ...this.#deaths]) view.setVisible(isSeen(view));
     }
 
     /** Show where this tick's shells came down. */

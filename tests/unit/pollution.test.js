@@ -174,16 +174,13 @@ test('Credits may sit exactly on the safe limit; one past it changes nothing', (
     assert.deepEqual(pollution.snapshot(), {value: 3}); // not committed first and left behind
 });
 
-test('Credits below the negative safe limit are rejected with no partial change', () => {
+test('Credits at the negative safe limit settle unchanged, since no building has upkeep to push them past it', () => {
     const economy = new Economy({credits: 0, ap: 2});
-    economy.adjustCredits(-MAX + 20); // exactly reaches -MAX after one Outpost
-    const fits = new Pollution();
-    assert.equal(settleNight({day: 1, buildings: b('outpost'), economy, pollution: fits}).creditsAfter, -MAX);
-
+    economy.adjustCredits(-MAX);
     const pollution = new Pollution(3);
-    assert.throws(() => settleNight({day: 2, buildings: [...b('outpost'), ...b('powerPlant')], economy, pollution}), RangeError);
+    assert.equal(settleNight({day: 1, buildings: [...b('outpost'), ...b('powerPlant')], economy, pollution}).creditsAfter, -MAX);
     assert.equal(economy.credits, -MAX);
-    assert.equal(pollution.value, 3);
+    assert.equal(pollution.value, 15);
 });
 
 test('an already unsafe Credits balance is rejected, even with zero net', () => {
@@ -378,7 +375,7 @@ test('a failed Pollution.add then a successful retry: no double charge, one repo
     }
     const economy = new Economy({credits: 500, ap: 2});
     const pollution = new FlakyPollution();
-    const buildings = [...b('powerPlant'), ...b('factory'), ...b('outpost')]; // net -20, +20 pollution
+    const buildings = [...b('powerPlant'), ...b('factory'), ...b('outpost')]; // +20 pollution
     const reports = [];
     const {clock, cycle, onTick} = atFinalTick((day) => {
         const report = settleNight({day, buildings, economy, pollution});
@@ -400,7 +397,7 @@ test('a failed Pollution.add then a successful retry: no double charge, one repo
     assert.equal(pollution.addCalls, 2);
     assert.equal(reports.length, 1);
     assert.equal(cycle.lastSettlement, reports[0]);
-    assert.deepEqual(economy.snapshot(), {credits: 480, ap: 5}); // charged once
+    assert.deepEqual(economy.snapshot(), {credits: 500, ap: 5});
     assert.equal(pollution.value, 20); // emitted once
     assert.deepEqual(reports[0].pollution, {before: 0, emitted: 20, after: 20, threatLevel: 1});
     assert.equal(reports[0].creditsBefore, 500);

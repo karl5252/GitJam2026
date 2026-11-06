@@ -6,7 +6,7 @@ test('defines outpost (1x1), factory (3x3) and power plant (3x3)', () => {
     assert.deepEqual(Object.keys(BUILDING_TYPES), ['hq', 'outpost', 'factory', 'powerPlant', 'autocannon', 'siegeCannon', 'barracks', 'wall', 'gateVertical', 'gateHorizontal']);
     assert.deepEqual(BUILDING_TYPES.outpost, {
         id: 'outpost', name: 'Outpost', width: 1, height: 1,
-        cost: {credits: 100, ap: 1}, operations: {income: 0, upkeep: 20}, power: {supply: 0, demand: 10},
+        cost: {credits: 100, ap: 1}, operations: {income: 0, upkeep: 0}, power: {supply: 0, demand: 10},
         pollutionPerNight: 0,
         maxHp: 100,
     });

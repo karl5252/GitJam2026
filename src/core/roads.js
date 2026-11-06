@@ -16,6 +16,7 @@
  * about it. Losing a gate only adds edges, so it can never break a route.
  */
 import {GATE} from './gates.js';
+import {PlacementFailure} from './grid.js';
 
 export const HQ_RING = 'hq-ring';
 export const PLAYER_ROAD = 'player';
@@ -35,6 +36,7 @@ export const receivingDock = ({col, row, width, height}) => ({col: col + Math.fl
 export const RoadFailure = Object.freeze({
     OUT_OF_BOUNDS: 'out-of-bounds',
     OCCUPIED: 'occupied',
+    TERRAIN_BLOCKED: PlacementFailure.TERRAIN_BLOCKED,
     ROAD_EXISTS: 'road-exists',
     NOT_CONNECTED: 'not-connected',
     UNKNOWN_ROAD: 'unknown-road',
@@ -245,7 +247,9 @@ export class RoadNetwork {
         const cells = hqRingCells(footprint);
         if (!cells.every((cell) => this.#inBounds(cell))) return {ok: false, reason: RoadFailure.HQ_RING_OUT_OF_BOUNDS};
         const blocked = cells.some(({col, row}) => this.#grid.occupantAt(col, row) !== null);
-        return blocked ? {ok: false, reason: RoadFailure.OCCUPIED} : {ok: true};
+        if (blocked) return {ok: false, reason: RoadFailure.OCCUPIED};
+        const buildable = cells.every(({col, row}) => this.#grid.isBuildable(col, row));
+        return buildable ? {ok: true} : {ok: false, reason: RoadFailure.TERRAIN_BLOCKED};
     }
 
     addHqRing(footprint) {
@@ -259,6 +263,7 @@ export class RoadNetwork {
         if (!this.#inBounds(cell)) return {ok: false, reason: RoadFailure.OUT_OF_BOUNDS};
         if (this.has(cell)) return {ok: false, reason: RoadFailure.ROAD_EXISTS};
         if (this.#grid.occupantAt(cell.col, cell.row) !== null) return {ok: false, reason: RoadFailure.OCCUPIED};
+        if (!this.#grid.isBuildable(cell.col, cell.row)) return {ok: false, reason: RoadFailure.TERRAIN_BLOCKED};
         return {ok: true};
     }
 

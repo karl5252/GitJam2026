@@ -31,6 +31,17 @@ import {SiegeCannons, SIEGE} from '../../src/core/siegeCannons.js';
 import {nightPlan} from '../../src/core/waves.js';
 
 const GRID = {cols: 24, rows: 16, tileSize: 32, originX: 256, originY: 104};
+const CANVAS = {width: 1280, height: 720};
+
+/** The Grid settings GameScene gives a map. */
+const gridFor = ({cols, rows, tileSize}, terrain) => ({
+    cols,
+    rows,
+    tileSize,
+    originX: (CANVAS.width - cols * tileSize) / 2,
+    originY: (CANVAS.height - rows * tileSize) / 2,
+    terrain,
+});
 
 /**
  * @param {{seed?: number, schedule?: readonly number[]|null, resources?: {credits: number, ap: number},
@@ -49,12 +60,14 @@ const GRID = {cols: 24, rows: 16, tileSize: 32, originX: 256, originY: 104};
  *   firstNight - earlier nights spawn nothing and settle nothing, so a benchmark
  *   can start late on the real calendar
  *   rng - replaces the seeded RNG, so a test can choose spawn positions
+ *   map, terrain - a map from core/worldMap.js and its terrain, as GameScene uses
+ *   them. Without one, the world is the original 24x16 battlefield.
  */
-export function createWorld({seed = 731, schedule = null, resources = STARTING_RESOURCES, openConstruction = false, requireHq = false, roads: useRoads = false, pollution: startingPollution = 0, firstNight = 1, rng: fixedRng = null, spitterSlots = [], bruteSlots = [], absorbedSlots = [], spitters = true, brutes = true} = {}) {
+export function createWorld({seed = 731, schedule = null, resources = STARTING_RESOURCES, openConstruction = false, requireHq = false, roads: useRoads = false, pollution: startingPollution = 0, firstNight = 1, rng: fixedRng = null, spitterSlots = [], bruteSlots = [], absorbedSlots = [], spitters = true, brutes = true, map = null, terrain = null} = {}) {
     const clock = new SimulationClock();
     const economy = new Economy(resources);
     const pollution = new Pollution(startingPollution);
-    const grid = new Grid(GRID);
+    const grid = new Grid(map ? gridFor(map, terrain) : GRID);
     const rng = fixedRng ?? new SeededRandom(seed);
     const roads = useRoads ? new RoadNetwork({grid}) : null;
     let cycle;
@@ -75,6 +88,7 @@ export function createWorld({seed = 731, schedule = null, resources = STARTING_R
         logistics,
         gates,
         schedule: schedule ?? [],
+        spawnFrame: map?.spawnFrame ?? null,
         spitterSlots,
         bruteSlots,
         absorbedSlots,

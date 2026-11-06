@@ -10,12 +10,17 @@
  *
  * Placement is atomic: canPlace() validates, place() mutates only when the
  * same validation passes. Rejections return a reason, never throw.
+ *
+ * Terrain is optional. With it, a tile it will not build on refuses every
+ * footprint. It is not an occupant, so nothing that reads occupancy (walking,
+ * spawning, targeting) ever sees it.
  */
 
 export const PlacementFailure = Object.freeze({
     INVALID_FOOTPRINT: 'invalid-footprint',
     OUT_OF_BOUNDS: 'out-of-bounds',
     OCCUPIED: 'occupied',
+    TERRAIN_BLOCKED: 'terrain-blocked',
     DUPLICATE_ID: 'duplicate-id',
 });
 
@@ -38,9 +43,10 @@ export class Grid {
     #occupants = new Map(); // id -> {col, row, width, height}
 
     /**
-     * @param {{cols: number, rows: number, tileSize: number, originX?: number, originY?: number}} config
+     * @param {{cols: number, rows: number, tileSize: number, originX?: number, originY?: number,
+     *          terrain?: import('./terrain.js').Terrain | null}} config
      */
-    constructor({cols, rows, tileSize, originX = 0, originY = 0} = {}) {
+    constructor({cols, rows, tileSize, originX = 0, originY = 0, terrain = null} = {}) {
         assertPositiveInt('cols', cols);
         assertPositiveInt('rows', rows);
         assertPositiveInt('tileSize', tileSize);
@@ -52,6 +58,7 @@ export class Grid {
         this.tileSize = tileSize;
         this.originX = originX;
         this.originY = originY;
+        this.terrain = terrain;
         Object.freeze(this); // config fields are read-only; private state stays mutable
 
         this.#cells = new Array(cols * rows).fill(null);
@@ -106,6 +113,11 @@ export class Grid {
         return this.#cells[row * this.cols + col];
     }
 
+    /** Does the ground here allow construction? Occupancy is a separate question. */
+    isBuildable(col, row) {
+        return this.#cellInBounds(col, row) && (this.terrain === null || this.terrain.isBuildable(col, row));
+    }
+
     // ---- Placement -------------------------------------------------------
 
     /**
@@ -124,6 +136,7 @@ export class Grid {
             if (id !== null && !blockers.includes(id)) blockers.push(id);
         });
         if (blockers.length > 0) return {ok: false, reason: PlacementFailure.OCCUPIED, blockers};
+        if (!this.#footprintBuildable(fp)) return fail(PlacementFailure.TERRAIN_BLOCKED);
 
         return {ok: true};
     }
@@ -182,6 +195,15 @@ export class Grid {
     #footprintInBounds({col, row, width, height}) {
         return col >= 0 && row >= 0
             && col + width <= this.cols && row + height <= this.rows;
+    }
+
+    #footprintBuildable({col, row, width, height}) {
+        for (let r = row; r < row + height; r++) {
+            for (let c = col; c < col + width; c++) {
+                if (!this.isBuildable(c, r)) return false;
+            }
+        }
+        return true;
     }
 
     #forEachCell({col, row, width, height}, fn) {

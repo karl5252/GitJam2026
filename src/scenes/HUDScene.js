@@ -1,6 +1,7 @@
 import Phaser from 'phaser';
 import {BARRACKS_LIMIT, FlagFailure, MAX_BARRACKS} from '../core/buildingPlacement.js';
 import {BARRACKS_TYPE, BUILDING_TYPES, REFIT_COST, getBuildingType} from '../core/buildingTypes.js';
+import {PlacementFailure} from '../core/grid.js';
 import {PowerStatus} from '../core/power.js';
 import {RoadFailure} from '../core/roads.js';
 import {Shift} from '../core/shiftCycle.js';
@@ -14,6 +15,7 @@ import {currentLayout} from './hudLayout.js';
 const PLACEMENT_HINTS = {
     [Hint.POWER_WARNING]: 'LOW POWER: this stops every powered building. Press again to build',
     [Hint.REFIT_REFUSED]: `A refit needs ${REFIT_COST.credits} Credits and ${REFIT_COST.ap} AP`,
+    [PlacementFailure.TERRAIN_BLOCKED]: 'Dense jungle: build in the clearing',
     [RoadFailure.NO_ROAD_ACCESS]: 'Factory dock (right side) needs a connected road',
     [RoadFailure.ROAD_OCCUPIED]: 'Buildings cannot go on roads',
     [RoadFailure.HQ_RING_OUT_OF_BOUNDS]: 'The HQ road ring must fit on the map',
@@ -172,7 +174,7 @@ export class HUDScene extends Phaser.Scene {
             wave: label(text.wave).setVisible(false),
             pollution: label(text.pollution),
             power: label(text.power),
-            hint: label(text.hint, '#ffcc80').setDepth(LABEL_DEPTH),
+            hint: label(text.hint, '#ffcc80').setVisible(false).setDepth(LABEL_DEPTH),
             settlement: label({...text.settlement, backgroundColor: '#263238', padding: {x: 8, y: 6}}).setVisible(false).setDepth(LABEL_DEPTH),
         };
         this.createBuildMenu();
@@ -446,6 +448,7 @@ export class HUDScene extends Phaser.Scene {
                 endDayVisible: ui ? ui.endDay.rect.visible : false,
                 buildMenuVisible: ui ? (this.layout.touch ? ui.drawer.open.rect.visible : Object.values(ui.buttons).some(({rect}) => rect.visible)) : false,
                 toggleVisible: ui ? ui.toggle.rect.visible : false,
+                hintVisible: ui ? ui.hint.visible : false,
                 drawerOpen: this.drawerOpen,
                 layout: this.layout.touch ? 'touch' : 'desktop',
             },
