@@ -1,5 +1,6 @@
 // tests/helpers/canvas.js
 import {expect, test} from '@playwright/test';
+import {inViewport, worldToScreen as project} from '../../src/scenes/cameraView.js';
 import {attachBootDiagnostics, watchBoot} from './bootDiagnostics.js';
 
 /**
@@ -33,10 +34,21 @@ export const clickAction = (page, action) => clickCanvasElement(byAction(page, a
 /** Touch-tap a canvas element via its DOM proxy (requires hasTouch). Same passthrough idea as clickCanvasElement. */
 export async function tapAction(page, action) {
     const locator = byAction(page, action);
+    // On touch the build menu is a drawer, so a player opens it first.
+    if (action.startsWith('build-') && await locator.count() > 0 && !(await locator.isVisible())) await tapAction(page, 'open-build');
     await locator.waitFor({state: 'visible'});
     const box = await locator.boundingBox();
     if (!box) throw new Error(`Canvas proxy is not measurable: ${action}`);
     await page.touchscreen.tap(box.x + box.width / 2, box.y + box.height / 2);
+}
+
+/** On touch the build menu is a drawer. Open it, as a player would, before measuring what is in it. */
+export async function showBuildMenu(page) {
+    const open = byAction(page, 'open-build');
+    if (await open.count() === 0) return;
+    if (await page.evaluate(() => window.__qa.getState().ui.drawerOpen)) return;
+    await tapAction(page, 'open-build');
+    await expect.poll(() => page.evaluate(() => window.__qa.getState().ui.drawerOpen)).toBe(true);
 }
 
 /**
@@ -47,13 +59,22 @@ export async function tapAction(page, action) {
  *
  * @param {{width: number, height: number}} gameSize - logical size, e.g. from sample(page)
  */
-export async function worldToScreen(page, {x, y}, gameSize) {
+export async function worldToScreen(page, point, gameSize) {
     const box = await page.locator('canvas').boundingBox();
     if (!box) throw new Error('Canvas is not measurable');
+    const {x, y} = await logicalPoint(page, point);
     return {
         x: box.x + (x / gameSize.width) * box.width,
         y: box.y + (y / gameSize.height) * box.height,
     };
+}
+
+const cameraOf = (page) => page.evaluate(() => window.__qa?.getState().camera ?? null);
+
+/** Where a world point is on the 1280x720 canvas, through the real camera. */
+async function logicalPoint(page, point) {
+    const camera = await cameraOf(page);
+    return camera ? project(camera, camera.viewport, point) : point;
 }
 
 /** Real mouse click at a world-space point on the canvas. */
@@ -62,10 +83,59 @@ export async function clickWorld(page, point, gameSize) {
     await page.mouse.click(s.x, s.y);
 }
 
-/** Real touch tap at a world-space point on the canvas (requires hasTouch). */
-export async function tapWorld(page, point, gameSize) {
+const ghostOf = (page) => page.evaluate(() => window.__qa?.getState().ghost ?? null);
+const placing = (page) => page.evaluate(() => {
+    const s = window.__qa?.getState();
+    return Boolean(s?.placement?.selectedType || s?.roadMode);
+});
+
+/** One real touch tap at a world-space point, and nothing more (requires hasTouch). */
+export async function tapOnce(page, point, gameSize) {
+    const camera = await cameraOf(page);
+    // A player who cannot see a tile zooms out to it, with the real button.
+    if (camera && !inViewport(camera.viewport, await logicalPoint(page, point))) await tapAction(page, 'camera-fit');
     const s = await worldToScreen(page, point, gameSize);
     await page.touchscreen.tap(s.x, s.y);
+}
+
+async function ghostSettled(page, revision) {
+    await expect.poll(async () => (await ghostOf(page))?.revision, {timeout: 2000, intervals: [16, 32, 64, 100]}).not.toBe(revision);
+    return ghostOf(page);
+}
+
+const tileAt = ({grid}, {x, y}) => ({
+    col: Math.floor((x - grid.originX) / grid.tileSize),
+    row: Math.floor((y - grid.originY) / grid.tileSize),
+});
+
+/**
+ * Act on a tile, as a player would. Building on touch is two taps: one puts the ghost
+ * on the tile and one confirms it. A LOW_POWER warning stays up for the caller to
+ * answer. tapOnce is the single tap, for tests of the ghost itself.
+ */
+export async function tapWorld(page, point, gameSize) {
+    if (!(await placing(page))) {
+        await tapOnce(page, point, gameSize);
+        return;
+    }
+    const ghost = await ghostOf(page);
+    const tile = gameSize.grid ? tileAt(gameSize, point) : null;
+    const {footprint: f, cell} = ghost;
+    const inside = f && tile && tile.col >= f.col && tile.col < f.col + f.width && tile.row >= f.row && tile.row < f.row + f.height;
+    if (inside && (tile.col !== cell.col || tile.row !== cell.row)) {
+        // A tap here would confirm the ghost where it is, so move it away first.
+        const clear = f.col + f.width + 1 < gameSize.grid.cols ? f.col + f.width + 1 : f.col - 2;
+        const {originX, originY, tileSize} = gameSize.grid;
+        await tapOnce(page, {x: originX + (clear + 0.5) * tileSize, y: originY + (cell.row + 0.5) * tileSize}, gameSize);
+        await ghostSettled(page, ghost.revision);
+    }
+    const before = await ghostOf(page);
+    await tapOnce(page, point, gameSize);
+    const after = await ghostSettled(page, before.revision);
+    if (after.last !== 'moved') return;
+    if (await page.evaluate(() => window.__qa.getState().powerWarning)) return;
+    await tapOnce(page, point, gameSize);
+    await ghostSettled(page, after.revision);
 }
 
 /** The scene-state mirror lives directly on <body data-*> — see markScene()/setBodyState(). */

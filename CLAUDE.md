@@ -31,7 +31,7 @@ This file provides project context, architectural constraints, and working rules
 
 **Target platforms:** Desktop browsers and mobile browsers in landscape orientation.
 
-**Current status:** TASK 023 (HEAVY METAL) is complete: RESET FLAG, the Brute, the Siege Cannon, Rocket Infantry, the 12-slot menu, the LOW_POWER confirmation and layout version 3, approved by the developer with their values kept. TASK 020 (Mines & Deposits) is in the backlog and is not a prerequisite for anything. Only work on tasks the developer explicitly assigns.
+**Current status:** TASK 023 (HEAVY METAL) is complete. TASK 024 (HUD Reconstruction & Mobile UX) and TASK 024.1 (Mobile Building Ghost & Two-Step Placement) are implemented and uncommitted, awaiting the developer's review and a real-device test. TASK 020 (Mines & Deposits) is in the backlog and is not a prerequisite for anything. Only work on tasks the developer explicitly assigns.
 
 The project was initialized from the Wee Games Starter Kit Basic. The original demo applications have been removed.
 
@@ -349,6 +349,11 @@ Avoid implementing gameplay rules directly inside Phaser scenes.
   - The global `clock.tick` is never reset.
   - `jumpToDay(day)`: QA only, called by `testShadow/dayQa.js` and by the soak suites. During a Day it moves the calendar and nothing else; a day that is not a positive safe integer throws `RangeError`, and outside Day it returns `not-day` or `not-started`. The next Night plans from it, because a plan is made on Night tick 1.
 - `src/scenes/BootScene.js`: Starts the game scene.
+- `src/scenes/EventBus.js`: the only link between `GameScene` and `HUDScene`, as in BarrelStorm. `State` flows down, as presentation data; `Command` flows up, as intentions; `Notice` is the few things that are not state; `Hud.READY` and `Hud.SNAPSHOT` are the handshake. It outlives scenes, so whoever subscribes unsubscribes on shutdown.
+- `src/scenes/HUDScene.js`: everything in screen coordinates, in its own scene above `GameScene`: title, resources, shift, wave, power, pollution, settlement, hints, build menu, Cancel, END DAY, the selection's actions, speed, camera buttons and Game Over. It draws what it is told and sends commands; it never touches the simulation, and `GameScene` never touches its objects. All its state arrives as events, so it can be restarted at any time. `views()` is what QA reads. Phaser stops at the first scene that captures an input, so a press on any interactive object here never reaches the world. Leaving a control also counts as a capture, so `Notice.POINTER_LEFT_HUD` hands that one move on.
+- `src/scenes/hudLayout.js`: pure data. `DESKTOP` is the bands round the grid. `TOUCH`, for a coarse pointer on a viewport at most 540 px on its short side, is a top bar, two columns of controls at least 90 logical pixels (45 CSS at 740×360) and a build drawer by category. Each gives `viewport`, the screen rectangle the world is drawn in, which only the drawer and the hint ever cover.
+- `src/scenes/cameraView.js`: pure camera maths: fit, clamp, zoom at a point, pan, and world/screen conversion. `src/scenes/WorldCamera.js` applies it to `GameScene`'s main camera, in the layout's viewport. The world rectangle is the grid plus 16 px. On desktop the fitted view is exactly the plain screen, so a world point keeps its pixel. Zoom runs from the fit to 3.2. Night opens at FIT and Day at the layout's `dayZoom` (2 on touch, none on desktop), once per change of shift, so the player's own zoom is never fought. Screen points become world points here, never through `pointer.worldX`, which belongs to whichever scene looked last.
+- `src/scenes/orientationGuard.js`: on a coarse pointer in portrait, a DOM screen from `index.html` shows, `GameScene.update` stops feeding frames to the clock, and world input is ignored. The clock's speed and pause state are not touched, so a run comes back exactly as it was, paused or not. A desktop window can be any shape. QA stepping is not suspended.
 - `src/scenes/MutantLayer.js`: graybox circles for mutants, HP bars on damaged buildings, and Spitters: a lime triangle about 22 px across, whose fill thins as shots go. In its telegraph it swells and draws an aim line; shells, impact rings and a fading × follow. With no shots left it turns over and goes olive, with a ring, which is the warning that it is coming in. A Brute is an orange octagon about 30 px across that always shows its HP, swells as it winds up a blow, and rings when one lands. Timing counts simulation ticks. Presentation only; `sync(mutants, buildings, {shells, tick, isNight})` takes detached snapshots.
 - `src/scenes/AutocannonLayer.js`: graybox barrels, quantized to 8 directions, and short tracers lasting 6 simulation ticks. Presentation only; facing and tracer timing never affect gameplay.
 - `src/scenes/SiegeLayer.js`: barrel, reload bar, shell, a ring at the landing point the size of the impact radius, and a burst on impact. Presentation only.
@@ -359,7 +364,9 @@ Avoid implementing gameplay rules directly inside Phaser scenes.
 - `src/scenes/GateLayer.js`: gate barriers, drawn on one Graphics object and redrawn only when a gate changes. A shut gate is a bar across the road, which parts towards two posts as it opens. Also the orientation preview, with passage arrows. Presentation only.
 - `src/scenes/SpeedControls.js`: the Night-only 1x, 2x and 4x buttons (proxies `speed-1`, `speed-2`, `speed-4`, with `data-selected`), in the right band below the power toggle so they never sit under END DAY at dawn. 82x84 logical pixels is about 44 CSS pixels at 844x390. Presentation only: the clock owns the speed, so it lasts across Nights and a restart returns to 1x. The countdown stays in simulation seconds.
 - `src/scenes/GameOverLayer.js`: the Game Over overlay and RESTART button. Presentation only; nothing exists until `show()`. Its panel is interactive, so presses on it are UI, never grid input.
-- `src/scenes/GameScene.js`:
+- `src/scenes/GameScene.js`: the world, the simulation and what a press on the battlefield means. It publishes through `present(event, value)`, which only emits what changed and keeps the latest of each for `Hud.SNAPSHOT`, and it launches the HUD and marks the scene once the HUD is ready. Where the notes below name a button or text, `HUDScene` draws it now and `GameScene` decides it.
+  - **Input:** a mouse acts on pointerdown; right or middle drag pans, the wheel zooms at the pointer and the arrow keys pan. A finger acts on release, so a second finger can still make it a gesture. Two fingers pinch and pan and build nothing, and nothing else happens until both lift.
+  - **Touch placement:** a finger never builds in one step. On the touch layout, choosing a building or the Road tool shows a ghost at once, on the nearest accepted tile to the middle of the view (`firstGhostCell`). A tap or drag moves it; a separate tap inside it, without moving off its tile, is the only touch that spends anything (`confirmGhost`). A red ghost is refused by `placeAt` as usual, and after a success it stays on its tile, now red, so a stray tap cannot build twice. Walls and roads draw a segment instead (`extendSegment`, tile by tile, and going back shortens it), and one tap on it commits every accepted tile (`commitSegment`). A road segment may be drawn towards the network from either end. One tap on an existing player road proposes removing it. Cancel, another building and the end of Day discard the proposal, and a second finger puts it back as it was before that press. The LOW_POWER warning appears as the ghost lands, so the confirming tap is its second press. All of this is proposal only: core rules and prices are unchanged, and the mouse path never sees it.
   - Start hides the title and Start button and removes the `start` proxy. It then creates a 24×16 `Grid` with 32px cells at origin (256, 104), drawn with Phaser Graphics, and shows the build menu in the band left of the grid.
   - The HUD in the top band has two lines:
     - The shift line: `Day N · Day Shift`, or at night `Day N · Night Shift · 59.8 s left`, with `(paused)` added when the QA clock is paused. The countdown is `remainingNightTicks / 60`.
@@ -437,10 +444,12 @@ Avoid implementing gameplay rules directly inside Phaser scenes.
 
     `window.__qa.perf` (`src/testShadow/PerfProbe.js`) provides `start()`, `stop()`, `counts()` and `renderer()` for the browser soak. It reports simulation, scene update, render callbacks and frame time separately, and classifies the rest as unattributed. Use it for real-time runs only; never derive frame rates from `stepTicks`.
 
+    `window.__qa.busListeners()` counts subscribers per event, for the lifecycle test. QASurface also exposes `camera` (`WorldCamera.snapshot()`), `orientation` and `ghost` (`{active, cell, footprint, segment, ok, revision, last}`, the touch proposal), and `ui` adds `drawerOpen` and `layout`.
+
     `window.__qa.economy` (`src/testShadow/economyQa.js`) provides `setCredits(amount)` and `addCredits(delta)`: a manual testing aid that moves the real balance through `Economy.adjustCredits`, refreshes the HUD and returns the balance. Amounts must be safe integers, otherwise it throws `RangeError`. Negative balances are supported on purpose, to test debt. It touches nothing else.
 
     Apart from `__qa.economy`, they can't place or spend. `GameScene` adds them; Test Shadow internals are unchanged. END DAY always resumes the clock, even after a QA pause.
-  - Grid cells have no DOM proxies. E2E tests press real canvas points with `clickWorld`/`tapWorld`, and press buttons through their proxies with `clickAction`/`tapAction` (`tests/helpers/canvas.js`).
+  - Grid cells have no DOM proxies. E2E tests press real canvas points with `clickWorld`/`tapWorld`, and press buttons through their proxies with `clickAction`/`tapAction` (`tests/helpers/canvas.js`). `worldToScreen` goes through the real camera. On touch, `tapOnce` is one real tap and presses FIT first if a tile is out of view, `tapWorld` is what a player does to act on a tile, which while placing is both taps, and it leaves a LOW_POWER warning for the caller to answer, `tapAction` opens the drawer for a `build-*` proxy, and `showBuildMenu` opens it to measure what is in it. A closed drawer keeps its proxies, hidden.
 
 Do not assume that planned gameplay systems already exist.
 
@@ -685,6 +694,22 @@ Once the simulation system exists, test:
 
 This policy applies to TASK 013 and all future tasks.
 
+**Risk-based regression:**
+
+Do not run the full E2E suite automatically after every change. Use the smallest scope that gives meaningful confidence:
+
+1. Local UI changes: the affected unit tests and targeted E2E specs.
+2. Shared input or camera changes: the affected E2E plus a small desktop and mobile smoke set.
+3. Simulation or core architecture changes: broader regression, justified by the specific dependencies affected.
+
+Before launching the full E2E suite, state explicitly:
+
+- Which changed files introduce cross-system regression risk?
+- Why are targeted tests insufficient?
+- Which failures could only be detected by the full suite?
+
+Do not run the full suite unless that justification exists. Do not rerun tests that already passed unless relevant code changed afterward.
+
 **The rules:**
 
 - Run targeted tests during development.
@@ -706,7 +731,7 @@ This policy applies to TASK 013 and all future tasks.
 **Final verification, once the implementation is stable:**
 
 1. Run the complete unit test suite.
-2. Run the complete regular Playwright E2E suite with 3 workers and tracing disabled.
+2. Run the Playwright scope the risk-based rules above call for. Run the complete regular suite, with 3 workers and tracing disabled, only with the justification they require.
 3. Run the production build and TEST_MODE isolation gate.
 4. Run bounded, targeted mutation checks for new behavior.
 5. Run the headless soak suites when justified by the changes. Run the long browser soak only for major gameplay changes or release verification.
@@ -787,6 +812,11 @@ Complete:
 - TASK 021: Barracks & Infantry, with consistent demolition and pure Logistics snapshots
 - TASK 022: Mutant Archetypes & Ranged Threats (the Spitter)
 - TASK 023: HEAVY METAL (Brute, Siege Cannon, Rocket Infantry, RESET FLAG)
+
+Implemented, awaiting the developer's review:
+
+- TASK 024: HUD Reconstruction & Mobile UX (HUDScene, world camera, touch layout, landscape guard)
+- TASK 024.1: Mobile Building Ghost & Two-Step Placement
 
 Later, not yet assigned:
 

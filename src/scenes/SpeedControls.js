@@ -1,34 +1,33 @@
 import {SIMULATION_SPEEDS} from '../core/simulationClock.js';
 import {addProxy} from '../testShadow/TestProxy.js';
 
-// Right band, below the power toggle. Nothing used during Day sits here, so a
-// late press at dawn can never land on END DAY. 82x84 is about 44 CSS pixels
-// at 844x390.
-const BUTTON = {width: 82, height: 84};
-const FIRST_X = 1072;
-const Y = 650;
 const FILL = 0x37474f;
 const STROKE = 0x90a4ae;
 const SELECTED_STROKE = 0xffeb3b;
 
-/** Night speed buttons. Presentation only: the clock owns the selected speed. */
+/**
+ * Night speed buttons. Presentation only: the clock owns the selected speed, and a
+ * press is only a request. Nothing used during Day sits where they do on desktop,
+ * so a late press at dawn can never land on END DAY.
+ */
 export class SpeedControls {
     #scene;
-    #clock;
     #buttons;
+    #speed = 1;
 
-    constructor(scene, clock) {
+    /**
+     * @param {Phaser.Scene} scene
+     * @param {(speed: number) => void} onSpeed
+     * @param {Array<{x, y, width, height}>} positions one per speed
+     */
+    constructor(scene, onSpeed, positions) {
         this.#scene = scene;
-        this.#clock = clock;
         this.#buttons = SIMULATION_SPEEDS.map((speed, i) => {
-            const x = FIRST_X + i * BUTTON.width;
-            const rect = scene.add.rectangle(x, Y, BUTTON.width, BUTTON.height, FILL).setDepth(4).setVisible(false);
-            const text = scene.add.text(x, Y, `${speed}×`, {fontFamily: 'monospace', fontSize: '24px', color: '#ffffff'})
+            const {x, y, width, height} = positions[i];
+            const rect = scene.add.rectangle(x, y, width, height, FILL).setDepth(4).setVisible(false);
+            const text = scene.add.text(x, y, `${speed}×`, {fontFamily: 'monospace', fontSize: '24px', color: '#ffffff'})
                 .setOrigin(0.5).setDepth(5).setVisible(false);
-            rect.on('pointerdown', () => {
-                clock.setSpeed(speed);
-                this.#refresh();
-            });
+            rect.on('pointerdown', () => onSpeed(speed));
             return {speed, rect, text, proxy: null};
         });
     }
@@ -51,6 +50,11 @@ export class SpeedControls {
         if (visible) this.#refresh();
     }
 
+    setSpeed(speed) {
+        this.#speed = speed;
+        this.#refresh();
+    }
+
     /** The rendered buttons, for QA. */
     view() {
         return {
@@ -62,7 +66,7 @@ export class SpeedControls {
 
     #refresh() {
         for (const {speed, rect, proxy} of this.#buttons) {
-            const selected = speed === this.#clock.speed;
+            const selected = speed === this.#speed;
             rect.setStrokeStyle(3, selected ? SELECTED_STROKE : STROKE);
             proxy?.set({selected});
         }

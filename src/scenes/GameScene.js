@@ -1,8 +1,8 @@
 import Phaser from 'phaser';
 import {GamePhase, defeatGame, startGame} from '../core/gamePhase.js';
 import {Grid} from '../core/grid.js';
-import {BARRACKS_TYPE, BUILDING_TYPES, BarracksRole, HQ_TYPE, REFIT_COST, WALL_TYPE, getBuildingType} from '../core/buildingTypes.js';
-import {BARRACKS_LIMIT, BuildingPlacement, FlagFailure, HQ_ALREADY_BUILT, MAX_BARRACKS} from '../core/buildingPlacement.js';
+import {BARRACKS_TYPE, BUILDING_TYPES, BarracksRole, HQ_TYPE, WALL_TYPE, getBuildingType} from '../core/buildingTypes.js';
+import {BuildingPlacement, HQ_ALREADY_BUILT} from '../core/buildingPlacement.js';
 import {Economy} from '../core/economy.js';
 import {SimulationClock} from '../core/simulationClock.js';
 import {SeededRandom, DEFAULT_SEED, parseSeed} from '../core/seededRandom.js';
@@ -12,14 +12,14 @@ import {INFANTRY, Infantry} from '../core/infantry.js';
 import {Logistics} from '../core/logistics.js';
 import {ROAD_ACCESS_TYPES, RoadFailure, RoadNetwork, barracksExit, outgoingDock, receivingDock} from '../core/roads.js';
 import {settleNight} from '../core/settlement.js';
-import {calculatePower, causesLowPower, PowerStatus} from '../core/power.js';
+import {calculatePower, causesLowPower} from '../core/power.js';
 import {Pollution, calculateEmissions, threatLevel} from '../core/pollution.js';
 import {Mutants} from '../core/mutants.js';
 import {nightPlan, waveProgress} from '../core/waves.js';
 import {Autocannons} from '../core/autocannons.js';
 import {SIEGE, SIEGE_CANNON_TYPE, SiegeCannons} from '../core/siegeCannons.js';
 import {TEST_MODE} from '../testMode.js';
-import {addProxy, markScene, setBodyState} from '../testShadow/TestProxy.js';
+import {markScene, setBodyState} from '../testShadow/TestProxy.js';
 import {createSetDay} from '../testShadow/dayQa.js';
 import {createEconomyQa} from '../testShadow/economyQa.js';
 import {createLayoutQa} from '../testShadow/layoutSnapshot.js';
@@ -29,13 +29,14 @@ import {QASurface} from '../testShadow/QASurface.js';
 import {MutantLayer} from './MutantLayer.js';
 import {AutocannonLayer} from './AutocannonLayer.js';
 import {SiegeLayer} from './SiegeLayer.js';
-import {GameOverLayer} from './GameOverLayer.js';
-import {SpeedControls} from './SpeedControls.js';
 import {RoadLayer} from './RoadLayer.js';
 import {TruckLayer} from './TruckLayer.js';
 import {GateLayer} from './GateLayer.js';
 import {InfantryLayer} from './InfantryLayer.js';
-import {BuildingControls} from './BuildingControls.js';
+import {Command, EventBus, Hint, Hud, Notice, State} from './EventBus.js';
+import {WorldCamera} from './WorldCamera.js';
+import {currentLayout} from './hudLayout.js';
+import {isOrientationBlocked} from './orientationGuard.js';
 
 const GRID_COLS = 24;
 const GRID_ROWS = 16;
@@ -54,82 +55,47 @@ const BUILDING_STROKE = 0x212121;
 export const UNPOWERED_STROKE = 0xe53935; // enabled but not operating (low power / blackout)
 export const DISABLED_ALPHA = 0.35; // switched OFF by the player
 
-const POWER_WARNING = 'power-warning';
-const REFIT_REFUSED = 'refit-refused';
-
-const PLACEMENT_HINTS = {
-    [POWER_WARNING]: 'LOW POWER: this stops every powered building. Press again to build',
-    [REFIT_REFUSED]: `A refit needs ${REFIT_COST.credits} Credits and ${REFIT_COST.ap} AP`,
-    [RoadFailure.NO_ROAD_ACCESS]: 'Factory dock (right side) needs a connected road',
-    [RoadFailure.ROAD_OCCUPIED]: 'Buildings cannot go on roads',
-    [RoadFailure.HQ_RING_OUT_OF_BOUNDS]: 'The HQ road ring must fit on the map',
-    [RoadFailure.ROAD_REQUIRED]: 'A Factory dock depends on this road',
-    [RoadFailure.HQ_RING_PERMANENT]: 'The HQ road ring is permanent',
-    [RoadFailure.NOT_CONNECTED]: 'Roads must extend the connected network',
-    [RoadFailure.GATE_NEEDS_ROAD]: 'Gates go on a road',
-    [RoadFailure.GATE_NEEDS_STRAIGHT_ROAD]: 'This gate needs a straight road through it',
-    [RoadFailure.GATE_ON_HQ_RING]: 'No gates on the HQ road ring',
-    [RoadFailure.GATE_ON_DOCK]: 'No gates on a dock tile',
-    [RoadFailure.GATE_DEPENDS_ON_ROAD]: 'A gate depends on this road',
-    [RoadFailure.NO_EXIT_ACCESS]: 'Barracks exit (left side) needs a connected road',
-    [RoadFailure.EXIT_REQUIRED]: 'A Barracks exit depends on this road',
-    [BARRACKS_LIMIT]: `No more than ${MAX_BARRACKS} Barracks`,
-    [FlagFailure.OCCUPIED]: 'Flags go on open ground or roads',
-    [FlagFailure.TAKEN]: 'Another squad holds this tile',
-    [FlagFailure.UNREACHABLE]: 'Soldiers cannot reach this tile',
-};
-
-const POWER_STATUS_LABELS = {
-    [PowerStatus.NORMAL]: 'NORMAL',
-    [PowerStatus.LOW_POWER]: 'LOW POWER',
-    [PowerStatus.BLACKOUT]: 'BLACKOUT',
-};
-
-const BUTTON_IDLE_STROKE = 0x90a4ae;
-const BUTTON_SELECTED_STROKE = 0xffeb3b;
-const BUTTON_DISABLED_ALPHA = 0.45;
-
-// Build menu lives in the band left of the grid (grid x starts at 256), in two
-// columns. Every button is at least 82 logical pixels on each side, which is 44
-// CSS pixels at 844x390. Road, Wall, Barracks, the gates and the Siege Cannon fill
-// the slots below the buildings; slots run left to right, top to bottom. Six rows
-// end at y 565, clear of END DAY at y 578, so slot 11 is the last that fits.
-const MENU_X = 128;
-const MENU_BUTTON = {width: 192, height: 84};
-const MENU_CELL = {width: 120, height: 82};
-const MENU_COLUMNS = [66, 190];
-const MENU_TOP = 104;
-const MENU_STEP = 84;
-const MENU_SLOTS = {road: 5, wall: 6, barracks: 7, gateVertical: 8, gateHorizontal: 9, siegeCannon: 10};
-const RIGHT_ACTION = {x: 1152, y: 560}; // Cancel and the selection button share it: placing clears selection
-const BARRACKS_TOGGLE = {x: 1098, width: 116}; // leaves room for RESET FLAG beside it
-const menuSlot = (slot) => ({x: MENU_COLUMNS[slot % 2], y: MENU_TOP + Math.floor(slot / 2) * MENU_STEP});
+const WORLD_MARGIN = 16; // a mutant on the map edge stays in view
+const KEY_PAN = 48; // px of screen per arrow key press
+const PINCH_MIN_DISTANCE = 8; // px, below which two fingers are too close to measure
+const NO_HUD = Object.freeze({ui: {}});
 
 /**
- * Title + Start button. Start (READY -> STARTED) hides both, creates a 24x16
- * grid (32px cells) centred in the 1280x720 area and shows the build menu.
+ * The world: rendering, the world camera, the simulation, and what a press on the
+ * battlefield means. Everything in screen coordinates lives in HUDScene, above it.
+ * The two talk only through EventBus: this scene publishes presentation state when
+ * it changes and acts on commands, and it never touches a HUD object.
  *
  * Input modes after Start:
- *   - Normal: pointerdown on the grid selects/highlights a cell; outside the
- *     grid clears the selection.
- *   - Placement (a building button was pressed): pointermove previews the
- *     centred footprint, pointerdown attempts placement, and walls also follow
- *     a drag. Selection is disabled. Escape or Cancel returns to normal mode.
- *   - Road (the Road button was pressed): a press adds or removes a road, and
- *     a drag only adds.
+ *   - Normal: a press on the grid selects/highlights a cell; outside the grid clears
+ *     the selection.
+ *   - Placement (a building was chosen): moving previews the centred footprint, a
+ *     press attempts placement, and walls also follow a drag. Selection is disabled.
+ *     Escape or Cancel returns to normal mode.
+ *   - Road: a press adds or removes a road, and a drag only adds.
+ *   - Flag: the next press becomes the Barracks' post.
+ *
+ * A mouse acts on pointerdown. A finger acts on release, so that a second finger can
+ * still turn it into a pinch or a pan, which change nothing.
+ *
+ * A finger never builds by accident, because it has no hover to aim with. Choosing a
+ * building shows a ghost on the map. A tap or drag moves the ghost, and a separate
+ * tap inside it confirms: that is the only touch that spends anything. Walls and
+ * roads do the same with a segment, drawn by dragging and confirmed all at once.
+ * The ghost is only a proposal: every rule and price is still placeAt's, and the
+ * mouse path never sees it.
+ *
+ * A press on a HUD control never arrives here: Phaser stops at the first scene that
+ * captures it. Screen points become world points through WorldCamera, because
+ * pointer.worldX belongs to whichever scene looked at it last.
  *
  * Rules live in core (Grid, BuildingPlacement). The preview colour is
  * derived from the domain validation result, never the reverse.
  *
- * Pointer events whose target is a UI button are never treated as grid
- * input (Phaser passes the hit objects to the scene-level handler).
- *
  * Test Shadow usage:
- *   - addProxy for real buttons, such as start, build-* and cancel-placement.
- *     Grid cells deliberately get no proxies.
  *   - markScene()/setBodyState() — coarse `data-phase` on <body>.
  *   - QASurface — grid, selection, placement result, rendered preview and
- *     building views.
+ *     building views, with what HUDScene really shows merged in.
  */
 export class GameScene extends Phaser.Scene {
     constructor() {
@@ -137,22 +103,17 @@ export class GameScene extends Phaser.Scene {
     }
 
     create() {
-        const {width} = this.scale;
         this.phase = GamePhase.READY;
         this.grid = null;
         this.placement = null;
         this.economy = null;
         this.pollution = null;
-        this.hud = null;
-        this.pollutionHud = null;
-        this.waveHud = null;
         this.mutants = null;
         this.mutantLayer = null;
         this.autocannons = null;
         this.autocannonLayer = null;
         this.siegeCannons = null;
         this.siegeLayer = null;
-        this.gameOverLayer = null;
         this.hqRequired = true;
         this.lastResult = null;
         this.selectedCell = null;
@@ -160,19 +121,8 @@ export class GameScene extends Phaser.Scene {
         this.previewRect = null;
         this.previewResult = null;
         this.buildingViews = new Map();
-        this.buildButtons = {};
-        this.cancelButton = null;
-        this.cancelProxy = null;
-        this.endDayButton = null;
-        this.endDayProxy = null;
         this.cycle = null;
-        this.shiftHud = null;
-        this.settlementPanel = null;
-        this.powerHud = null;
         this.selectedBuildingId = null;
-        this.toggleButton = null;
-        this.toggleProxy = null;
-        this.speedControls = null;
         this.roads = null;
         this.roadLayer = null;
         this.logistics = null;
@@ -181,18 +131,24 @@ export class GameScene extends Phaser.Scene {
         this.gateLayer = null;
         this.infantry = null;
         this.infantryLayer = null;
-        this.buildingControls = null;
         this.flagBarracksId = null; // the Barracks being given a flag, in flag mode
-        this.toggleNarrow = false; // whether the power toggle is laid out for a Barracks
         this.powerWarning = null; // {type, col, row}: a purchase waiting for its second press
         this.renderedPostsKey = null; // last revision and selection the flags were drawn for
         this.dragCell = null;
-        this.roadButton = null;
-        this.roadProxy = null;
         this.roadMode = false;
         this.roadDragAdds = false;
-        this.placementHint = null;
         this.renderedShiftKey = null; // last `${day}:${shift}` the UI was synced to
+        this.renderedShift = null;
+        this.presented = new Map(); // event -> {key, value}: the latest of everything the HUD is told
+        this.hudReady = false;
+        this.pendingPress = null; // {pointerId, cell}, plus {ghost, onGhost, moved, prior} while building
+        this.ghostCell = null; // the tile a finger has proposed for a building
+        this.segment = null; // the tiles a finger has proposed for walls or roads
+        this.segmentView = []; // those tiles, with whether each would be accepted
+        this.ghostRevision = 0;
+        this.ghostLast = null; // 'moved', 'confirmed', 'refused' or 'cleared'
+        this.gesture = null; // {distance, x, y}: two fingers, and nothing else happens until both lift
+        this.mousePan = null; // {x, y}: a drag with the right or middle button
 
         // Fixed 60 Hz simulation. Stopped until Start; stepped from update().
         // The seed is fixed outside TEST_MODE; tests may override it with ?seed=N.
@@ -201,27 +157,25 @@ export class GameScene extends Phaser.Scene {
         this.rng = new SeededRandom(seedOverride ?? DEFAULT_SEED);
         this.simulationSteps = 0;
 
-        this.title = this.add.text(width / 2, 52, 'PAPI Industries: The Green Shift', {
-            fontFamily: 'monospace',
-            fontSize: '48px',
-            color: '#c8e6c9',
-        }).setOrigin(0.5);
+        const {width, height} = this.scale;
+        this.layout = currentLayout();
+        this.worldCamera = new WorldCamera(this.cameras.main, this.layout, {
+            x: (width - GRID_COLS * TILE_SIZE) / 2 - WORLD_MARGIN,
+            y: (height - GRID_ROWS * TILE_SIZE) / 2 - WORLD_MARGIN,
+            width: GRID_COLS * TILE_SIZE + 2 * WORLD_MARGIN,
+            height: GRID_ROWS * TILE_SIZE + 2 * WORLD_MARGIN,
+        });
 
-        this.startButton = this.add.rectangle(width / 2, 668, 240, 72, 0x2e7d32)
-            .setStrokeStyle(3, 0xa5d6a7)
-            .setInteractive({useHandCursor: true});
-        this.startLabel = this.add.text(this.startButton.x, this.startButton.y, 'START', {
-            fontFamily: 'monospace',
-            fontSize: '32px',
-            color: '#ffffff',
-        }).setOrigin(0.5);
-
-        this.startButton.on('pointerdown', () => this.handleStart());
-        this.startProxy = addProxy(this, this.startButton, 'start', {label: 'Start'});
-
-        this.input.on('pointerdown', (pointer, over) => this.handleGridPointerDown(pointer, over));
-        this.input.on('pointermove', (pointer, over) => this.handleGridPointerMove(pointer, over));
+        this.input.mouse?.disableContextMenu();
+        this.input.on('pointerdown', (pointer) => this.handleGridPointerDown(pointer));
+        this.input.on('pointermove', (pointer) => this.handleGridPointerMove(pointer));
+        this.input.on('pointerup', (pointer) => this.handleGridPointerUp(pointer));
+        this.input.on('pointerupoutside', (pointer) => this.handleGridPointerUp(pointer));
+        this.input.on('wheel', (pointer, _over, _dx, dy) => this.handleWheel(pointer, dy));
         this.input.keyboard.on('keydown-ESC', () => this.exitPlacementMode());
+        for (const [key, dx, dy] of [['LEFT', 1, 0], ['RIGHT', -1, 0], ['UP', 0, 1], ['DOWN', 0, -1]]) {
+            this.input.keyboard.on(`keydown-${key}`, () => this.worldCamera.panBy(dx * KEY_PAN, dy * KEY_PAN));
+        }
 
         // Instantiated BEFORE markScene: the QA surface should exist by the
         // time a test sees data-scene appear.
@@ -258,9 +212,58 @@ export class GameScene extends Phaser.Scene {
             window.__qa.perf = createPerfProbe(this);
             window.__qa.layout = createLayoutQa(this);
             window.__qa.economy = createEconomyQa(this);
+            window.__qa.busListeners = () => Object.fromEntries(EventBus.eventNames().map((event) => [event, EventBus.listenerCount(event)]));
         }
 
+        this.subscribe();
+        this.present(State.PHASE, {phase: this.phase});
+        this.scene.launch('hud');
+    }
+
+    /** Every command the HUD can send, and a HUD saying it wants the state so far. */
+    subscribe() {
+        const handlers = {
+            [Hud.READY]: () => this.handleHudReady(),
+            [Notice.POINTER_LEFT_HUD]: (pointer) => {
+                if (!pointer.wasTouch) this.handleGridPointerMove(pointer);
+            },
+            [Command.START]: () => this.handleStart(),
+            [Command.RESTART]: () => this.scene.restart(),
+            [Command.BUILD]: ({type}) => this.enterPlacementMode(type),
+            [Command.ROAD]: () => this.enterRoadMode(),
+            [Command.CANCEL]: () => this.exitPlacementMode(),
+            [Command.END_DAY]: () => this.handleEndDay(),
+            [Command.SET_SPEED]: ({speed}) => this.handleSetSpeed(speed),
+            [Command.TOGGLE_POWER]: () => this.handleSelectionAction(),
+            [Command.DEMOLISH]: () => this.handleDemolish(),
+            [Command.MOVE_FLAG]: () => this.enterFlagMode(),
+            [Command.RESET_FLAG]: () => this.handleResetFlag(),
+            [Command.REFIT]: () => this.handleRefit(),
+            [Command.ZOOM_IN]: () => this.worldCamera.zoomIn(),
+            [Command.ZOOM_OUT]: () => this.worldCamera.zoomOut(),
+            [Command.FIT]: () => this.worldCamera.fit(),
+        };
+        for (const [event, handler] of Object.entries(handlers)) EventBus.on(event, handler);
+        this.events.once('shutdown', () => {
+            for (const [event, handler] of Object.entries(handlers)) EventBus.off(event, handler);
+            this.scene.stop('hud');
+        });
+    }
+
+    /** data-scene goes up here, so a test that sees it can already press what the HUD draws. */
+    handleHudReady() {
+        EventBus.emit(Hud.SNAPSHOT, [...this.presented].map(([event, {value}]) => [event, value]));
+        if (this.hudReady) return;
+        this.hudReady = true;
         markScene(this, {phase: this.phase});
+    }
+
+    /** Tell the HUD, if this is news. It is a small comparison, so anything may ask every frame. */
+    present(event, value) {
+        const key = JSON.stringify(value);
+        if (this.presented.get(event)?.key === key) return;
+        this.presented.set(event, {key, value});
+        EventBus.emit(event, value);
     }
 
     // ---- Start -------------------------------------------------------------
@@ -269,16 +272,8 @@ export class GameScene extends Phaser.Scene {
         const previous = this.phase;
         this.phase = startGame(this.phase);
         if (previous === GamePhase.READY && this.phase === GamePhase.STARTED) {
-            this.title.setVisible(false);
-            this.startLabel.setVisible(false);
-            this.startButton.setVisible(false).disableInteractive();
-            this.startProxy.destroy();
-            this.startProxy = null;
-
             this.createGrid();
-            this.createHud();
-            this.createBuildMenu();
-            this.speedControls = new SpeedControls(this, this.clock);
+            this.present(State.PHASE, {phase: this.phase});
             this.cycle.begin(); // Day 1; the clock starts paused for Day Shift
             this.syncShiftUi();
             this.refreshPower();
@@ -378,7 +373,6 @@ export class GameScene extends Phaser.Scene {
         }) : null;
         this.mutants.setInfantry(this.infantry);
         this.infantryLayer = this.infantry ? new InfantryLayer(this, this.grid) : null;
-        this.gameOverLayer = new GameOverLayer(this, () => this.scene.restart());
 
         const bounds = this.grid.footprintRect({col: 0, row: 0, width: GRID_COLS, height: GRID_ROWS});
         const lines = this.add.graphics();
@@ -406,124 +400,93 @@ export class GameScene extends Phaser.Scene {
             .setOrigin(0, 0)
             .setVisible(false)
             .setDepth(3);
+        this.segmentGraphics = this.add.graphics().setDepth(3);
     }
 
-    // ---- HUD ---------------------------------------------------------------
+    // ---- What the HUD shows -------------------------------------------------
 
-    createHud() {
-        // Top band, where the (now hidden) title was: shift line, then resources.
-        this.shiftHud = this.add.text(this.scale.width / 2, 30, '', {
-            fontFamily: 'monospace',
-            fontSize: '24px',
-            color: '#c8e6c9',
-        }).setOrigin(0.5);
-        this.hud = this.add.text(this.scale.width / 2, 70, '', {
-            fontFamily: 'monospace',
-            fontSize: '28px',
-            color: '#ffffff',
-        }).setOrigin(0.5);
-        // Top of the left band, clear of the centred shift line. Night only.
-        this.waveHud = this.add.text(16, 20, '', {
-            fontFamily: 'monospace',
-            fontSize: '20px',
-            color: '#ffffff',
-        }).setOrigin(0, 0).setVisible(false);
-        // Top of the right band, clear of the centred shift and resource lines.
-        this.pollutionHud = this.add.text(1040, 16, '', {
-            fontFamily: 'monospace',
-            fontSize: '22px',
-            color: '#ffffff',
-            lineSpacing: 4,
-        }).setOrigin(0, 0);
-        // Right band beside the grid (grid ends at x 1024): global power
-        // summary, then the latest nightly settlement (hidden until the first
-        // night completes).
-        this.powerHud = this.add.text(1040, 112, '', {
-            fontFamily: 'monospace',
-            fontSize: '20px',
-            color: '#ffffff',
-            lineSpacing: 4,
-        }).setOrigin(0, 0);
-        // Under the resource line, just above the grid.
-        this.placementHint = this.add.text(this.scale.width / 2, 94, '', {
-            fontFamily: 'monospace',
-            fontSize: '16px',
-            color: '#ffcc80',
-        }).setOrigin(0.5);
-        this.settlementPanel = this.add.text(1040, 190, '', {
-            fontFamily: 'monospace',
-            fontSize: '20px',
-            color: '#ffffff',
-            backgroundColor: '#263238',
-            padding: {x: 8, y: 6},
-            lineSpacing: 4,
-        }).setOrigin(0, 0).setVisible(false);
-        this.updateHud();
-        this.updatePollutionHud();
-    }
-
-    /** Render a settlement report (already calculated in core). */
-    showSettlement(report) {
-        const signed = (n) => (n > 0 ? `+${n}` : `${n}`);
-        const delivered = this.logistics?.lastNight?.credits ?? 0; // paid on delivery, shown here
-        this.settlementPanel.setText([
-            `Night ${report.day} settlement`,
-            `Income  ${signed(report.gross + delivered)}`,
-            `Upkeep  ${signed(-report.upkeep)}`,
-            `Net     ${signed(report.net + delivered)}`,
-            `Credits ${report.creditsAfter}`,
-            `Power   ${POWER_STATUS_LABELS[report.power.status]}`,
-        ].join('\n')).setVisible(true);
+    presentSettlement(report) {
+        this.present(State.SETTLEMENT, {report, delivered: this.logistics?.lastNight?.credits ?? 0}); // paid on delivery, shown here
     }
 
     /**
      * Re-derive power from the building records and render it: the summary
-     * text and each building's look. Called right after placement, toggling
-     * and shift changes — never per frame, and nothing is cached.
+     * and each building's look. Called right after placement, toggling and shift
+     * changes — never per frame, and nothing is cached.
      */
     refreshPower() {
         const power = calculatePower(this.placement.buildings());
-        this.powerHud.setText(`Power ${power.generation} / ${power.demand}\n${POWER_STATUS_LABELS[power.status]}`);
+        this.present(State.POWER, {generation: power.generation, demand: power.demand, status: power.status});
         for (const {id, enabled, powered} of power.buildings) {
             const view = this.buildingViews.get(id);
             view.setAlpha(enabled ? 1 : DISABLED_ALPHA);
             if (enabled && !powered) view.setStrokeStyle(3, UNPOWERED_STROKE);
             else view.setStrokeStyle(2, BUILDING_STROKE);
         }
-        this.updateToggleButton();
+        this.presentSelection();
     }
 
     updateHud() {
-        const {credits, ap} = this.economy.snapshot();
-        this.hud.setText(`Credits: ${credits}   AP: ${ap}`);
+        this.present(State.ECONOMY, this.economy.snapshot());
     }
 
     updatePollutionHud() {
         const {value} = this.pollution.snapshot();
-        this.pollutionHud.setText(`Pollution ${value}\nThreat Level ${threatLevel(value)}`);
+        this.present(State.POLLUTION, {value, threat: threatLevel(value)});
     }
 
     /** Living mutants, then scheduled slots reached out of total. Not a kill counter. */
     updateWaveHud(mutants) {
         const plan = this.mutants.plan();
         const visible = plan !== null && this.cycle.shift === Shift.NIGHT;
-        this.waveHud.setVisible(visible);
-        if (!visible) return;
-        const reached = waveProgress(plan, this.cycle.elapsedNightTicks);
-        const text = `Mutants ${mutants.length} | Wave ${reached}/${plan.schedule.length}`;
-        if (this.waveHud.text !== text) this.waveHud.setText(text);
+        this.present(State.WAVE, visible
+            ? {visible, mutants: mutants.length, reached: waveProgress(plan, this.cycle.elapsedNightTicks), total: plan.schedule.length}
+            : {visible});
     }
 
-    /** Shift line; the night countdown is derived from remaining simulation ticks. */
+    /** The night countdown is derived from remaining simulation ticks, to the tenth the HUD shows. */
     updateShiftHud() {
         const {day, shift, remainingNightTicks} = this.cycle.snapshot();
-        let text = `Day ${day} · Day Shift`;
-        if (shift === Shift.DEFEATED) text = `Day ${day} · Headquarters destroyed`;
-        if (shift === Shift.NIGHT) {
-            text = `Day ${day} · Night Shift · ${(remainingNightTicks / this.clock.tickRate).toFixed(1)} s left`
-                + (this.clock.paused ? ' (paused)' : '');
-        }
-        if (this.shiftHud.text !== text) this.shiftHud.setText(text);
+        this.present(State.SHIFT, {
+            day, shift, seconds: (remainingNightTicks / this.clock.tickRate).toFixed(1), paused: this.clock.paused,
+        });
+    }
+
+    /** What the build menu offers: the keys are the types on sale, so ?hq=off shows fewer. */
+    menuStates() {
+        const offered = Object.values(BUILDING_TYPES).filter(({id, fortification}) => {
+            if (id === HQ_TYPE) return this.hqRequired;
+            if (fortification || id === BARRACKS_TYPE || id === SIEGE_CANNON_TYPE) return this.roads !== null;
+            return true;
+        });
+        return Object.fromEntries(offered.map(({id}) => [id, this.buildState(id)]));
+    }
+
+    /** 'available', 'locked' until HQ stands, or 'built' for an HQ already placed. */
+    buildState(typeId) {
+        const {ok, reason} = this.placement.canBuild(typeId);
+        if (ok) return 'available';
+        return reason === HQ_ALREADY_BUILT ? 'built' : 'locked';
+    }
+
+    presentMenu() {
+        const isDay = this.cycle.shift === Shift.DAY;
+        this.present(State.MENU, {
+            visible: isDay,
+            states: this.menuStates(),
+            selected: this.roadMode ? 'road' : this.placement.selectedType,
+            road: this.roads ? {state: this.placement.hqBuilt ? 'available' : 'locked'} : null,
+            endDay: {visible: isDay, enabled: this.cycle.canEndDay},
+            cancel: this.placement.isPlacing || this.roadMode || this.flagBarracksId !== null,
+            speed: this.cycle.shift === Shift.NIGHT,
+        });
+    }
+
+    /** Where the camera looks for placing: HQ once it stands, otherwise the middle of the map. */
+    dayFocus() {
+        const hq = this.placement.buildings().find((b) => b.type === HQ_TYPE);
+        const rect = this.grid.footprintRect(hq ?? {col: 0, row: 0, width: GRID_COLS, height: GRID_ROWS});
+        return {x: rect.x + rect.width / 2, y: rect.y + rect.height / 2};
     }
 
     /**
@@ -539,16 +502,17 @@ export class GameScene extends Phaser.Scene {
             this.exitFlagMode();
             const isDay = this.cycle.shift === Shift.DAY;
             if (!isDay) this.exitPlacementMode();
-            this.setBuildMenuVisible(isDay);
-            this.setEndDayVisible(isDay);
-            this.speedControls.setVisible(this.cycle.shift === Shift.NIGHT);
             this.updateHud(); // AP is restored and the night settled at the start of each Day
             this.updatePollutionHud();
-            if (isDay && this.cycle.lastSettlement) this.showSettlement(this.cycle.lastSettlement);
+            if (isDay && this.cycle.lastSettlement) this.presentSettlement(this.cycle.lastSettlement);
             if (this.cycle.shift === Shift.DEFEATED) this.enterDefeat();
-            this.updateToggleButton(); // Demolish is for Day
+            if (this.cycle.shift !== this.renderedShift) this.handleShiftChange(isDay);
         }
         this.updateShiftHud();
+        this.updateHud();
+        this.presentMenu();
+        this.presentSelection();
+        this.present(State.SPEED, {speed: this.clock.speed});
         const mutants = this.mutants.snapshot();
         const buildings = this.placement.buildings();
         this.mutantLayer.sync(mutants, buildings, {
@@ -577,6 +541,13 @@ export class GameScene extends Phaser.Scene {
         if (this.infantry) this.syncInfantry();
     }
 
+    /** Once per change of shift, so the player's own zoom is never fought. */
+    handleShiftChange(isDay) {
+        this.renderedShift = this.cycle.shift;
+        if (isDay) this.worldCamera.showDay(this.dayFocus());
+        else if (this.cycle.shift === Shift.NIGHT) this.worldCamera.fit();
+    }
+
     /** Soldiers every frame; flags only when walking or the selection changed. */
     syncInfantry() {
         const key = `${this.placement.revision}:${this.selectedBuildingId}:${this.flagBarracksId}`;
@@ -596,7 +567,8 @@ export class GameScene extends Phaser.Scene {
     enterDefeat() {
         this.phase = defeatGame(this.phase);
         this.selectAt(null);
-        this.gameOverLayer.show(this.cycle.defeatReport);
+        this.present(State.PHASE, {phase: this.phase});
+        this.present(State.GAME_OVER, this.cycle.defeatReport);
         setBodyState({phase: this.phase});
     }
 
@@ -607,76 +579,9 @@ export class GameScene extends Phaser.Scene {
         this.syncShiftUi();
     }
 
-    // ---- Build menu --------------------------------------------------------
-
-    createButton(y, label, fill, x = MENU_X, size = MENU_BUTTON) {
-        const rect = this.add.rectangle(x, y, size.width, size.height, fill)
-            .setStrokeStyle(3, BUTTON_IDLE_STROKE)
-            .setInteractive({useHandCursor: true})
-            .setDepth(4);
-        const text = this.add.text(x, y, label, {
-            fontFamily: 'monospace',
-            fontSize: '20px',
-            color: '#ffffff',
-            align: 'center',
-        }).setOrigin(0.5).setDepth(5);
-        return {rect, text};
-    }
-
-    /** A half-width menu button, in one of the two columns. */
-    createMenuCell(slot, label) {
-        const {x, y} = menuSlot(slot);
-        const button = this.createButton(y, label, 0x37474f, x, MENU_CELL);
-        button.text.setStyle({fontSize: '17px', wordWrap: {width: MENU_CELL.width - 6}});
-        return button;
-    }
-
-    addBuildButton(slot, type, label) {
-        const button = this.createMenuCell(slot, label);
-        button.rect.on('pointerdown', () => this.enterPlacementMode(type.id));
-        button.type = type;
-        button.proxy = null;
-        this.buildButtons[type.id] = button;
-    }
-
-    createBuildMenu() {
-        const buildings = Object.values(BUILDING_TYPES)
-            .filter((t) => !t.fortification && t.id !== BARRACKS_TYPE && t.id !== SIEGE_CANNON_TYPE && (this.hqRequired || t.id !== HQ_TYPE));
-        buildings.forEach((type, slot) => {
-            this.addBuildButton(slot, type, `${type.name} ${type.width}x${type.height}\n${type.cost.credits}c · ${type.cost.ap} AP`);
-        });
-
-        if (this.roads) {
-            this.roadButton = this.createMenuCell(MENU_SLOTS.road, 'Road\nfree');
-            this.roadButton.rect.on('pointerdown', () => this.enterRoadMode());
-            const cost = ({cost: {credits, ap}}) => (ap ? `${credits}c · ${ap} AP` : `${credits}c`);
-            const {barracks, wall, gateVertical, gateHorizontal, siegeCannon} = BUILDING_TYPES;
-            this.addBuildButton(MENU_SLOTS.barracks, barracks, `Barracks 3x3\n${cost(barracks)}`);
-            this.addBuildButton(MENU_SLOTS.wall, wall, `Wall\n${cost(wall)}`);
-            this.addBuildButton(MENU_SLOTS.gateVertical, gateVertical, `Gate |\n${cost(gateVertical)}`);
-            this.addBuildButton(MENU_SLOTS.gateHorizontal, gateHorizontal, `Gate —\n${cost(gateHorizontal)}`);
-            this.addBuildButton(MENU_SLOTS.siegeCannon, siegeCannon, `Siege 2x2\n${cost(siegeCannon)}\nheavy · ${siegeCannon.power.demand}P`);
-        }
-
-        this.cancelButton = this.createButton(RIGHT_ACTION.y, 'Cancel', 0x8e2b2b, RIGHT_ACTION.x);
-        this.cancelButton.rect.on('pointerdown', () => this.exitPlacementMode());
-        this.setCancelVisible(false);
-
-        // Bottom of the left band, clear of the grid (grid x starts at 256).
-        this.endDayButton = this.createButton(620, 'END DAY', 0x6d4c41);
-        this.endDayButton.rect.on('pointerdown', () => this.handleEndDay());
-
-        // What can be done to the selected building, right band: its power
-        // switch in Day AND Night, and above it Demolish during Day and any flag.
-        this.toggleButton = this.createButton(RIGHT_ACTION.y, '', 0x37474f, RIGHT_ACTION.x);
-        this.toggleButton.rect.on('pointerdown', () => this.handleSelectionAction());
-        this.buildingControls = new BuildingControls(this, {
-            onFlag: () => this.enterFlagMode(),
-            onResetFlag: () => this.handleResetFlag(),
-            onDemolish: () => this.handleDemolish(),
-            onRefit: () => this.handleRefit(),
-        });
-        this.updateToggleButton();
+    handleSetSpeed(speed) {
+        this.clock.setSpeed(speed);
+        this.present(State.SPEED, {speed: this.clock.speed});
     }
 
     // ---- Building selection / power switch ---------------------------------
@@ -691,53 +596,27 @@ export class GameScene extends Phaser.Scene {
         return {building, type, demolishable};
     }
 
-    /** The power switch shows for a switchable building, in Day and Night. The other actions follow. */
-    updateToggleButton() {
+    /** What the selection offers: the power switch in Day and Night, and the other actions. */
+    presentSelection() {
         const {building, type, demolishable} = this.selection();
-        this.buildingControls.update(building, {
-            canFlag: type?.id === BARRACKS_TYPE,
+        const isBarracks = type?.id === BARRACKS_TYPE;
+        this.present(State.SELECTION, {
+            building: building ? {id: building.id, type: building.type, enabled: building.enabled, flag: building.flag ?? null} : null,
+            canFlag: isBarracks,
             canDemolish: demolishable,
             confirmDemolish: !type?.fortification,
-            refitTo: type?.id === BARRACKS_TYPE && this.cycle.isConstructionAllowed
+            refitTo: isBarracks && this.cycle.isConstructionAllowed
                 ? (building.role === BarracksRole.ROCKET ? BarracksRole.RIFLE : BarracksRole.ROCKET)
                 : null,
+            switchable: Boolean(type) && type.switchable !== false,
         });
-        const {rect, text} = this.toggleButton;
-        const switchable = Boolean(type) && type.switchable !== false;
-        const narrow = type?.id === BARRACKS_TYPE;
-        if (switchable) this.layoutToggle(narrow);
-        rect.setVisible(switchable);
-        text.setVisible(switchable);
-        if (!switchable) {
-            this.toggleProxy?.destroy();
-            this.toggleProxy = null;
-            rect.disableInteractive();
-            return;
-        }
-        rect.setInteractive({useHandCursor: true});
-        const label = building.enabled ? 'Switch OFF' : 'Switch ON';
-        text.setText(narrow ? label.replace(' ', '\n') : `${building.id}\n${label}`);
-        this.toggleProxy ??= addProxy(this, rect, 'toggle-power', {label: 'Toggle power'});
-        this.toggleProxy.set({target: building.id, enabled: building.enabled});
-    }
-
-    /** A Barracks shares the row with RESET FLAG. A proxy keeps the size it was made with, so it goes too. */
-    layoutToggle(narrow) {
-        if (narrow === this.toggleNarrow) return;
-        this.toggleNarrow = narrow;
-        const {x, width} = narrow ? BARRACKS_TOGGLE : {x: RIGHT_ACTION.x, width: MENU_BUTTON.width};
-        const {rect, text} = this.toggleButton;
-        rect.setPosition(x, RIGHT_ACTION.y).setSize(width, MENU_BUTTON.height);
-        text.setX(x);
-        this.toggleProxy?.destroy();
-        this.toggleProxy = null;
     }
 
     /** Act on the selected building through the real domain methods. */
     handleSelectionAction() {
         const {building} = this.selection();
         if (!building) return;
-        this.buildingControls.disarm();
+        EventBus.emit(Notice.DISARM);
         this.placement.setEnabled(building.id, !building.enabled);
         this.refreshPower();
     }
@@ -746,9 +625,9 @@ export class GameScene extends Phaser.Scene {
     handleResetFlag() {
         const {building} = this.selection();
         if (!building) return;
-        this.buildingControls.disarm();
+        EventBus.emit(Notice.DISARM);
         this.placement.clearFlag(building.id);
-        this.updateToggleButton();
+        this.presentSelection();
     }
 
     /** The second press of a refit. A refusal says why; it can only be the price. */
@@ -757,116 +636,15 @@ export class GameScene extends Phaser.Scene {
         if (!building) return;
         const result = this.placement.refit(building.id);
         this.lastResult = result;
-        this.showHint(result.ok ? null : REFIT_REFUSED);
+        this.showHint(result.ok ? null : Hint.REFIT_REFUSED);
         this.updateHud();
         this.renderedPostsKey = null; // the roof mark shows the role
-        this.updateToggleButton();
+        this.presentSelection();
     }
 
     handleDemolish() {
         const {building} = this.selection();
         if (building && this.placement.demolish(building.id).ok) this.handleBuildingsDestroyed([building.id]);
-    }
-
-    /** Show/enable the building buttons (Day) or hide/disable them (Night). */
-    setBuildMenuVisible(visible) {
-        for (const button of Object.values(this.buildButtons)) {
-            button.rect.setVisible(visible).setStrokeStyle(3, BUTTON_IDLE_STROKE);
-            button.text.setVisible(visible);
-            if (visible) {
-                button.rect.setInteractive({useHandCursor: true});
-                button.proxy ??= addProxy(this, button.rect, `build-${button.type.id}`, {
-                    label: button.type.name,
-                    state: {selected: false},
-                });
-                button.proxy.set({selected: false});
-            } else {
-                button.rect.disableInteractive();
-                button.proxy?.destroy();
-                button.proxy = null;
-            }
-        }
-        if (this.roadButton) {
-            const {rect, text} = this.roadButton;
-            rect.setVisible(visible).setStrokeStyle(3, BUTTON_IDLE_STROKE);
-            text.setVisible(visible);
-            if (visible) {
-                rect.setInteractive({useHandCursor: true});
-                this.roadProxy ??= addProxy(this, rect, 'build-road', {label: 'Road'});
-                this.roadProxy.set({selected: false});
-            } else {
-                rect.disableInteractive();
-                this.roadProxy?.destroy();
-                this.roadProxy = null;
-            }
-        }
-        if (visible) this.refreshBuildMenu();
-    }
-
-    /** 'available', 'locked' until HQ stands, or 'built' for an HQ already placed. */
-    buildState(typeId) {
-        const {ok, reason} = this.placement.canBuild(typeId);
-        if (ok) return 'available';
-        return reason === HQ_ALREADY_BUILT ? 'built' : 'locked';
-    }
-
-    /** Disabled buttons stay visible and pressable, but pressing them does nothing. */
-    refreshBuildMenu() {
-        for (const [id, button] of Object.entries(this.buildButtons)) {
-            const state = this.buildState(id);
-            const alpha = state === 'available' ? 1 : BUTTON_DISABLED_ALPHA;
-            button.rect.setAlpha(alpha);
-            button.text.setAlpha(alpha);
-            if (state === 'built') button.text.setText(`${button.type.name} ${button.type.width}x${button.type.height}\nBUILT`);
-            button.proxy?.set({state});
-        }
-        if (this.roadButton) {
-            const alpha = this.placement.hqBuilt ? 1 : BUTTON_DISABLED_ALPHA;
-            this.roadButton.rect.setAlpha(alpha);
-            this.roadButton.text.setAlpha(alpha);
-            this.roadProxy?.set({state: this.placement.hqBuilt ? 'available' : 'locked'});
-        }
-    }
-
-    refreshEndDay() {
-        const enabled = this.cycle.canEndDay;
-        const alpha = enabled ? 1 : BUTTON_DISABLED_ALPHA;
-        this.endDayButton.rect.setAlpha(alpha);
-        this.endDayButton.text.setAlpha(alpha);
-        this.endDayProxy?.set({enabled});
-    }
-
-    setEndDayVisible(visible) {
-        const {rect, text} = this.endDayButton;
-        rect.setVisible(visible);
-        text.setVisible(visible);
-        if (visible) {
-            rect.setInteractive({useHandCursor: true});
-            this.endDayProxy ??= addProxy(this, rect, 'end-day', {label: 'End Day'});
-            this.refreshEndDay();
-        } else {
-            rect.disableInteractive();
-            this.endDayProxy?.destroy();
-            this.endDayProxy = null;
-        }
-    }
-
-    setCancelVisible(visible) {
-        const {rect, text} = this.cancelButton;
-        rect.setVisible(visible);
-        text.setVisible(visible);
-        if (visible) {
-            rect.setInteractive({useHandCursor: true});
-            if (!this.cancelProxy) {
-                this.cancelProxy = addProxy(this, rect, 'cancel-placement', {label: 'Cancel'});
-            }
-        } else {
-            rect.disableInteractive();
-            if (this.cancelProxy) {
-                this.cancelProxy.destroy();
-                this.cancelProxy = null;
-            }
-        }
     }
 
     // ---- Placement mode ----------------------------------------------------
@@ -881,19 +659,15 @@ export class GameScene extends Phaser.Scene {
         this.selectedCell = null;
         this.selectedBuildingId = null;
         this.selectionHighlight.setVisible(false);
-        this.updateToggleButton();
-
-        for (const [id, button] of Object.entries(this.buildButtons)) {
-            const selected = id === typeId;
-            button.rect.setStrokeStyle(3, selected ? BUTTON_SELECTED_STROKE : BUTTON_IDLE_STROKE);
-            button.proxy?.set({selected});
-        }
-        this.setCancelVisible(true);
+        this.presentSelection();
+        this.presentMenu();
+        this.clearGhost();
         this.updatePreview(null);
+        this.showFirstGhost();
     }
 
     exitPlacementMode() {
-        this.buildingControls?.disarm();
+        EventBus.emit(Notice.DISARM);
         this.exitRoadMode();
         this.exitFlagMode();
         if (!this.placement?.isPlacing) return;
@@ -907,18 +681,16 @@ export class GameScene extends Phaser.Scene {
         this.exitPlacementMode();
         this.selectAt(null);
         this.roadMode = true;
-        this.roadButton.rect.setStrokeStyle(3, BUTTON_SELECTED_STROKE);
-        this.roadProxy?.set({selected: true});
-        this.setCancelVisible(true);
+        this.presentMenu();
+        this.showFirstGhost();
     }
 
     exitRoadMode() {
         if (!this.roadMode) return;
         this.roadMode = false;
         this.roadDragAdds = false;
-        this.roadButton.rect.setStrokeStyle(3, BUTTON_IDLE_STROKE);
-        this.roadProxy?.set({selected: false});
-        this.setCancelVisible(false);
+        this.presentMenu();
+        this.clearGhost();
         this.previewRect.setVisible(false);
         this.previewResult = null;
         this.showHint(null);
@@ -931,7 +703,7 @@ export class GameScene extends Phaser.Scene {
         this.exitPlacementMode();
         this.flagBarracksId = building.id;
         this.selectAt(null);
-        this.setCancelVisible(true);
+        this.presentMenu();
         this.showHint(null);
     }
 
@@ -940,7 +712,7 @@ export class GameScene extends Phaser.Scene {
         if (!this.flagBarracksId) return;
         const barracks = this.placement.barracks().find((b) => b.id === this.flagBarracksId);
         this.flagBarracksId = null;
-        this.setCancelVisible(false);
+        this.presentMenu();
         this.previewRect.setVisible(false);
         this.previewResult = null;
         this.showHint(null);
@@ -1004,15 +776,12 @@ export class GameScene extends Phaser.Scene {
 
     /** One short reason after a rejection, because touch has no hover. */
     showHint(reason) {
-        this.placementHint.setText(PLACEMENT_HINTS[reason] ?? '');
+        this.present(State.HINT, {reason});
     }
 
     resetPlacementUi() {
-        for (const button of Object.values(this.buildButtons)) {
-            button.rect.setStrokeStyle(3, BUTTON_IDLE_STROKE);
-            button.proxy?.set({selected: false});
-        }
-        this.setCancelVisible(false);
+        this.presentMenu();
+        this.clearGhost();
         this.updatePreview(null);
         this.showHint(null);
     }
@@ -1063,18 +832,36 @@ export class GameScene extends Phaser.Scene {
         this.selectAt(null);
         this.updateHud();
         this.refreshPower();
-        this.refreshBuildMenu();
-        this.refreshEndDay();
+        this.presentMenu();
     }
 
     // ---- Pointer -----------------------------------------------------------
 
-    /** `over` = interactive objects under the pointer; UI hits are never grid input. */
-    handleGridPointerDown(pointer, over) {
-        this.dragCell = null; // lifting a finger sends no move, so a finished drag ends here
-        if (!this.grid || over.length > 0 || this.phase === GamePhase.DEFEATED) return;
-        const cell = this.grid.worldToCell(pointer.worldX, pointer.worldY);
+    /** The tile under a screen point. Outside the viewport there is none, whatever the camera shows. */
+    cellAt({x, y}) {
+        if (!this.grid) return null;
+        const point = this.worldCamera.worldAt({x, y});
+        return point ? this.grid.worldToCell(point.x, point.y) : null;
+    }
 
+    /** A press the HUD did not capture. A mouse acts now; a finger may yet become a gesture. */
+    handleGridPointerDown(pointer) {
+        this.dragCell = null; // lifting a finger sends no move, so a finished drag ends here
+        if (!this.grid || this.phase === GamePhase.DEFEATED || isOrientationBlocked()) return;
+        EventBus.emit(Notice.WORLD_PRESSED);
+        if (pointer.wasTouch) {
+            this.handleTouchDown(pointer);
+            return;
+        }
+        if (pointer.rightButtonDown() || pointer.middleButtonDown()) {
+            this.mousePan = {x: pointer.x, y: pointer.y};
+            return;
+        }
+        this.pressCell(this.cellAt(pointer));
+    }
+
+    /** What a press on a tile means in the current mode. */
+    pressCell(cell) {
         if (this.flagBarracksId) {
             if (cell) this.applyFlagCell(cell);
             return;
@@ -1100,6 +887,314 @@ export class GameScene extends Phaser.Scene {
         this.selectAt(cell);
     }
 
+    fingersDown() {
+        return this.input.manager.pointers.filter((pointer) => pointer.isDown && pointer.wasTouch);
+    }
+
+    handleTouchDown(pointer) {
+        const fingers = this.fingersDown();
+        if (fingers.length >= 2) {
+            this.beginGesture(fingers);
+            return;
+        }
+        this.gesture = null; // one lifted over a HUD control was never reported here
+        const cell = this.cellAt(pointer);
+        if (this.touchPlacing()) {
+            const onGhost = this.onGhost(cell);
+            this.pendingPress = {pointerId: pointer.id, cell, ghost: true, onGhost, moved: false, prior: this.ghostSnapshot()};
+            if (cell && !onGhost) this.propose(cell);
+            return;
+        }
+        this.pendingPress = {pointerId: pointer.id, cell};
+        this.showTouchPreview(cell);
+    }
+
+    /** Two fingers undo whatever the first was doing, and put the ghost back where it was. */
+    beginGesture([first, second]) {
+        const pending = this.pendingPress;
+        this.pendingPress = null;
+        this.dragCell = null;
+        this.roadDragAdds = false;
+        if (pending?.ghost) this.restoreGhost(pending.prior);
+        else this.showTouchPreview(null);
+        this.gesture = this.measureGesture(first, second);
+    }
+
+    measureGesture(first, second) {
+        return {
+            distance: Math.hypot(first.x - second.x, first.y - second.y),
+            x: (first.x + second.x) / 2,
+            y: (first.y + second.y) / 2,
+        };
+    }
+
+    showTouchPreview(cell) {
+        if (this.flagBarracksId) this.updateFlagPreview(cell);
+    }
+
+    touchPlacing() {
+        return Boolean(this.placement?.isPlacing) || this.roadMode;
+    }
+
+    /** Walls and roads are drawn by dragging. Anything else a finger only aims. */
+    dragBuilds() {
+        return this.roadMode || this.placement.selectedType === WALL_TYPE;
+    }
+
+    /** @returns {boolean} whether the move has been dealt with */
+    handleTouchMove(pointer) {
+        if (this.gesture) {
+            const fingers = this.fingersDown();
+            if (fingers.length >= 2) this.moveGesture(fingers);
+            return true;
+        }
+        const pending = this.pendingPress;
+        if (!pending || pending.pointerId !== pointer.id) return this.touchPlacing();
+        const cell = this.cellAt(pointer);
+        if (cell?.col === pending.cell?.col && cell?.row === pending.cell?.row) return true;
+        if (!pending.ghost) {
+            pending.cell = cell;
+            this.showTouchPreview(cell);
+            return true;
+        }
+        if (!cell) return true; // off the world: the ghost waits where it was
+        pending.cell = cell;
+        pending.moved = true;
+        if (this.dragBuilds()) this.extendSegment(cell);
+        else this.setGhost(cell);
+        return true;
+    }
+
+    // ---- Touch placement ---------------------------------------------------
+
+    /** The nearest tile to the middle of the view that would be accepted, or failing that the nearest in view. */
+    firstGhostCell() {
+        const {x, y} = this.worldCamera.snapshot();
+        const accepted = (cell) => (this.roadMode ? !this.roads.has(cell) && this.placement.previewRoad(cell).ok : this.placement.preview(cell)?.ok);
+        const cells = [];
+        for (let row = 0; row < GRID_ROWS; row++) {
+            for (let col = 0; col < GRID_COLS; col++) {
+                const center = this.grid.cellCenter(col, row);
+                if (this.worldCamera.isVisible(center)) cells.push({col, row, distance: (center.x - x) ** 2 + (center.y - y) ** 2});
+            }
+        }
+        cells.sort((a, b) => a.distance - b.distance || a.row - b.row || a.col - b.col);
+        const best = cells.find(accepted) ?? cells[0];
+        return {col: best.col, row: best.row};
+    }
+
+    /** With no hover to show where a building would go, choosing one shows it straight away. */
+    showFirstGhost() {
+        if (this.layout.touch) this.propose(this.firstGhostCell());
+    }
+
+    propose(cell) {
+        if (this.dragBuilds()) this.setSegment([cell]);
+        else this.setGhost(cell);
+    }
+
+    noteGhost(last) {
+        this.ghostRevision++;
+        this.ghostLast = last;
+    }
+
+    setGhost(cell) {
+        this.ghostCell = cell;
+        this.noteGhost('moved');
+        this.powerWarning = null;
+        this.updatePreview(cell);
+        const {ok, reason} = this.previewResult;
+        if (ok && causesLowPower(this.placement.buildings(), this.placement.selectedType)) {
+            // The warning comes with the ghost, so the confirming tap is the second press.
+            this.powerWarning = {type: this.placement.selectedType, col: cell.col, row: cell.row};
+            this.showHint(Hint.POWER_WARNING);
+        } else {
+            this.showHint(ok ? null : reason);
+        }
+    }
+
+    setSegment(cells) {
+        this.segment = cells;
+        this.noteGhost('moved');
+        this.previewRect.setVisible(false);
+        this.previewResult = null;
+        this.drawSegment();
+    }
+
+    /** Every tile between the end of the segment and the finger, so a fast drag leaves no gap. Going back shortens it. */
+    extendSegment(cell) {
+        const cells = [...this.segment];
+        let {col, row} = cells.at(-1);
+        while (col !== cell.col || row !== cell.row) {
+            if (Math.abs(cell.col - col) >= Math.abs(cell.row - row)) col += Math.sign(cell.col - col);
+            else row += Math.sign(cell.row - row);
+            const seen = cells.findIndex((c) => c.col === col && c.row === row);
+            if (seen === -1) cells.push({col, row});
+            else cells.length = seen + 1;
+        }
+        this.setSegment(cells);
+    }
+
+    /** What the real rules say of each tile. Walls are paid for in order. */
+    judgeSegment(cells) {
+        if (this.roadMode) return this.judgeRoads(cells);
+        const price = getBuildingType(WALL_TYPE).cost.credits;
+        let accepted = 0;
+        return cells.map(({col, row}) => {
+            const check = this.placement.preview({col, row});
+            const ok = Boolean(check?.ok) && (accepted + 1) * price <= this.economy.credits;
+            if (ok) accepted++;
+            return {col, row, ok, reason: check?.reason ?? null};
+        });
+    }
+
+    /** A tile that only lacks a connection is fine if the segment brings one, from either end. */
+    judgeRoads(cells) {
+        const judged = cells.map(({col, row}) => {
+            const cell = {col, row};
+            let check;
+            if (!this.roads.has(cell)) check = this.placement.previewRoad(cell);
+            else if (cells.length === 1) check = this.placement.previewRoadRemoval(cell);
+            else check = {ok: this.roads.isConnected(cell), reason: RoadFailure.NOT_CONNECTED};
+            return {col, row, ok: check.ok, reason: check.reason ?? null};
+        });
+        const touchesAccepted = (tile) => judged.some((other) => other.ok && Math.abs(other.col - tile.col) + Math.abs(other.row - tile.row) === 1);
+        let spreading = true;
+        while (spreading) {
+            spreading = false;
+            for (const tile of judged) {
+                if (tile.ok || tile.reason !== RoadFailure.NOT_CONNECTED || this.roads.has(tile) || !touchesAccepted(tile)) continue;
+                tile.ok = true;
+                tile.reason = null;
+                spreading = true;
+            }
+        }
+        return judged;
+    }
+
+    drawSegment() {
+        this.segmentView = this.judgeSegment(this.segment);
+        this.segmentGraphics.clear();
+        for (const {col, row, ok} of this.segmentView) {
+            const color = ok ? PREVIEW_VALID_COLOR : PREVIEW_INVALID_COLOR;
+            const {x, y, width, height} = this.grid.footprintRect({col, row, width: 1, height: 1});
+            this.segmentGraphics.fillStyle(color, 0.4).fillRect(x, y, width, height);
+            this.segmentGraphics.lineStyle(2, color, 1).strokeRect(x, y, width, height);
+        }
+        this.showHint(this.segmentView.find(({ok}) => !ok)?.reason ?? null);
+    }
+
+    onGhost(cell) {
+        if (!cell) return false;
+        if (this.segment) return this.segment.some(({col, row}) => col === cell.col && row === cell.row);
+        if (!this.ghostCell) return false;
+        const {col, row, width, height} = this.previewResult.footprint;
+        return cell.col >= col && cell.col < col + width && cell.row >= row && cell.row < row + height;
+    }
+
+    ghostSnapshot() {
+        return {cell: this.ghostCell, segment: this.segment};
+    }
+
+    restoreGhost({cell, segment}) {
+        if (segment) this.setSegment(segment);
+        else if (cell) this.setGhost(cell);
+        else this.clearGhost();
+    }
+
+    clearGhost() {
+        if (!this.ghostCell && !this.segment) return;
+        this.ghostCell = null;
+        this.segment = null;
+        this.segmentView = [];
+        this.segmentGraphics.clear();
+        this.powerWarning = null;
+        this.previewRect.setVisible(false);
+        this.previewResult = null;
+        this.noteGhost('cleared');
+    }
+
+    /** The only place a finger spends anything. Rules are still placeAt's, so a red ghost is simply refused. */
+    confirmGhost() {
+        if (this.segment) {
+            this.commitSegment();
+            return;
+        }
+        this.powerWarning = null;
+        this.placeOnCell(this.ghostCell);
+        this.noteGhost(this.lastResult.ok ? 'confirmed' : 'refused');
+    }
+
+    commitSegment() {
+        const cells = this.segmentView.filter(({ok}) => ok).map(({col, row}) => ({col, row}));
+        if (cells.length === 0) {
+            this.noteGhost('refused');
+            return;
+        }
+        if (this.roadMode) this.commitRoads(cells);
+        else for (const cell of cells) this.placeOnCell(cell);
+        this.segment = null;
+        this.segmentView = [];
+        this.segmentGraphics.clear();
+        this.previewRect.setVisible(false);
+        this.previewResult = null;
+        this.noteGhost('confirmed');
+    }
+
+    /** A segment may be drawn towards the network, so each pass lays what now touches it. */
+    commitRoads(cells) {
+        if (cells.length === 1) {
+            this.applyRoadCell(cells[0], {dragging: false});
+            return;
+        }
+        let waiting = cells.filter((cell) => !this.roads.has(cell));
+        let progress = true;
+        while (waiting.length > 0 && progress) {
+            progress = false;
+            waiting = waiting.filter((cell) => {
+                this.applyRoadCell(cell, {dragging: true});
+                if (this.lastResult.ok) progress = true;
+                return !this.lastResult.ok;
+            });
+        }
+    }
+
+    moveGesture([first, second]) {
+        const now = this.measureGesture(first, second);
+        const before = this.gesture;
+        this.worldCamera.panBy(now.x - before.x, now.y - before.y);
+        if (before.distance >= PINCH_MIN_DISTANCE && now.distance >= PINCH_MIN_DISTANCE) {
+            this.worldCamera.zoomBy(now.distance / before.distance, {x: now.x, y: now.y});
+        }
+        this.gesture = now;
+    }
+
+    handleGridPointerUp(pointer) {
+        this.mousePan = null;
+        if (!pointer.wasTouch || !this.grid) return;
+        if (this.gesture) {
+            if (this.fingersDown().length === 0) this.gesture = null;
+            return;
+        }
+        const pending = this.pendingPress;
+        if (pending?.pointerId === pointer.id) {
+            this.pendingPress = null;
+            if (pending.ghost) {
+                if (pending.onGhost && !pending.moved && !isOrientationBlocked()) this.confirmGhost();
+            } else if (!isOrientationBlocked()) {
+                this.pressCell(pending.cell);
+            }
+        }
+        this.dragCell = null;
+        this.roadDragAdds = false;
+    }
+
+    handleWheel(pointer, deltaY) {
+        if (!this.worldCamera.worldAt(pointer) || isOrientationBlocked()) return;
+        if (deltaY < 0) this.worldCamera.zoomIn(pointer);
+        else if (deltaY > 0) this.worldCamera.zoomOut(pointer);
+    }
+
     /**
      * A purchase that would take power from NORMAL to LOW_POWER needs a second press
      * on the same tile. This is a question for the player, not a rule, so it lives
@@ -1114,7 +1209,7 @@ export class GameScene extends Phaser.Scene {
             return false;
         }
         this.powerWarning = {type, col: cell.col, row: cell.row};
-        this.showHint(POWER_WARNING);
+        this.showHint(Hint.POWER_WARNING);
         return true;
     }
 
@@ -1137,12 +1232,8 @@ export class GameScene extends Phaser.Scene {
         this.updateHud();
         this.refreshPower(); // new supply/demand takes effect immediately
         this.updatePreview(cell); // re-validate: cell now occupied, balances lower
-        if (building.type === BARRACKS_TYPE) this.refreshBuildMenu(); // the limit may have been reached
-        if (building.type === HQ_TYPE) { // the domain ended placement; the rest unlocks
-            this.resetPlacementUi();
-            this.refreshBuildMenu();
-            this.refreshEndDay();
-        }
+        if (building.type === HQ_TYPE) this.resetPlacementUi(); // the domain ended placement; the rest unlocks
+        this.presentMenu();
     }
 
     /**
@@ -1160,19 +1251,26 @@ export class GameScene extends Phaser.Scene {
         this.dragCell = cell;
     }
 
-    handleGridPointerMove(pointer, over) {
+    handleGridPointerMove(pointer) {
+        if (!this.grid || isOrientationBlocked()) return;
+        if (this.mousePan && !pointer.rightButtonDown() && !pointer.middleButtonDown()) this.mousePan = null; // released over the HUD
+        if (this.mousePan) {
+            this.worldCamera.panBy(pointer.x - this.mousePan.x, pointer.y - this.mousePan.y);
+            this.mousePan = {x: pointer.x, y: pointer.y};
+            return;
+        }
+        if (pointer.wasTouch && this.handleTouchMove(pointer)) return;
+        const cell = this.cellAt(pointer);
         if (this.flagBarracksId) {
-            this.updateFlagPreview(over.length > 0 ? null : this.grid.worldToCell(pointer.worldX, pointer.worldY));
+            this.updateFlagPreview(cell);
             return;
         }
         if (this.roadMode) {
-            const cell = over.length > 0 ? null : this.grid.worldToCell(pointer.worldX, pointer.worldY);
             if (cell && pointer.isDown && this.roadDragAdds) this.applyRoadCell(cell, {dragging: true});
             else this.updateRoadPreview(cell);
             return;
         }
         if (!this.placement?.isPlacing || this.phase === GamePhase.DEFEATED) return;
-        const cell = over.length > 0 ? null : this.grid.worldToCell(pointer.worldX, pointer.worldY);
         if (!pointer.isDown) this.dragCell = null;
         if (cell && this.dragCell) this.dragWallsTo(cell);
         this.updatePreview(cell);
@@ -1184,7 +1282,7 @@ export class GameScene extends Phaser.Scene {
      * highlight covers the building's footprint.
      */
     selectAt(cell) {
-        this.buildingControls?.disarm(); // any press on the map, even on the same building
+        EventBus.emit(Notice.DISARM); // any press on the map, even on the same building
         this.selectedCell = cell;
         this.selectedBuildingId = cell ? this.grid.occupantAt(cell.col, cell.row) : null;
         if (cell) {
@@ -1196,14 +1294,16 @@ export class GameScene extends Phaser.Scene {
         } else {
             this.selectionHighlight.setVisible(false);
         }
-        this.updateToggleButton();
+        this.presentSelection();
     }
 
     // ---- Simulation --------------------------------------------------------
 
     /** Phaser's frame delta drives the fixed-step clock; Phaser's `time` is ignored. */
     update(_time, delta) {
-        this.clock.advance(delta, (tick) => this.stepSimulation(tick));
+        // Turned to portrait, frames simply stop reaching the clock: its speed and
+        // pause state are not touched, so the run comes back exactly as it was.
+        if (!isOrientationBlocked()) this.clock.advance(delta, (tick) => this.stepSimulation(tick));
         this.syncShiftUi();
     }
 
@@ -1248,14 +1348,15 @@ export class GameScene extends Phaser.Scene {
         if (ids.includes(this.flagBarracksId)) this.exitFlagMode();
         this.refreshPower();
         this.refreshRoads();
-        this.refreshBuildMenu(); // losing a Barracks frees a place under the limit
     }
 
     // ---- QA ----------------------------------------------------------------
 
     qaState() {
         const rectView = (r) => ({visible: r.visible, x: r.x, y: r.y, width: r.width, height: r.height});
+        const hud = this.hudReady ? this.scene.get('hud').views() : NO_HUD;
         return {
+            ...hud,
             scene: this.scene.key,
             phase: this.phase,
             width: this.scale.width,
@@ -1263,28 +1364,15 @@ export class GameScene extends Phaser.Scene {
             grid: this.grid ? this.grid.snapshot() : null,
             selectedCell: this.selectedCell ? {...this.selectedCell} : null,
             highlight: this.selectionHighlight ? rectView(this.selectionHighlight) : null,
-            ui: {
-                titleVisible: this.title.visible,
-                startVisible: this.startButton.visible,
-                cancelVisible: this.cancelButton ? this.cancelButton.rect.visible : false,
-                endDayVisible: this.endDayButton ? this.endDayButton.rect.visible : false,
-                endDayEnabled: this.cycle ? this.cycle.canEndDay : false,
-                buildMenuVisible: Object.values(this.buildButtons).some((b) => b.rect.visible),
-                toggleVisible: this.toggleButton ? this.toggleButton.rect.visible : false,
-            },
+            ui: {...hud.ui, endDayEnabled: this.cycle ? this.cycle.canEndDay : false},
+            camera: this.worldCamera.snapshot(),
+            orientation: {blocked: isOrientationBlocked()},
             // Domain power state, derived on demand from the building records.
             power: this.placement ? calculatePower(this.placement.buildings()) : null,
-            // Actual power summary text, read off the game object.
-            powerView: this.powerHud ? {visible: this.powerHud.visible, text: this.powerHud.text} : null,
             selectedBuilding: this.selectedBuildingId,
             shiftCycle: this.cycle?.started ? this.cycle.snapshot() : null,
-            // Latest nightly settlement report (domain) and the actual panel text.
+            // Latest nightly settlement report (domain).
             settlement: this.cycle?.lastSettlement ? structuredClone(this.cycle.lastSettlement) : null,
-            settlementView: this.settlementPanel
-                ? {visible: this.settlementPanel.visible, text: this.settlementPanel.text}
-                : null,
-            // Actual shift HUD text, read off the game object.
-            shiftView: this.shiftHud ? {visible: this.shiftHud.visible, text: this.shiftHud.text} : null,
             placement: this.placement
                 ? {
                     selectedType: this.placement.selectedType,
@@ -1314,30 +1402,34 @@ export class GameScene extends Phaser.Scene {
             siegeViews: this.siegeLayer ? this.siegeLayer.views() : null,
             rockets: this.infantry ? this.infantry.rockets() : null,
             powerWarning: this.powerWarning,
+            ghost: {
+                active: this.ghostCell !== null || this.segment !== null,
+                cell: this.ghostCell,
+                footprint: this.ghostCell ? this.previewResult?.footprint ?? null : null,
+                segment: this.segmentView,
+                ok: this.segment ? this.segmentView.every(({ok}) => ok) : Boolean(this.ghostCell && this.previewResult?.ok),
+                revision: this.ghostRevision,
+                last: this.ghostLast,
+            },
             spitterEffectViews: this.mutantLayer ? this.mutantLayer.effectViews() : null,
             hpBarViews: this.mutantLayer ? this.mutantLayer.hpBarViews() : null,
-            // The frozen night plan, slots reached so far, and the actual HUD text.
+            // The frozen night plan and slots reached so far.
             wave: this.mutants ? this.mutants.plan() : null,
             waveProgress: this.mutants?.plan() && this.cycle.shift === Shift.NIGHT
                 ? waveProgress(this.mutants.plan(), this.cycle.elapsedNightTicks)
                 : null,
-            waveView: this.waveHud ? {visible: this.waveHud.visible, text: this.waveHud.text} : null,
-            // The defeat record (null until HQ falls) and the actual overlay text.
+            // The defeat record (null until HQ falls).
             defeat: this.cycle ? this.cycle.defeatReport : null,
-            gameOverView: this.gameOverLayer ? this.gameOverLayer.view() : null,
             // Domain turret state, then the rendered barrels and tracers.
             autocannons: this.autocannons ? this.autocannons.snapshot() : null,
             barrelViews: this.autocannonLayer ? this.autocannonLayer.barrelViews() : null,
             tracerViews: this.autocannonLayer ? this.autocannonLayer.tracerViews() : null,
-            // Actual pollution HUD text, read off the game object.
-            pollutionView: this.pollutionHud ? {visible: this.pollutionHud.visible, text: this.pollutionHud.text} : null,
             simulation: {
                 ...this.clock.snapshot(),
                 speed: this.clock.speed,
                 stepsExecuted: this.simulationSteps,
                 rng: this.rng.snapshot(),
             },
-            speedView: this.speedControls ? this.speedControls.view() : null,
             roads: this.roads ? this.roads.snapshot() : null,
             roadViews: this.roadLayer ? this.roadLayer.views() : null,
             dockViews: this.roadLayer ? this.roadLayer.dockViews() : null,
@@ -1348,24 +1440,14 @@ export class GameScene extends Phaser.Scene {
             gates: this.gates ? this.gates.snapshot() : null,
             gateViews: this.gateLayer ? this.gateLayer.views() : null,
             gatePreviewView: this.gateLayer ? this.gateLayer.previewView() : null,
-            // Domain squads, then the rendered soldiers and flags, and the selection's controls.
+            // Domain squads, then the rendered soldiers and flags.
             infantry: this.infantry ? this.infantry.snapshot() : null,
             infantryViews: this.infantryLayer ? this.infantryLayer.views() : null,
-            buildingControlsView: this.buildingControls ? this.buildingControls.view() : null,
             flagMode: this.flagBarracksId,
             roadMode: this.roadMode,
             ringPreviewView: this.roadLayer ? this.roadLayer.ringPreviewView() : null,
-            placementHint: this.placementHint ? this.placementHint.text : null,
-            // Actual HUD text, read off the game object.
-            hudView: this.hud ? {visible: this.hud.visible, text: this.hud.text} : null,
             // 'available', 'locked' or 'built', keyed by building type.
-            menuState: this.hud
-                ? Object.fromEntries(Object.keys(this.buildButtons).map((id) => [id, this.buildState(id)]))
-                : null,
-            // Actual build-button label text, keyed by building type.
-            menuLabels: this.hud
-                ? Object.fromEntries(Object.entries(this.buildButtons).map(([id, b]) => [id, b.text.text]))
-                : null,
+            menuState: this.placement ? this.menuStates() : null,
             // Actual rendered preview properties, read off the game object.
             previewView: this.previewRect
                 ? {...rectView(this.previewRect), fillColor: this.previewRect.fillColor, strokeColor: this.previewRect.strokeColor}

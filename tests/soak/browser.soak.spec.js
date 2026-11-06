@@ -26,7 +26,6 @@ const MIN_TICKS_PER_SECOND = 57;
 const MIN_TICKS_PER_SECOND_AT_4X = 4 * MIN_TICKS_PER_SECOND;
 const NIGHT_SECONDS = 60;
 const LATE_NIGHT_TICK = 3500;
-const LISTENERS_PER_DOM_ELEMENT = 3; // Phaser's DOMElement: sleep, wake and prerender
 const PLANT = {col: 12, row: 8};
 const CANNON_A = {col: 12, row: 6};
 const CANNON_B = {col: 12, row: 10};
@@ -303,6 +302,18 @@ test('real time: scaling steps, stopping if a step falls behind', async ({page})
     expect(errors).toEqual([]);
 });
 
+/**
+ * Counts must not grow from run to run. A scene's first boot adds one Phaser blur
+ * hook that a relaunched HUD does not add again, so the very first count may be one
+ * game listener higher. Nothing else may differ, and from then on all are identical.
+ */
+function expectFlat(counts) {
+    const [first, ...rest] = counts;
+    for (const count of rest) expect(count).toEqual(rest[0]);
+    expect({...first, gameListeners: rest[0].gameListeners}).toEqual(rest[0]);
+    expect(first.gameListeners - rest[0].gameListeners).toBeLessThanOrEqual(1);
+}
+
 test('stepped: 20 nights of destruction and rebuilding leave nothing behind', async ({page}) => {
     const errors = watchErrors(page);
     const GUARD = {col: 4, row: 6};
@@ -353,13 +364,12 @@ test('stepped: 20 nights of destruction and rebuilding leave nothing behind', as
         }
         const counts = await page.evaluate(() => window.__qa.perf.counts());
         const cannons = s.buildings.filter((b) => b.type === 'autocannon');
-        const proxiesExpected = 5 + (s.ui.toggleVisible ? 2 : 0); // 4 build buttons, END DAY, toggle and Demolish
+        const proxiesExpected = 8 + (s.ui.toggleVisible ? 2 : 0); // 4 build buttons, END DAY, 3 camera buttons, toggle and Demolish
         dawns.push({
             night, ...counts, buildings: s.buildings.length, cannons: cannons.length, barrels: s.barrelViews.length,
             hpBars: s.hpBarViews.length, tracers: s.tracerViews.length, buildingViews: s.buildingViews.length,
-            staticObjects: counts.gameObjects - s.buildings.length - s.barrelViews.length - s.hpBarViews.length - s.tracerViews.length - counts.proxies,
-            // The TEST_MODE toggle proxy comes and goes, so listeners are compared without proxies.
-            ownSceneListeners: counts.sceneListeners - LISTENERS_PER_DOM_ELEMENT * counts.proxies,
+            staticObjects: counts.gameObjects - s.buildings.length - s.barrelViews.length - s.hpBarViews.length - s.tracerViews.length, // proxies live in the HUD scene, not this one
+            ownSceneListeners: counts.sceneListeners,
         });
 
         expect(s.mutants, `night ${night}`).toEqual([]);
@@ -630,8 +640,8 @@ test('stepped: trucks, storage pips and repeated restarts leave nothing behind',
         titles.push(await counts());
     }
     writeResult('logistics-restart', {scenario: 'stepped, logistics fixture without cannons, 4 runs to defeat', loaded, titles});
-    for (const count of loaded) expect(count).toEqual(loaded[0]);
-    for (const count of titles) expect(count).toEqual(titles[0]);
+    expectFlat(loaded);
+    expectFlat(titles);
     expect(errors).toEqual([]);
 });
 
@@ -663,8 +673,8 @@ test('stepped: repeated defeat and restart on the real HQ-first flow leave nothi
         titles.push(await counts(page));
     }
     writeResult('defeat-restart', {scenario: 'stepped, waveBudget=20, 6 defeat and restart cycles, real flow', titles, days});
-    for (const count of titles) expect(count).toEqual(titles[0]);
-    for (const count of days) expect(count).toEqual(days[0]);
+    expectFlat(titles);
+    expectFlat(days);
     expect(errors).toEqual([]);
 });
 

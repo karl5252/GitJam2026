@@ -134,6 +134,7 @@ function suite(input) {
     });
 
     test('other actions cancel confirmation: Switch, Flag, a build tool and Escape', async ({page}) => {
+        test.setTimeout(30_000); // a long sequence of real presses, slow under three workers on touch
         const state = await base(page);
         await place(page, state, 'barracks', BARRACKS);
         const id = await idOf(page, 'barracks');
@@ -241,6 +242,7 @@ test.describe('demolition: desktop', () => {
 
 test.describe('demolition: mobile landscape', () => {
     test.use({viewport: {width: 844, height: 390}, hasTouch: true, isMobile: true});
+    test.setTimeout(45_000); // each building takes two taps here, and these bases have several
 
     suite({pressWorld: tapWorld, pressAction: tapAction});
 

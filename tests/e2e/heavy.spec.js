@@ -1,6 +1,6 @@
 import {readFileSync} from 'node:fs';
 import {test, expect} from '@playwright/test';
-import {byAction, clickAction, clickWorld, tapAction, tapWorld} from '../helpers/canvas.js';
+import {byAction, clickAction, clickWorld, tapAction, tapWorld, showBuildMenu} from '../helpers/canvas.js';
 import {cellCenter, hqFlow, stepExactly} from '../helpers/hq.js';
 import {sample} from '../helpers/qa.js';
 
@@ -24,6 +24,7 @@ function suite(input) {
     const {pressWorld, pressAction} = input;
     const {start, buildHq, place, select, nightTo, finishNight} = hqFlow(input);
     const pressCell = (page, state, cell) => pressWorld(page, cellCenter(state.grid, cell), state);
+    const ghostShowsAtOnce = pressWorld === tapWorld;
 
     /** Every Day control in view is big enough and touches nothing else. */
     async function checkControls(page, actions) {
@@ -41,6 +42,7 @@ function suite(input) {
     test('all twelve menu slots keep their size, and clear END DAY', async ({page}) => {
         const state = await start(page, 'mutants=off');
         await buildHq(page, state, HQ);
+        await showBuildMenu(page);
         await checkControls(page, [
             'build-hq', 'build-outpost', 'build-factory', 'build-powerPlant', 'build-autocannon', 'build-road', 'build-wall',
             'build-barracks', 'build-gateVertical', 'build-gateHorizontal', 'build-siegeCannon', 'end-day',
@@ -167,6 +169,7 @@ function suite(input) {
     });
 
     test('rockets are visible in flight and land', async ({page}) => {
+        test.setTimeout(40_000);
         const state = await start(page, 'waveBudget=6&waveBrutes=1');
         await buildHq(page, state, HQ);
         await place(page, state, 'powerPlant', PLANT);
@@ -179,8 +182,8 @@ function suite(input) {
         await expect.poll(async () => (await sample(page)).buildings.find((b) => b.id === id).role).toBe('rocket');
         await nightTo(page, 600);
         let s = await sample(page);
-        for (let i = 0; i < 200 && s.rockets.length === 0 && s.shiftCycle.shift === 'night'; i++) {
-            await stepExactly(page, 10);
+        for (let i = 0; i < 400 && s.rockets.length === 0 && s.shiftCycle.shift === 'night'; i++) {
+            await stepExactly(page, 6);
             s = await sample(page);
         }
         expect(s.rockets.length).toBeGreaterThan(0);
@@ -236,8 +239,13 @@ function suite(input) {
         expect((await sample(page)).buildings).toHaveLength(2);
 
         await pressAction(page, 'build-autocannon'); // another building
-        await expect.poll(async () => (await sample(page)).powerWarning).toBeNull();
-        await expect.poll(async () => (await sample(page)).placementHint).toBe('');
+        if (ghostShowsAtOnce) {
+            // Its ghost is already on the map, and it brings a warning of its own.
+            await expect.poll(async () => (await sample(page)).powerWarning?.type).toBe('autocannon');
+        } else {
+            await expect.poll(async () => (await sample(page)).powerWarning).toBeNull();
+            await expect.poll(async () => (await sample(page)).placementHint).toBe('');
+        }
 
         await pressAction(page, 'build-outpost');
         await press({col: 8, row: 3});

@@ -5,8 +5,34 @@
     <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
     <title>PAPI Industries: The Green Shift</title>
     <style>
-        html, body { height: 100%; margin: 0; overflow: hidden; background: #111; }
-        #game-root { width: 100vw; height: 100vh; }
+        html, body { height: 100%; margin: 0; overflow: hidden; background: #111; overscroll-behavior: none; }
+        #game-root {
+            position: fixed;
+            top: env(safe-area-inset-top, 0);
+            right: env(safe-area-inset-right, 0);
+            bottom: env(safe-area-inset-bottom, 0);
+            left: env(safe-area-inset-left, 0);
+            touch-action: none;
+        }
+        #orientation-guard {
+            position: fixed;
+            inset: 0;
+            z-index: 10;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            gap: 1.25rem;
+            padding: 2rem;
+            box-sizing: border-box;
+            background: #101518;
+            color: #c8e6c9;
+            font-family: monospace;
+            text-align: center;
+        }
+        #orientation-guard[hidden] { display: none; }
+        #orientation-guard h1 { margin: 0; font-size: 1.75rem; color: #ffffff; }
+        #orientation-guard p { margin: 0; font-size: 1rem; line-height: 1.5; }
     </style>
 </head>
 <body>
@@ -20,6 +46,11 @@
       element in devtools with ?testMode on the URL to see it update live.
     -->
     <div id="game-root"></div>
+    <div id="orientation-guard" hidden>
+        <h1>ROTATE YOUR DEVICE</h1>
+        <p>PAPI INDUSTRIES REQUIRES LANDSCAPE ORIENTATION.</p>
+        <p>THE MINISTRY OF ORIENTATION THANKS YOU.</p>
+    </div>
     <script type="module" src="/src/main.js"></script>
 </body>
 </html>

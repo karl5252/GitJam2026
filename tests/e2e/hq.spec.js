@@ -1,5 +1,5 @@
 import {test, expect} from '@playwright/test';
-import {byAction, clickAction, clickWorld, tapAction, tapWorld} from '../helpers/canvas.js';
+import {byAction, clickAction, clickWorld, tapAction, tapWorld, showBuildMenu} from '../helpers/canvas.js';
 import {cellCenter, hqFlow, qaSim} from '../helpers/hq.js';
 import {sample} from '../helpers/qa.js';
 import {STARTING_RESOURCES} from '../../src/core/economy.js';
@@ -122,6 +122,7 @@ function hqSuite(input) {
         await start(page);
         await pressAction(page, 'build-hq');
         await expect(byAction(page, 'cancel-placement')).toHaveCount(1);
+        await showBuildMenu(page);
         const box = (action) => byAction(page, action).boundingBox();
         const boxes = [];
         for (const action of ['build-hq', ...LOCKED_TYPES.map((t) => `build-${t}`), 'cancel-placement', 'end-day']) boxes.push(await box(action));

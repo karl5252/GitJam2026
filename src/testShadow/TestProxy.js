@@ -18,6 +18,9 @@ import {TEST_MODE} from '../testMode.js';
 
 const NOOP = Object.freeze({
     node: null, set() {
+        return NOOP;
+    }, show() {
+        return NOOP;
     }, destroy() {
     }
 });
@@ -72,6 +75,11 @@ export function addProxy(scene, gameObject, action, opts = {}) {
         },
         label(text) {
             node.setAttribute('aria-label', text);
+            return api;
+        },
+        /** For a control that exists but is out of sight, like a closed drawer's. */
+        show(visible) {
+            dom.setVisible(visible);
             return api;
         },
         destroy() {

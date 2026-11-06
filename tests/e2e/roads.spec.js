@@ -1,5 +1,5 @@
 import {test, expect} from '@playwright/test';
-import {body, byAction, clickAction, clickWorld, tapAction, tapWorld, worldToScreen} from '../helpers/canvas.js';
+import {body, byAction, clickAction, clickWorld, tapAction, tapWorld, worldToScreen, showBuildMenu} from '../helpers/canvas.js';
 import {cellCenter, hqFlow} from '../helpers/hq.js';
 import {sample} from '../helpers/qa.js';
 
@@ -160,6 +160,7 @@ function roadSuite(input) {
         await hqRun(page);
         await pressAction(page, 'build-road'); // shows Cancel too
         await expect(byAction(page, 'cancel-placement')).toHaveCount(1);
+        await showBuildMenu(page);
         const actions = ['build-hq', 'build-outpost', 'build-factory', 'build-powerPlant', 'build-autocannon', 'build-road', 'cancel-placement', 'end-day'];
         const boxes = await Promise.all(actions.map((action) => byAction(page, action).boundingBox()));
         for (const [i, box] of boxes.entries()) {

@@ -1,5 +1,5 @@
 import {test, expect} from '@playwright/test';
-import {boot, body, byAction, clickAction, clickWorld, tapAction, tapWorld} from '../helpers/canvas.js';
+import {boot, body, byAction, clickAction, clickWorld, tapAction, tapWorld, showBuildMenu} from '../helpers/canvas.js';
 import {sample} from '../helpers/qa.js';
 import {STARTING_RESOURCES} from '../../src/core/economy.js';
 
@@ -105,12 +105,14 @@ function autocannonSuite({pressWorld, pressAction}) {
 
         await pressAction(page, 'build-autocannon');
         await expect(byAction(page, 'cancel-placement')).toHaveCount(1);
+        await showBuildMenu(page);
         const cancel = await byAction(page, 'cancel-placement').boundingBox();
         const endDay = await byAction(page, 'end-day').boundingBox();
         const lastBuild = await byAction(page, 'build-autocannon').boundingBox();
         const overlaps = (p, q) => p.x < q.x + q.width && q.x < p.x + p.width && p.y < q.y + q.height && q.y < p.y + p.height;
         expect(overlaps(cancel, endDay)).toBe(false);
         expect(overlaps(cancel, lastBuild)).toBe(false);
+        if (await byAction(page, 'open-build').count()) await tapAction(page, 'open-build'); // close it again
 
         await pressWorld(page, cellCenter(state.grid, CANNON.col, CANNON.row), state);
         await expect.poll(async () => (await sample(page)).buildings.length).toBe(1);

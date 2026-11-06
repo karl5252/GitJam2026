@@ -1,6 +1,8 @@
 import Phaser from 'phaser';
 import {BootScene} from './scenes/BootScene.js';
 import {GameScene} from './scenes/GameScene.js';
+import {HUDScene} from './scenes/HUDScene.js';
+import {installOrientationGuard} from './scenes/orientationGuard.js';
 import {TEST_MODE} from './testMode.js';
 
 /**
@@ -15,9 +17,10 @@ import {TEST_MODE} from './testMode.js';
  * never populate.
  *
  * Scale.FIT keeps the 1280x720 (16:9) game letterboxed inside any desktop
- * window or mobile landscape viewport.
+ * window or mobile landscape viewport. #game-root is inset by the safe areas in
+ * index.html, so nothing lands under a notch.
  */
-new Phaser.Game({
+const game = new Phaser.Game({
     type: Phaser.AUTO,
     parent: 'game-root',
     width: 1280,
@@ -28,5 +31,8 @@ new Phaser.Game({
         autoCenter: Phaser.Scale.CENTER_BOTH,
     },
     dom: {createContainer: TEST_MODE},
-    scene: [BootScene, GameScene],
+    input: {activePointers: 3}, // the mouse and two fingers
+    scene: [BootScene, GameScene, HUDScene],
 });
+
+installOrientationGuard(game);

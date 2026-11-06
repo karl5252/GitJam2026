@@ -1,16 +1,6 @@
 import {REFIT_COST} from '../core/buildingTypes.js';
 import {addProxy} from '../testShadow/TestProxy.js';
 
-// Right band, between the settlement panel and the power toggle. 116x84 is well
-// over 44 CSS pixels at 844x390.
-const BUTTON = {width: 116, height: 84};
-const Y = 470;
-const FLAG_X = 1098;
-const DEMOLISH_X = 1218;
-const RESET = {x: 1218, y: 560}; // beside the power toggle, which a Barracks narrows to leave room
-// Where the Speed buttons sit at Night, so a late press at dawn can land here. That
-// is one more reason a paid refit takes two presses.
-const REFIT = {x: 1152, y: 650, width: 192, height: 84};
 const STROKE = 0x90a4ae;
 const FLAG_FILL = 0x37474f;
 const DEMOLISH_FILL = 0x8e2b2b;
@@ -20,7 +10,9 @@ const CONFIRM_STROKE = 0xffeb3b;
 /**
  * What a selected building offers besides its power switch: Demolish during Day,
  * and for a Barracks its rally flag and, once it has one, RESET FLAG, in Day and
- * Night, and a paid refit during Day. Presentation only.
+ * Night, and a paid refit during Day. Presentation only, and where each button
+ * goes is the layout's business. On desktop Refit sits where Speed does at Night, so
+ * a late press at dawn can land on it, which is one more reason it takes two presses.
  *
  * Demolishing a real building takes two presses, because nothing refunds a slip.
  * The first arms the button for that one building, and only the second acts. Any
@@ -43,16 +35,19 @@ export class BuildingControls {
     #refitArmedId = null;
     #refitRole = null;
 
-    /** @param {{onFlag: () => void, onResetFlag: () => void, onDemolish: () => void, onRefit: () => void}} handlers */
-    constructor(scene, {onFlag, onResetFlag, onDemolish, onRefit}) {
+    /**
+     * @param {{onFlag: () => void, onResetFlag: () => void, onDemolish: () => void, onRefit: () => void}} handlers
+     * @param {{flag, reset, demolish, refit}} positions each {x, y, width, height}
+     */
+    constructor(scene, {onFlag, onResetFlag, onDemolish, onRefit}, {flag, reset, demolish, refit}) {
         this.#scene = scene;
-        this.#flag = this.#button(FLAG_X, FLAG_FILL, 'set-flag', 'Set flag', onFlag);
-        this.#reset = this.#button(RESET.x, FLAG_FILL, 'reset-flag', 'Reset flag', onResetFlag, RESET.y);
+        this.#flag = this.#button(flag, FLAG_FILL, 'set-flag', 'Set flag', onFlag);
+        this.#reset = this.#button(reset, FLAG_FILL, 'reset-flag', 'Reset flag', onResetFlag);
         this.#reset.text.setText('RESET\nFLAG');
         this.#onDemolish = onDemolish;
         this.#onRefit = onRefit;
-        this.#demolish = this.#button(DEMOLISH_X, DEMOLISH_FILL, 'demolish', 'Demolish', () => this.#pressDemolish());
-        this.#refit = this.#button(REFIT.x, FLAG_FILL, 'refit', 'Refit Barracks', () => this.#pressRefit(), REFIT.y, REFIT);
+        this.#demolish = this.#button(demolish, DEMOLISH_FILL, 'demolish', 'Demolish', () => this.#pressDemolish());
+        this.#refit = this.#button(refit, FLAG_FILL, 'refit', 'Refit Barracks', () => this.#pressRefit());
         this.#paintDemolish();
     }
 
@@ -138,10 +133,12 @@ export class BuildingControls {
         this.#demolish.proxy?.set({armed});
     }
 
-    #button(x, fill, action, label, onPress, y = Y, {width, height} = BUTTON) {
+    #button({x, y, width, height, fontSize = '18px', wrap}, fill, action, label, onPress) {
         const rect = this.#scene.add.rectangle(x, y, width, height, fill)
             .setStrokeStyle(3, STROKE).setDepth(4).setVisible(false);
-        const text = this.#scene.add.text(x, y, '', {fontFamily: 'monospace', fontSize: '18px', color: '#ffffff', align: 'center'})
+        const text = this.#scene.add.text(x, y, '', {
+            fontFamily: 'monospace', fontSize, color: '#ffffff', align: 'center', ...(wrap ? {wordWrap: {width: wrap}} : {}),
+        })
             .setOrigin(0.5).setDepth(5).setVisible(false);
         rect.on('pointerdown', onPress);
         return {rect, text, action, label, proxy: null};

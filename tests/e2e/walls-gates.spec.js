@@ -1,5 +1,5 @@
 import {test, expect} from '@playwright/test';
-import {byAction, clickAction, clickWorld, tapAction, tapWorld, worldToScreen} from '../helpers/canvas.js';
+import {byAction, clickAction, clickWorld, tapAction, tapWorld, worldToScreen, showBuildMenu} from '../helpers/canvas.js';
 import {cellCenter, hqFlow, stepExactly} from '../helpers/hq.js';
 import {sample} from '../helpers/qa.js';
 
@@ -230,6 +230,7 @@ test.describe('walls and gates: mobile landscape', () => {
         await flow.place(page, state, 'wall', {col: 3, row: 3});
         await tapAction(page, 'build-outpost');
         await expect(byAction(page, 'cancel-placement')).toHaveCount(1);
+        await showBuildMenu(page);
 
         const actions = [...BUILD_ACTIONS, 'cancel-placement', 'end-day'];
         const boxes = await Promise.all(actions.map((action) => byAction(page, action).boundingBox()));
@@ -241,6 +242,7 @@ test.describe('walls and gates: mobile landscape', () => {
             }
         });
 
+        await tapAction(page, 'open-build'); // close the drawer again, to reach the map
         await tapAction(page, 'cancel-placement');
         await expect(byAction(page, 'cancel-placement')).toHaveCount(0);
         await flow.select(page, state, {col: 3, row: 3}, 'wall-2');
@@ -249,10 +251,11 @@ test.describe('walls and gates: mobile landscape', () => {
         expect(demolish.height).toBeGreaterThanOrEqual(MIN_TOUCH);
     });
 
-    test('a touch drag builds a wall', async ({page}) => {
+    test('a touch drag proposes a wall, and a separate tap builds it', async ({page}) => {
         const flow = hqFlow({pressWorld: tapWorld, pressAction: tapAction});
         const state = await flow.start(page);
         await flow.buildHq(page, state, HQ);
+        await tapAction(page, 'camera-fit');
         await tapAction(page, 'build-wall');
         const screen = (col, row) => worldToScreen(page, cellCenter(state.grid, {col, row}), state);
         const from = await screen(2, 2);
@@ -262,6 +265,9 @@ test.describe('walls and gates: mobile landscape', () => {
         await touch('touchStart', [from]);
         await touch('touchMove', [to]);
         await touch('touchEnd', []);
+        await expect.poll(async () => (await sample(page)).ghost.segment.length).toBe(5);
+        expect((await sample(page)).buildings.filter((b) => b.type === 'wall')).toEqual([]);
+        await page.touchscreen.tap(to.x, to.y);
         await expect.poll(async () => (await sample(page)).buildings.filter((b) => b.type === 'wall').length).toBe(5);
     });
 });
@@ -274,6 +280,7 @@ test.describe('walls and gates: touch drag state', () => {
         const flow = hqFlow({pressWorld: tapWorld, pressAction: tapAction});
         const state = await flow.start(page);
         await flow.buildHq(page, state, HQ);
+        await tapAction(page, 'camera-fit');
         await tapAction(page, 'build-wall');
         const client = await page.context().newCDPSession(page);
         const touch = (type, points) => client.send('Input.dispatchTouchEvent', {type, touchPoints: points});
@@ -281,9 +288,13 @@ test.describe('walls and gates: touch drag state', () => {
         await touch('touchStart', [await screen(2, 2)]);
         await touch('touchMove', [await screen(4, 2)]);
         await touch('touchEnd', []);
+        await expect.poll(async () => (await sample(page)).ghost.segment.length).toBe(3);
+        const end = await screen(4, 2);
+        await page.touchscreen.tap(end.x, end.y);
         await expect.poll(async () => (await sample(page)).buildings.filter((b) => b.type === 'wall').length).toBe(3);
 
         // Press the Outpost button and slide off it onto the grid: that places nothing.
+        await showBuildMenu(page);
         const box = await byAction(page, 'build-outpost').boundingBox();
         await touch('touchStart', [{x: box.x + box.width / 2, y: box.y + box.height / 2}]);
         await expect.poll(async () => (await sample(page)).placement.selectedType).toBe('outpost');

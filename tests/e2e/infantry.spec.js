@@ -1,5 +1,5 @@
 import {test, expect} from '@playwright/test';
-import {byAction, clickAction, clickWorld, tapAction, tapWorld} from '../helpers/canvas.js';
+import {byAction, clickAction, clickWorld, tapAction, tapWorld, showBuildMenu} from '../helpers/canvas.js';
 import {cellCenter, hqFlow, stepExactly} from '../helpers/hq.js';
 import {sample} from '../helpers/qa.js';
 
@@ -80,7 +80,7 @@ function suite(input) {
         const plant = (await sample(page)).buildings.find((b) => b.type === 'powerPlant').id;
         await select(page, state, PLANT, plant);
         const wide = await byAction(page, 'toggle-power').boundingBox();
-        expect(wide.width).toBeGreaterThan(narrow.width);
+        if ((await sample(page)).ui.layout === 'desktop') expect(wide.width).toBeGreaterThan(narrow.width); // touch keeps its own column
         await expect(byAction(page, 'reset-flag')).toHaveCount(0);
         await pressAction(page, 'toggle-power');
         await expect.poll(async () => (await sample(page)).buildings.find((b) => b.id === plant).enabled).toBe(false);
@@ -234,6 +234,7 @@ test.describe('infantry: desktop', () => {
 
 test.describe('infantry: mobile landscape', () => {
     test.use({viewport: {width: 844, height: 390}, hasTouch: true, isMobile: true});
+    test.setTimeout(45_000); // each building takes two taps here, and these bases have several
 
     suite({pressWorld: tapWorld, pressAction: tapAction});
 
@@ -245,6 +246,7 @@ test.describe('infantry: mobile landscape', () => {
         await flow.place(page, state, 'barracks', BARRACKS);
         const id = (await sample(page)).buildings.at(-1).id;
         await flow.select(page, state, BARRACKS, id);
+        await showBuildMenu(page);
 
         const check = async (actions) => {
             const boxes = await Promise.all(actions.map((action) => byAction(page, action).boundingBox()));
@@ -258,11 +260,14 @@ test.describe('infantry: mobile landscape', () => {
         };
         await check(['set-flag', 'demolish', 'toggle-power', 'end-day', 'build-barracks', 'build-road', 'build-wall', 'build-gateVertical', 'build-gateHorizontal']);
 
+        await tapAction(page, 'open-build'); // close the drawer to reach the map
         await tapAction(page, 'set-flag');
         await expect.poll(async () => (await sample(page)).flagMode).toBe(id);
         await tapWorld(page, cellCenter(state.grid, {col: 20, row: 12}), state);
         await expect.poll(async () => (await sample(page)).flagMode).toBeNull();
+        await showBuildMenu(page);
         await check(['set-flag', 'reset-flag', 'demolish', 'toggle-power', 'end-day', 'build-barracks', 'build-road', 'build-wall', 'build-gateVertical', 'build-gateHorizontal']);
+        await tapAction(page, 'open-build');
 
         await flow.nightTo(page, 10);
         await check(['set-flag', 'reset-flag', 'toggle-power', 'speed-1', 'speed-2', 'speed-4']);
