@@ -1,4 +1,5 @@
 import {addArt, placeArt, turretFrame} from './SpriteArt.js';
+import {TURRET_FLASH, turretFlashFrame} from './TurretFlash.js';
 
 const BARREL_COLOR = 0xffb300;
 const BARREL_SIZE = {width: 30, height: 9};
@@ -34,13 +35,14 @@ export class SiegeLayer {
     }
 
     /** Point each gun that fired at what it fired at. */
-    recordFired(fired, buildings) {
+    recordFired(fired, buildings, tick) {
         for (const {gunId, x, y} of fired) {
-            const gun = this.#guns.get(gunId);
             const building = buildings.find((b) => b.id === gunId);
-            if (!gun || !building) continue;
+            if (!building) continue;
+            const gun = this.#guns.get(gunId) ?? this.#addGun(building);
             const center = this.#centerOf(building);
             gun.facing = Math.atan2(y - center.y, x - center.x);
+            gun.firedTick = tick;
         }
     }
 
@@ -57,7 +59,7 @@ export class SiegeLayer {
         const standing = new Set(guns.map(({id}) => id));
         for (const [id, gun] of this.#guns) {
             if (standing.has(id)) continue;
-            for (const view of [gun.barrel, gun.back, gun.bar, gun.art]) view?.destroy();
+            for (const view of [gun.barrel, gun.back, gun.bar, gun.art, gun.flash]) view?.destroy();
             this.#guns.delete(id);
         }
         for (const {id, cooldown} of guns) {
@@ -65,6 +67,13 @@ export class SiegeLayer {
             const gun = this.#guns.get(id) ?? this.#addGun(building);
             gun.barrel.setRotation(gun.facing).setAlpha(gun.art ? 0 : building.enabled ? 1 : 0.35);
             gun.art?.setFrame(turretFrame(gun.facing)).setAlpha(building.enabled ? 1 : 0.35);
+            const flashFrame = isNight && building.enabled
+                ? turretFlashFrame(gun.facing, gun.firedTick, tick, TURRET_FLASH.siegeCannon)
+                : null;
+            if (gun.flash) {
+                if (flashFrame === null) gun.flash.setVisible(false);
+                else gun.flash.setFrame(flashFrame).setVisible(true);
+            }
             gun.bar.setSize(gun.width * (1 - cooldown / reloadTicks), RELOAD_BAR.height);
         }
         this.#syncShells(shells);
@@ -119,8 +128,11 @@ export class SiegeLayer {
         const barY = y + height - RELOAD_BAR.inset - RELOAD_BAR.height;
         const art = addArt(this.#scene, 'siegeCannon', LAYER_DEPTH + 0.1);
         placeArt(art, 'siegeCannon', center.x, center.y);
+        const flash = addArt(this.#scene, 'siegeCannonFlash', LAYER_DEPTH + 0.2);
+        placeArt(flash, 'siegeCannonFlash', center.x, center.y);
+        flash?.setVisible(false);
         const gun = {
-            art,
+            art, flash, firedTick: null,
             barrel: this.#scene.add.rectangle(center.x, center.y, BARREL_SIZE.width, BARREL_SIZE.height, BARREL_COLOR).setOrigin(0, 0.5).setDepth(LAYER_DEPTH),
             back: this.#scene.add.rectangle(x + RELOAD_BAR.inset, barY, barWidth, RELOAD_BAR.height, RELOAD_BAR.back).setOrigin(0, 0).setDepth(LAYER_DEPTH),
             bar: this.#scene.add.rectangle(x + RELOAD_BAR.inset, barY, barWidth, RELOAD_BAR.height, RELOAD_BAR.color).setOrigin(0, 0).setDepth(LAYER_DEPTH),

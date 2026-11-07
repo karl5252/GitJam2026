@@ -13,6 +13,10 @@ export const ART = Object.freeze({
     truck: {path: 'vehicles/truck.png', frameWidth: 24, frameHeight: 14, scale: 1, offsetX: 0, originY: 1},
     autocannon: {path: 'turrets/autocannon.png', frameWidth: 32, frameHeight: 32, scale: 1, offsetX: 0, originY: 0.5},
     siegeCannon: {path: 'turrets/siege-cannon.png', frameWidth: 32, frameHeight: 35, scale: 2, offsetX: 0, originY: 0.5},
+    // Separate 64x64 muzzle flashes, authored center-to-center with turret art.
+    // Each sheet is 8 directions x 4 action frames, and never loops.
+    autocannonFlash: {path: 'turrets/autocannon-flash.png', frameWidth: 64, frameHeight: 64, scale: 1, offsetX: 0, originY: 0.5},
+    siegeCannonFlash: {path: 'turrets/siege-cannon-flash.png', frameWidth: 64, frameHeight: 64, scale: 1, offsetX: 0, originY: 0.5},
     // Each building occupies a 3x3 tile footprint (96x96); the art keeps its own ratio.
     hq: {path: 'buildings/hq.png', frameWidth: 32, frameHeight: 40, scale: 2.25, offsetX: 0, originY: 1},
     barracks: {path: 'buildings/barracks.png', frameWidth: 32, frameHeight: 29, scale: 2.7, offsetX: 0, originY: 1},

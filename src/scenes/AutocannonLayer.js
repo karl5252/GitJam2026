@@ -1,4 +1,5 @@
 import {addArt, placeArt, turretFrame} from './SpriteArt.js';
+import {TURRET_FLASH, turretFlashFrame} from './TurretFlash.js';
 
 const BARREL_COLOR = 0xeceff1;
 const BARREL_SIZE = {width: 14, height: 6};
@@ -20,7 +21,7 @@ export const quantizeFacing = (angle) => Math.round(angle / FACING_STEP) * FACIN
 export class AutocannonLayer {
     #scene;
     #grid;
-    #barrels = new Map(); // turret id -> {view, facing}
+    #barrels = new Map(); // turret id -> {view, art, flash, facing, shotFacing, firedTick}
     #tracers = new Map(); // turret id -> {view, firedTick}
 
     constructor(scene, grid) {
@@ -33,6 +34,10 @@ export class AutocannonLayer {
         for (const shot of shots) {
             const {x, y} = this.#centerOf(shot.turretId);
             const angle = Math.atan2(shot.y - y, shot.x - x);
+            const barrel = this.#barrelFor(shot.turretId);
+            barrel.facing = quantizeFacing(angle);
+            barrel.shotFacing = barrel.facing;
+            barrel.firedTick = tick;
             const length = Math.hypot(shot.x - x, shot.y - y);
             const tracer = this.#tracers.get(shot.turretId) ?? {
                 view: this.#scene.add.rectangle(x, y, length, TRACER_HEIGHT, TRACER_COLOR).setOrigin(0, 0.5).setDepth(LAYER_DEPTH),
@@ -51,14 +56,22 @@ export class AutocannonLayer {
         }
         for (const {id, targetId} of cannons) {
             const barrel = this.#barrelFor(id);
+            const enabled = buildings.find((b) => b.id === id).enabled;
+            const flashFrame = isNight && enabled
+                ? turretFlashFrame(barrel.shotFacing, barrel.firedTick, tick, TURRET_FLASH.autocannon)
+                : null;
             const target = mutants.find((mutant) => mutant.id === targetId);
-            if (target) {
+            // Do not swivel the turret away while its shot animation is playing.
+            if (target && flashFrame === null) {
                 const {x, y} = this.#centerOf(id);
                 barrel.facing = quantizeFacing(Math.atan2(target.y - y, target.x - x));
             }
-            const enabled = buildings.find((b) => b.id === id).enabled;
             barrel.view.setRotation(barrel.facing).setAlpha(barrel.art ? 0 : enabled ? 1 : DISABLED_ALPHA);
             barrel.art?.setFrame(turretFrame(barrel.facing)).setAlpha(enabled ? 1 : DISABLED_ALPHA);
+            if (barrel.flash) {
+                if (flashFrame === null) barrel.flash.setVisible(false);
+                else barrel.flash.setFrame(flashFrame).setVisible(true);
+            }
         }
         for (const tracer of this.#tracers.values()) {
             tracer.view.setVisible(isNight && tick - tracer.firedTick <= TRACER_TICKS);
@@ -69,6 +82,7 @@ export class AutocannonLayer {
     remove(id) {
         this.#barrels.get(id)?.view.destroy();
         this.#barrels.get(id)?.art?.destroy();
+        this.#barrels.get(id)?.flash?.destroy();
         this.#barrels.delete(id);
         this.#tracers.get(id)?.view.destroy();
         this.#tracers.delete(id);
@@ -96,8 +110,11 @@ export class AutocannonLayer {
                 .setDepth(LAYER_DEPTH);
             const art = addArt(this.#scene, 'autocannon', LAYER_DEPTH + 0.1);
             placeArt(art, 'autocannon', x, y);
+            const flash = addArt(this.#scene, 'autocannonFlash', LAYER_DEPTH + 0.2);
+            placeArt(flash, 'autocannonFlash', x, y);
+            flash?.setVisible(false);
             if (art) view.setAlpha(0);
-            this.#barrels.set(id, {view, art, facing: DEFAULT_FACING});
+            this.#barrels.set(id, {view, art, flash, facing: DEFAULT_FACING, shotFacing: DEFAULT_FACING, firedTick: null});
         }
         return this.#barrels.get(id);
     }

@@ -1440,7 +1440,7 @@ export class GameScene extends Phaser.Scene {
         this.simulationSteps++;
         this.cycle?.onTick(tick);
         const siege = this.siegeCannons?.step();
-        if (siege?.fired.length) this.siegeLayer.recordFired(siege.fired, this.placement.buildings());
+        if (siege?.fired.length) this.siegeLayer.recordFired(siege.fired, this.placement.buildings(), this.clock.tick);
         if (siege?.impacts.length) this.siegeLayer.recordImpacts(siege.impacts, this.clock.tick);
         const defense = this.autocannons?.step();
         if (defense?.shots.length) this.autocannonLayer.recordShots(defense.shots, this.clock.tick);
