@@ -1,3 +1,5 @@
+import {addArt, placeArt, turretFrame} from './SpriteArt.js';
+
 const BARREL_COLOR = 0xffb300;
 const BARREL_SIZE = {width: 30, height: 9};
 const DEFAULT_FACING = -Math.PI / 2;
@@ -55,13 +57,14 @@ export class SiegeLayer {
         const standing = new Set(guns.map(({id}) => id));
         for (const [id, gun] of this.#guns) {
             if (standing.has(id)) continue;
-            for (const view of [gun.barrel, gun.back, gun.bar]) view.destroy();
+            for (const view of [gun.barrel, gun.back, gun.bar, gun.art]) view?.destroy();
             this.#guns.delete(id);
         }
         for (const {id, cooldown} of guns) {
             const building = buildings.find((b) => b.id === id);
             const gun = this.#guns.get(id) ?? this.#addGun(building);
-            gun.barrel.setRotation(gun.facing).setAlpha(building.enabled ? 1 : 0.35);
+            gun.barrel.setRotation(gun.facing).setAlpha(gun.art ? 0 : building.enabled ? 1 : 0.35);
+            gun.art?.setFrame(turretFrame(gun.facing)).setAlpha(building.enabled ? 1 : 0.35);
             gun.bar.setSize(gun.width * (1 - cooldown / reloadTicks), RELOAD_BAR.height);
         }
         this.#syncShells(shells);
@@ -114,13 +117,17 @@ export class SiegeLayer {
         const center = this.#centerOf(building);
         const barWidth = width - 2 * RELOAD_BAR.inset;
         const barY = y + height - RELOAD_BAR.inset - RELOAD_BAR.height;
+        const art = addArt(this.#scene, 'siegeCannon', LAYER_DEPTH + 0.1);
+        placeArt(art, 'siegeCannon', center.x, center.y);
         const gun = {
+            art,
             barrel: this.#scene.add.rectangle(center.x, center.y, BARREL_SIZE.width, BARREL_SIZE.height, BARREL_COLOR).setOrigin(0, 0.5).setDepth(LAYER_DEPTH),
             back: this.#scene.add.rectangle(x + RELOAD_BAR.inset, barY, barWidth, RELOAD_BAR.height, RELOAD_BAR.back).setOrigin(0, 0).setDepth(LAYER_DEPTH),
             bar: this.#scene.add.rectangle(x + RELOAD_BAR.inset, barY, barWidth, RELOAD_BAR.height, RELOAD_BAR.color).setOrigin(0, 0).setDepth(LAYER_DEPTH),
             facing: DEFAULT_FACING,
             width: barWidth,
         };
+        if (art) gun.barrel.setAlpha(0);
         this.#guns.set(building.id, gun);
         return gun;
     }

@@ -1,15 +1,27 @@
 import Phaser from 'phaser';
+import {preloadArt, ART, artKey} from './SpriteArt.js';
 
 /**
- * Deliberately empty for now — no assets yet. Extend preload() when real
- * art and audio are added, then hand off to the game scene.
+ * Preloads the independent micro-scale PNG sprite sheets before starting the
+ * game. Sprite drawing does not change domain rules or QA snapshots.
  */
 export class BootScene extends Phaser.Scene {
     constructor() {
         super('boot');
     }
 
+    preload() {
+        preloadArt(this);
+    }
+
     create() {
+        // Keep unfiltered pixel edges when the world camera zooms.
+        const nearest = Phaser.Textures?.FilterMode?.NEAREST;
+        if (nearest !== undefined) {
+            for (const kind of Object.keys(ART)) {
+                if (this.textures.exists(artKey(kind))) this.textures.get(artKey(kind)).setFilter?.(nearest);
+            }
+        }
         this.scene.start('game');
     }
 }

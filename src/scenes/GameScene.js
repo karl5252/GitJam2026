@@ -40,6 +40,7 @@ import {TerrainLayer} from './TerrainLayer.js';
 import {TruckLayer} from './TruckLayer.js';
 import {GateLayer} from './GateLayer.js';
 import {InfantryLayer} from './InfantryLayer.js';
+import {BuildingArtLayer} from './BuildingArtLayer.js';
 import {Command, EventBus, Hint, Hud, Notice, State} from './EventBus.js';
 import {WorldCamera} from './WorldCamera.js';
 import {currentLayout} from './hudLayout.js';
@@ -128,6 +129,7 @@ export class GameScene extends Phaser.Scene {
         this.previewRect = null;
         this.previewResult = null;
         this.buildingViews = new Map();
+        this.buildingArt = null;
         this.cycle = null;
         this.selectedBuildingId = null;
         this.roads = null;
@@ -309,6 +311,7 @@ export class GameScene extends Phaser.Scene {
             originY: (height - rows * tileSize) / 2,
             terrain: this.terrain,
         });
+        this.buildingArt = new BuildingArtLayer(this, this.grid);
         this.economy = new Economy();
         this.pollution = new Pollution();
         // Orchestration only: the settlement formula lives in core/settlement.js.
@@ -466,8 +469,9 @@ export class GameScene extends Phaser.Scene {
             const view = this.buildingViews.get(id);
             view.setAlpha(enabled ? 1 : DISABLED_ALPHA);
             if (enabled && !powered) view.setStrokeStyle(3, UNPOWERED_STROKE);
-            else view.setStrokeStyle(2, BUILDING_STROKE);
+            else view.setStrokeStyle(2, BUILDING_STROKE, this.buildingArt?.has(id) ? 0.35 : 1);
         }
+        this.buildingArt?.sync(this.placement.buildings(), this.cycle?.shift);
         this.updateBuildingVision(power);
         this.presentSelection();
     }
@@ -588,6 +592,7 @@ export class GameScene extends Phaser.Scene {
         this.present(State.SPEED, {speed: this.clock.speed});
         const mutants = this.mutants.snapshot();
         const buildings = this.placement.buildings();
+        this.buildingArt?.syncWalls(buildings); // damage changes during combat, without power events
         const isSeen = this.seenBy();
         this.fogLayer?.sync();
         this.mutantLayer.sync(mutants, buildings, {
@@ -621,6 +626,7 @@ export class GameScene extends Phaser.Scene {
     /** Once per change of shift, so the player's own zoom is never fought. */
     handleShiftChange(isDay) {
         this.renderedShift = this.cycle.shift;
+        this.buildingArt?.sync(this.placement.buildings(), this.cycle.shift);
         if (isDay) this.worldCamera.showDay(this.dayFocus());
         else if (this.cycle.shift === Shift.NIGHT) this.showNight();
     }
@@ -738,6 +744,7 @@ export class GameScene extends Phaser.Scene {
         this.showHint(result.ok ? null : Hint.REFIT_REFUSED);
         this.updateHud();
         this.renderedPostsKey = null; // the roof mark shows the role
+        this.buildingArt?.sync(this.placement.buildings(), this.cycle.shift); // swap Barracks art on refit
         this.presentSelection();
     }
 
@@ -922,11 +929,18 @@ export class GameScene extends Phaser.Scene {
     }
 
     addBuildingView(building) {
+        // Keep the existing rectangle as the selectable/QA-visible footprint.
+        this.buildingViews.get(building.id)?.destroy();
         const rect = this.grid.footprintRect(building);
         const view = this.add.rectangle(rect.x, rect.y, rect.width, rect.height, BUILDING_COLORS[building.type])
             .setOrigin(0, 0)
             .setStrokeStyle(2, BUILDING_STROKE)
             .setDepth(1);
+        if (this.buildingArt?.add(building, this.cycle?.shift)) {
+            // The sprite becomes the building; a faint pad still shows occupancy.
+            view.setFillStyle(BUILDING_COLORS[building.type], 0.10)
+                .setStrokeStyle(2, BUILDING_STROKE, 0.35);
+        }
         this.buildingViews.set(building.id, view);
     }
 
@@ -1452,6 +1466,7 @@ export class GameScene extends Phaser.Scene {
         for (const id of ids) {
             this.buildingViews.get(id).destroy();
             this.buildingViews.delete(id);
+            this.buildingArt?.remove(id);
             this.autocannonLayer.remove(id);
         }
         if (ids.includes(this.selectedBuildingId)) this.selectAt(null);

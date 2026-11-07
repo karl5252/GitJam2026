@@ -1,3 +1,5 @@
+import {addArt, placeArt, walkFrame, infantryActionFrame} from './SpriteArt.js';
+
 const SOLDIER_SIZE = 9; // a square turned 45 degrees: about 13 px across
 const SOLDIER_COLOR = 0x81d4fa;
 const SOLDIER_STROKE = 0x0d47a1;
@@ -72,6 +74,11 @@ export class InfantryLayer {
     /** Show a tracer for each of this tick's shots. */
     recordShots(shots, tick) {
         for (const {soldierId, fromX, fromY, x, y, rocket} of shots) {
+            const soldier = this.#soldiers.get(soldierId);
+            if (soldier) {
+                soldier.firedAt = tick;
+                soldier.art?.setFlipX(x < fromX);
+            }
             if (rocket) continue; // a rocket is its own view
             const tracer = this.#tracers.get(soldierId) ?? {
                 view: this.#scene.add.rectangle(0, 0, 1, TRACER_HEIGHT, TRACER_COLOR).setOrigin(0, 0.5).setDepth(SOLDIER_DEPTH),
@@ -108,13 +115,14 @@ export class InfantryLayer {
         const alive = new Set(soldiers.map((soldier) => soldier.id));
         for (const [id, view] of this.#soldiers) {
             if (alive.has(id)) continue;
-            if (isNight) this.#markDeath(view.last, tick); // at dawn they go home, they do not die
+            if (isNight) this.#markDeath(view.last, tick, view.role); // at dawn they go home, they do not die
             view.body.destroy();
+            view.art?.destroy();
             view.hp.destroy();
             this.#soldiers.delete(id);
         }
         const offsets = stackOffsets(soldiers);
-        soldiers.forEach((soldier, i) => this.#syncSoldier(soldier, offsets[i]));
+        soldiers.forEach((soldier, i) => this.#syncSoldier(soldier, offsets[i], tick));
         for (const [id, tracer] of this.#tracers) {
             tracer.view.setVisible(isNight && tick - tracer.firedTick <= TRACER_TICKS);
             if (alive.has(id)) continue;
@@ -200,12 +208,22 @@ export class InfantryLayer {
         }
     }
 
-    #syncSoldier({id, x: domainX, y: domainY, hp, maxHp, role}, [dx, dy]) {
+    #syncSoldier({id, x: domainX, y: domainY, hp, maxHp, role}, [dx, dy], tick) {
         const view = this.#soldiers.get(id) ?? this.#addSoldier(id, role);
         const x = domainX + dx;
         const y = domainY + dy;
+        const moving = Boolean(view.last && (Math.abs(view.last.x - x) + Math.abs(view.last.y - y) > 0.1));
         view.last = {x, y};
         view.body.setPosition(x, y);
+        const kind = role ? 'rocketman' : 'rifleman';
+        placeArt(view.art, kind, x, y);
+        if (view.art) {
+            const actionFrame = infantryActionFrame(view.firedAt, tick);
+            view.art.setFrame(actionFrame ?? walkFrame(moving, tick));
+            if (moving && view.previousX !== undefined && view.previousX !== x
+                && actionFrame === null) view.art.setFlipX(view.previousX > x);
+            view.previousX = x;
+        }
         view.hp.setPosition(x - HP_BAR.width / 2, y - HP_BAR.offset)
             .setSize(HP_BAR.width * hp / maxHp, HP_BAR.height)
             .setVisible(hp < maxHp);
@@ -213,7 +231,9 @@ export class InfantryLayer {
 
     #addSoldier(id, role) {
         const size = role ? ROCKET_SOLDIER_SIZE : SOLDIER_SIZE;
+        const art = addArt(this.#scene, role ? 'rocketman' : 'rifleman', SOLDIER_DEPTH + 0.1);
         const view = {
+            art, role,
             body: this.#scene.add.rectangle(0, 0, size, size, role ? ROCKET_SOLDIER_COLOR : SOLDIER_COLOR)
                 .setStrokeStyle(2, SOLDIER_STROKE)
                 .setRotation(Math.PI / 4)
@@ -221,13 +241,16 @@ export class InfantryLayer {
             hp: this.#scene.add.rectangle(0, 0, HP_BAR.width, HP_BAR.height, HP_BAR_COLOR).setOrigin(0, 0).setDepth(SOLDIER_DEPTH),
             last: null,
         };
+        if (art) view.body.setAlpha(0);
         this.#soldiers.set(id, view);
         return view;
     }
 
-    #markDeath({x, y}, tick) {
-        const view = this.#scene.add.text(x, y, '×', {...LABEL_STYLE, fontSize: '20px', color: DEATH_COLOR})
+    #markDeath({x, y}, tick, role) {
+        const art = addArt(this.#scene, role ? 'rocketman' : 'rifleman', SOLDIER_DEPTH);
+        const view = art ?? this.#scene.add.text(x, y, '×', {...LABEL_STYLE, fontSize: '20px', color: DEATH_COLOR})
             .setOrigin(0.5).setDepth(SOLDIER_DEPTH);
+        if (art) art.setFrame(13).setPosition(x, y);
         this.#deaths.push({view, tick});
     }
 

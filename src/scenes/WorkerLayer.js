@@ -1,4 +1,5 @@
 import {stackOffsets} from './InfantryLayer.js';
+import {addArt, placeArt, walkFrame} from './SpriteArt.js';
 
 const DEPTH = 6;
 const FLAG_DEPTH = 5;
@@ -46,11 +47,11 @@ export class WorkerLayer {
         for (const [id, view] of this.#workers) {
             if (alive.has(id)) continue;
             if (died-- > 0) this.#markDeath(view.last, tick);
-            for (const part of [view.body, view.hat, view.hp]) part.destroy();
+            for (const part of [view.body, view.hat, view.hp, view.art]) part?.destroy();
             this.#workers.delete(id);
         }
         const offsets = stackOffsets(workers);
-        workers.forEach((worker, i) => this.#syncWorker(worker, offsets[i], maxHp));
+        workers.forEach((worker, i) => this.#syncWorker(worker, offsets[i], maxHp, tick));
         this.#deaths = this.#deaths.filter((death) => {
             if (isNight && tick - death.tick <= DEATH_TICKS) return true;
             death.view.destroy();
@@ -89,12 +90,15 @@ export class WorkerLayer {
         };
     }
 
-    #syncWorker({id, x: domainX, y: domainY, hp}, [dx, dy], maxHp) {
+    #syncWorker({id, x: domainX, y: domainY, hp}, [dx, dy], maxHp, tick) {
         const view = this.#workers.get(id) ?? this.#addWorker(id);
         const x = domainX + dx;
         const y = domainY + dy;
+        const moving = Boolean(view.last && (Math.abs(view.last.x - x) + Math.abs(view.last.y - y) > 0.1));
         view.last = {x, y};
         view.body.setPosition(x, y);
+        placeArt(view.art, 'worker', x, y);
+        view.art?.setFrame(walkFrame(moving, tick));
         view.hat.setPosition(x, y - BODY_RADIUS + 1);
         view.hp.setPosition(x - HP_BAR.width / 2, y - HP_BAR.offset)
             .setSize(HP_BAR.width * hp / maxHp, HP_BAR.height)
@@ -102,18 +106,29 @@ export class WorkerLayer {
     }
 
     #addWorker(id) {
+        const art = addArt(this.#scene, 'worker', DEPTH + 0.1);
         const view = {
+            art,
             body: this.#scene.add.circle(0, 0, BODY_RADIUS, BODY_COLOR).setStrokeStyle(2, BODY_STROKE).setDepth(DEPTH),
             hat: this.#scene.add.rectangle(0, 0, HAT_SIZE.width, HAT_SIZE.height, HAT_COLOR).setDepth(DEPTH),
             hp: this.#scene.add.rectangle(0, 0, HP_BAR.width, HP_BAR.height, HP_BAR_COLOR).setOrigin(0, 0).setDepth(DEPTH),
             last: null,
         };
+        if (art) {
+            view.body.setAlpha(0);
+            view.hat.setAlpha(0);
+        }
         this.#workers.set(id, view);
         return view;
     }
 
     #markDeath({x, y}, tick) {
-        const view = this.#scene.add.text(x, y, '×', DEATH_STYLE).setOrigin(0.5).setDepth(DEPTH);
+        const art = addArt(this.#scene, 'worker', DEPTH);
+        const view = art ?? this.#scene.add.text(x, y, '×', DEATH_STYLE).setOrigin(0.5).setDepth(DEPTH);
+        if (art) {
+            art.setFrame(13);
+            art.setPosition(x, y);
+        }
         this.#deaths.push({view, tick});
     }
 }

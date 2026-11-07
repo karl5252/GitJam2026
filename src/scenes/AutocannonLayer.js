@@ -1,3 +1,5 @@
+import {addArt, placeArt, turretFrame} from './SpriteArt.js';
+
 const BARREL_COLOR = 0xeceff1;
 const BARREL_SIZE = {width: 14, height: 6};
 const TRACER_COLOR = 0xffeb3b;
@@ -55,7 +57,8 @@ export class AutocannonLayer {
                 barrel.facing = quantizeFacing(Math.atan2(target.y - y, target.x - x));
             }
             const enabled = buildings.find((b) => b.id === id).enabled;
-            barrel.view.setRotation(barrel.facing).setAlpha(enabled ? 1 : DISABLED_ALPHA);
+            barrel.view.setRotation(barrel.facing).setAlpha(barrel.art ? 0 : enabled ? 1 : DISABLED_ALPHA);
+            barrel.art?.setFrame(turretFrame(barrel.facing)).setAlpha(enabled ? 1 : DISABLED_ALPHA);
         }
         for (const tracer of this.#tracers.values()) {
             tracer.view.setVisible(isNight && tick - tracer.firedTick <= TRACER_TICKS);
@@ -65,6 +68,7 @@ export class AutocannonLayer {
     /** Remove a turret's views at once, e.g. when it is destroyed. */
     remove(id) {
         this.#barrels.get(id)?.view.destroy();
+        this.#barrels.get(id)?.art?.destroy();
         this.#barrels.delete(id);
         this.#tracers.get(id)?.view.destroy();
         this.#tracers.delete(id);
@@ -90,7 +94,10 @@ export class AutocannonLayer {
             const view = this.#scene.add.rectangle(x, y, BARREL_SIZE.width, BARREL_SIZE.height, BARREL_COLOR)
                 .setOrigin(0, 0.5)
                 .setDepth(LAYER_DEPTH);
-            this.#barrels.set(id, {view, facing: DEFAULT_FACING});
+            const art = addArt(this.#scene, 'autocannon', LAYER_DEPTH + 0.1);
+            placeArt(art, 'autocannon', x, y);
+            if (art) view.setAlpha(0);
+            this.#barrels.set(id, {view, art, facing: DEFAULT_FACING});
         }
         return this.#barrels.get(id);
     }

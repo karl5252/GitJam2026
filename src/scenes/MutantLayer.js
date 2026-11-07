@@ -1,5 +1,6 @@
 import {getBuildingType} from '../core/buildingTypes.js';
 import {BRUTE, SPITTER} from '../core/mutants.js';
+import {addArt, placeArt, walkFrame} from './SpriteArt.js';
 
 const MUTANT_RADIUS = 8;
 const MUTANT_COLOR = 0xd81b60;
@@ -49,6 +50,7 @@ export class MutantLayer {
     #scene;
     #grid;
     #mutantViews = new Map();
+    #runnerArt = new Map();
     #spitters = new Map(); // id -> {view, line, spent, x, y}
     #brutes = new Map(); // id -> {view, back, bar, timer, x, y}
     #shells = new Map();
@@ -65,7 +67,7 @@ export class MutantLayer {
     sync(mutants, buildings, {shells = [], tick = 0, isNight = false, isSeen = null} = {}) {
         const spitters = mutants.filter(({kind}) => kind === SPITTER.kind);
         const brutes = mutants.filter(({kind}) => kind === BRUTE.kind);
-        this.#syncMutants(mutants.filter(({kind}) => kind === undefined));
+        this.#syncMutants(mutants.filter(({kind}) => kind === undefined), tick);
         this.#syncSpitters(spitters, tick, isNight);
         this.#syncBrutes(brutes, tick, isNight);
         this.#syncShells(shells);
@@ -76,15 +78,20 @@ export class MutantLayer {
 
     /** Fog dims what it covers without hiding it, so nothing the enemy does may show on a tile not being watched. */
     #conceal(isSeen) {
-        for (const view of this.#mutantViews.values()) view.setVisible(isSeen(view));
-        for (const {view, line} of this.#spitters.values()) {
+        for (const [id, view] of this.#mutantViews) {
             const seen = isSeen(view);
             view.setVisible(seen);
+            this.#runnerArt.get(id)?.sprite.setVisible(seen);
+        }
+        for (const {view, line, art} of this.#spitters.values()) {
+            const seen = isSeen(view);
+            view.setVisible(seen);
+            art?.setVisible(seen);
             line.setVisible(line.visible && seen);
         }
-        for (const {view, back, bar} of this.#brutes.values()) {
+        for (const {view, back, bar, art} of this.#brutes.values()) {
             const seen = isSeen(view);
-            for (const part of [view, back, bar]) part.setVisible(seen);
+            for (const part of [view, back, bar, art]) part?.setVisible(seen);
         }
         for (const view of this.#shells.values()) view.setVisible(isSeen(view));
         for (const {view} of [...this.#impacts, ...this.#deaths]) view.setVisible(isSeen(view));
@@ -150,11 +157,13 @@ export class MutantLayer {
         }));
     }
 
-    #syncMutants(mutants) {
+    #syncMutants(mutants, tick) {
         const alive = new Set(mutants.map((mutant) => mutant.id));
         for (const [id, view] of this.#mutantViews) {
             if (alive.has(id)) continue;
             view.destroy();
+            this.#runnerArt.get(id)?.sprite.destroy();
+            this.#runnerArt.delete(id);
             this.#mutantViews.delete(id);
         }
         for (const {id, x, y} of mutants) {
@@ -162,8 +171,22 @@ export class MutantLayer {
             if (!view) {
                 view = this.#scene.add.circle(x, y, MUTANT_RADIUS, MUTANT_COLOR).setDepth(MUTANT_DEPTH);
                 this.#mutantViews.set(id, view);
+                const art = addArt(this.#scene, 'runner', MUTANT_DEPTH + 0.1);
+                if (art) {
+                    this.#runnerArt.set(id, {sprite: art, lastX: x, lastY: y});
+                    view.setAlpha(0);
+                }
             }
             view.setPosition(x, y);
+            const art = this.#runnerArt.get(id);
+            if (art) {
+                const moving = Math.abs(x - art.lastX) + Math.abs(y - art.lastY) > 0.1;
+                art.sprite.setFrame(walkFrame(moving, tick, 6));
+                if (art.lastX !== x) art.sprite.setFlipX(x < art.lastX);
+                placeArt(art.sprite, 'runner', x, y);
+                art.lastX = x;
+                art.lastY = y;
+            }
         }
     }
 
@@ -171,8 +194,9 @@ export class MutantLayer {
         const alive = new Set(spitters.map(({id}) => id));
         for (const [id, spitter] of this.#spitters) {
             if (alive.has(id)) continue;
-            if (isNight) this.#addDeath(spitter, tick);
+            if (isNight) this.#addDeath(spitter, tick, 'spitter');
             spitter.view.destroy();
+            spitter.art?.destroy();
             spitter.line.destroy();
             this.#spitters.delete(id);
         }
@@ -181,9 +205,10 @@ export class MutantLayer {
             const spent = mutant.shots === 0;
             if (spent && !spitter.spent) this.#addRing(mutant.x, mutant.y, SPITTER_SPENT_COLOR, tick);
             spitter.spent = spent;
+            const moving = Math.abs(mutant.x - spitter.x) + Math.abs(mutant.y - spitter.y) > 0.1;
             spitter.x = mutant.x;
             spitter.y = mutant.y;
-            this.#drawSpitter(spitter, mutant);
+            this.#drawSpitter(spitter, mutant, tick, moving);
         }
     }
 
@@ -191,18 +216,24 @@ export class MutantLayer {
         const alive = new Set(brutes.map(({id}) => id));
         for (const [id, brute] of this.#brutes) {
             if (alive.has(id)) continue;
-            if (isNight) this.#addDeath(brute, tick);
-            for (const view of [brute.view, brute.back, brute.bar]) view.destroy();
+            if (isNight) this.#addDeath(brute, tick, 'brute');
+            for (const view of [brute.view, brute.back, brute.bar, brute.art]) view?.destroy();
             this.#brutes.delete(id);
         }
         for (const mutant of brutes) {
             const brute = this.#brutes.get(mutant.id) ?? this.#addBrute(mutant);
             const {x, y, hp, attackTimer} = mutant;
-            if (attackTimer > brute.timer) this.#addRing(x, y, BRUTE_COLOR, tick); // a blow landed since the last frame
+            const struck = attackTimer > brute.timer;
+            const moving = Math.abs(x - brute.x) + Math.abs(y - brute.y) > 0.1;
+            if (struck) this.#addRing(x, y, BRUTE_COLOR, tick); // a blow landed since the last frame
             brute.timer = attackTimer;
             brute.x = x;
             brute.y = y;
             brute.view.setPosition(x, y).setScale(1 + BRUTE_SWELL * (1 - attackTimer / BRUTE.attackCooldownTicks));
+            if (brute.art) {
+                brute.art.setFrame(struck ? 14 : walkFrame(moving, tick, 6));
+                placeArt(brute.art, 'brute', x, y);
+            }
             const left = x - BRUTE_BAR.width / 2;
             brute.back.setPosition(left, y - BRUTE_BAR.offset);
             brute.bar.setPosition(left, y - BRUTE_BAR.offset).setSize(BRUTE_BAR.width * hp / BRUTE.maxHp, BRUTE_BAR.height);
@@ -213,9 +244,11 @@ export class MutantLayer {
         const view = this.#scene.add.star(0, 0, 4, BRUTE_RADIUS, BRUTE_RADIUS, BRUTE_COLOR)
             .setStrokeStyle(BRUTE_STROKE_WIDTH, BRUTE_STROKE)
             .setDepth(MUTANT_DEPTH);
+        const art = addArt(this.#scene, 'brute', MUTANT_DEPTH + 0.1);
+        if (art) view.setAlpha(0);
         const back = this.#scene.add.rectangle(0, 0, BRUTE_BAR.width, BRUTE_BAR.height, BRUTE_BAR.back).setOrigin(0, 0.5).setDepth(MUTANT_DEPTH);
         const bar = this.#scene.add.rectangle(0, 0, BRUTE_BAR.width, BRUTE_BAR.height, HP_BAR_COLOR).setOrigin(0, 0.5).setDepth(MUTANT_DEPTH);
-        const brute = {view, back, bar, timer: attackTimer, x: 0, y: 0};
+        const brute = {view, art, back, bar, timer: attackTimer, x: 0, y: 0};
         this.#brutes.set(id, brute);
         return brute;
     }
@@ -225,19 +258,26 @@ export class MutantLayer {
         const view = this.#scene.add.triangle(0, 0, 0, SPITTER_SIZE, half, 0, SPITTER_SIZE, SPITTER_SIZE, SPITTER_COLOR)
             .setStrokeStyle(SPITTER_STROKE_WIDTH, SPITTER_STROKE)
             .setDepth(MUTANT_DEPTH);
+        const art = addArt(this.#scene, 'spitter', MUTANT_DEPTH + 0.1);
+        if (art) view.setAlpha(0);
         const line = this.#scene.add.rectangle(0, 0, 1, AIM_LINE_HEIGHT, SPITTER_AIM_COLOR, AIM_LINE_ALPHA)
             .setOrigin(0, 0.5)
             .setDepth(MUTANT_DEPTH)
             .setVisible(false);
-        const spitter = {view, line, spent: false, x: 0, y: 0};
+        const spitter = {view, art, line, spent: false, x: 0, y: 0};
         this.#spitters.set(id, spitter);
         return spitter;
     }
 
-    #drawSpitter({view, line, spent}, {x, y, aim, attackTimer, shots}) {
+    #drawSpitter({view, art, line, spent}, {x, y, aim, attackTimer, shots}, tick, moving) {
         const windup = aim ? 1 - attackTimer / SPITTER.windupTicks : 0;
         const fillAlpha = spent ? 1 : SPITTER_MIN_FILL_ALPHA + (1 - SPITTER_MIN_FILL_ALPHA) * shots / SPITTER.maxShots;
         const color = spent ? SPITTER_SPENT_COLOR : aim ? SPITTER_AIM_COLOR : SPITTER_COLOR;
+        if (art) {
+            art.setFrame(spent ? 16 : aim ? 12 : walkFrame(moving, tick, 6));
+            art.setTint(spent ? 0x777744 : 0xffffff);
+            placeArt(art, 'spitter', x, y);
+        }
         view.setPosition(x, y)
             .setScale(1 + SPITTER_AIM_SWELL * windup)
             .setRotation(spent ? Math.PI : 0)
@@ -277,8 +317,10 @@ export class MutantLayer {
         this.#impacts.push({view, tick});
     }
 
-    #addDeath({x, y}, tick) {
-        const view = this.#scene.add.text(x, y, '×', DEATH_STYLE).setOrigin(0.5).setDepth(SHELL_DEPTH);
+    #addDeath({x, y}, tick, kind) {
+        const art = addArt(this.#scene, kind, SHELL_DEPTH);
+        const view = art ?? this.#scene.add.text(x, y, '×', DEATH_STYLE).setOrigin(0.5).setDepth(SHELL_DEPTH);
+        if (art) art.setFrame(19).setPosition(x, y);
         this.#deaths.push({view, tick});
     }
 

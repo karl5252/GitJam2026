@@ -1,3 +1,5 @@
+import {addArt, placeArt} from './SpriteArt.js';
+import {gateArtFrame, gateArtAngle} from './GateFrames.js';
 import {GateState, GATE} from '../core/gates.js';
 
 const BAR_COLOR = 0xffb300;
@@ -16,20 +18,22 @@ function openness({state, timer}) {
 }
 
 /**
- * Gate barriers. Presentation only. A shut gate shows one bar across the road;
- * as it opens the bar parts towards two posts, so state reads from shape as well
- * as colour. All gates share one Graphics object, redrawn only when one changes,
- * so a destroyed gate leaves nothing behind.
+ * Gate barrier art follows the existing core gate state machine. Authored sprites
+ * render above the road tile; the procedural barrier remains a fallback and the
+ * placement preview remains unchanged. Neither affect road/pathing rules.
  */
 export class GateLayer {
+    #scene;
     #grid;
     #graphics;
+    #sprites = new Map(); // gate id -> presentation-only sprite
     #preview;
     #views = [];
     #key = '';
     #previewView = {visible: false, col: null, row: null, orientation: null};
 
     constructor(scene, grid) {
+        this.#scene = scene;
         this.#grid = grid;
         this.#graphics = scene.add.graphics().setDepth(GATE_DEPTH);
         this.#preview = scene.add.graphics().setDepth(PREVIEW_DEPTH);
@@ -37,13 +41,31 @@ export class GateLayer {
 
     /** @param {Array<{id, col, row, orientation, state, timer}>} gates */
     sync(gates) {
-        const key = gates.map(({id, state, timer}) => `${id}:${state}:${timer}`).join();
+        const key = gates.map(({id, col, row, orientation, state, timer}) => `${id}:${col},${row}:${orientation}:${state}:${timer}`).join('|');
         if (key === this.#key) return;
         this.#key = key;
         this.#graphics.clear();
+        const standing = new Set(gates.map(({id}) => id));
+        for (const [id, sprite] of this.#sprites) {
+            if (standing.has(id)) continue;
+            sprite.destroy();
+            this.#sprites.delete(id);
+        }
         this.#views = gates.map((gate) => {
             const open = openness(gate);
-            this.#draw(this.#graphics, gate, open, BAR_COLOR);
+            let art = this.#sprites.get(gate.id);
+            if (!art) {
+                art = addArt(this.#scene, 'gate', GATE_DEPTH);
+                if (art) this.#sprites.set(gate.id, art);
+            }
+            if (art) {
+                const {x, y} = this.#grid.cellCenter(gate.col, gate.row);
+                placeArt(art, 'gate', x, y);
+                art.setFrame(gateArtFrame(gate.orientation, open)).setAngle(gateArtAngle(gate.orientation));
+            } else {
+                // Missing textures should not leave a completely invisible gate.
+                this.#draw(this.#graphics, gate, open, BAR_COLOR);
+            }
             return {id: gate.id, col: gate.col, row: gate.row, orientation: gate.orientation, state: gate.state, open};
         });
     }
