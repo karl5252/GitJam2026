@@ -6,6 +6,7 @@ import {FogOfWar, VISION_RADIUS, VisionState, unitVision} from '../../src/core/v
 import {INVALID_DAMAGE, UNKNOWN_WORKER, WORKER, WorkFlagFailure} from '../../src/core/workers.js';
 import {MapId, WORLD_MAPS, createTerrain} from '../../src/core/worldMap.js';
 import {createWorld, digestOf, worldState} from '../soak/harness.js';
+import {Ground, speedOn} from '../../src/core/terrainSpeed.js';
 
 const FUNDS = {credits: 90000, ap: 90};
 const HQ = {col: 12, row: 8}; // pointer cell: footprint 11..13, 7..9, ring 10..14, 6..10
@@ -94,7 +95,7 @@ test('workers walk tile to tile: every position is on a tile line or a slot, and
         run(w, 1);
         for (const {id, x, y} of w.workers.workers()) {
             const before = last.get(id);
-            if (before) assert.ok(Math.abs(x - before.x) + Math.abs(y - before.y) <= WORKER.speed);
+            if (before) assert.ok(Math.abs(x - before.x) + Math.abs(y - before.y) <= speedOn(Ground.ROAD, WORKER.speed) + 1e-9, 'never faster than road speed');
         }
         last = new Map(w.workers.workers().map((worker) => [worker.id, worker]));
     }

@@ -71,7 +71,7 @@ function roadSuite(input) {
         expect((await sample(page)).roadMode).toBe(false);
     });
 
-    test('a press adds a free road, and a second press removes it', async ({page}) => {
+    test('a press adds a road for 2 Credits, and a second press removes it with no refund', async ({page}) => {
         const state = await hqRun(page);
         const before = (await sample(page)).resources;
         await roadTool(page);
@@ -79,10 +79,11 @@ function roadSuite(input) {
         await pressCell(page, state, ABOVE_RING);
         await expect.poll(() => roadCount(page)).toBe(17);
         expect((await sample(page)).roadViews).toHaveLength(17);
+        expect((await sample(page)).resources).toEqual({...before, credits: before.credits - 2});
         await pressCell(page, state, ABOVE_RING);
         await expect.poll(() => roadCount(page)).toBe(16);
         expect((await sample(page)).roadViews).toHaveLength(16);
-        expect((await sample(page)).resources).toEqual(before);
+        expect((await sample(page)).resources).toEqual({...before, credits: before.credits - 2});
 
         await pressAction(page, 'cancel-placement');
         await expect.poll(async () => (await sample(page)).roadMode).toBe(false);

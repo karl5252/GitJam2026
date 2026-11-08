@@ -2,11 +2,12 @@ import Phaser from 'phaser';
 import {GamePhase, defeatGame, startGame} from '../core/gamePhase.js';
 import {Grid} from '../core/grid.js';
 import {BARRACKS_TYPE, BUILDING_TYPES, BarracksRole, HQ_TYPE, WALL_TYPE, getBuildingType} from '../core/buildingTypes.js';
-import {BuildingPlacement, HQ_ALREADY_BUILT} from '../core/buildingPlacement.js';
+import {BuildingPlacement, GAME_PAUSED, HQ_ALREADY_BUILT} from '../core/buildingPlacement.js';
 import {Economy} from '../core/economy.js';
 import {SimulationClock} from '../core/simulationClock.js';
 import {SeededRandom, DEFAULT_SEED, parseSeed} from '../core/seededRandom.js';
-import {ShiftCycle, Shift} from '../core/shiftCycle.js';
+import {DAY_TICKS, DUSK_TICKS, ShiftCycle, Shift} from '../core/shiftCycle.js';
+import {MAX_MANUAL_STEPS, SIMULATION_SPEEDS} from '../core/simulationClock.js';
 import {Gates} from '../core/gates.js';
 import {INFANTRY, Infantry} from '../core/infantry.js';
 import {Logistics} from '../core/logistics.js';
@@ -31,6 +32,7 @@ import {parseStressBrutes, parseStressSchedule, parseStressSpitters} from '../te
 import {parseWorldParams} from '../testShadow/worldParams.js';
 import {QASurface} from '../testShadow/QASurface.js';
 import {MutantLayer} from './MutantLayer.js';
+import {NightTintLayer} from './NightTintLayer.js';
 import {AutocannonLayer} from './AutocannonLayer.js';
 import {SiegeLayer} from './SiegeLayer.js';
 import {RoadLayer} from './RoadLayer.js';
@@ -45,6 +47,15 @@ import {Command, EventBus, Hint, Hud, Notice, State} from './EventBus.js';
 import {WorldCamera} from './WorldCamera.js';
 import {currentLayout} from './hudLayout.js';
 import {isOrientationBlocked} from './orientationGuard.js';
+
+/**
+ * END DAY runs the rest of the Day through stepSimulation, this many ticks a frame
+ * at most: never the whole Day in one frame. 3600 ticks take 15 frames.
+ */
+export const FAST_FORWARD_TICKS_PER_FRAME = MAX_MANUAL_STEPS;
+
+/** What a player may still do while END DAY's fast-forward runs: look around. */
+const FAST_FORWARD_ALLOWED = new Set([Command.ZOOM_IN, Command.ZOOM_OUT, Command.FIT, Command.RESTART]);
 
 const GRID_LINE_COLOR = 0x78909c;
 const HIGHLIGHT_COLOR = 0xffeb3b;
@@ -260,7 +271,17 @@ export class GameScene extends Phaser.Scene {
             [Command.ZOOM_IN]: () => this.worldCamera.zoomIn(),
             [Command.ZOOM_OUT]: () => this.worldCamera.zoomOut(),
             [Command.FIT]: () => this.worldCamera.fit(),
+            [Command.TOGGLE_DAY_PAUSE]: () => this.handleToggleDayPause(),
+            [Command.CYCLE_DAY_SPEED]: () => this.handleCycleDaySpeed(),
         };
+        // END DAY's fast-forward takes no further orders: only the camera still answers.
+        for (const event of Object.values(Command)) {
+            if (!handlers[event] || FAST_FORWARD_ALLOWED.has(event)) continue;
+            const handler = handlers[event];
+            handlers[event] = (payload) => {
+                if (!this.cycle?.fastForwarding) handler(payload);
+            };
+        }
         for (const [event, handler] of Object.entries(handlers)) EventBus.on(event, handler);
         this.events.once('shutdown', () => {
             for (const [event, handler] of Object.entries(handlers)) EventBus.off(event, handler);
@@ -318,9 +339,14 @@ export class GameScene extends Phaser.Scene {
         // TEST_MODE only: ?hq=off is a compatibility mode for legacy suites that
         // predate the HQ-first flow. Real play always requires HQ.
         this.hqRequired = !(TEST_MODE && new URLSearchParams(window.location.search).get('hq') === 'off');
+        // TEST_MODE only: ?cycle=legacy keeps the untimed Day that older suites were
+        // written for. Real play always runs the active Day, Dusk and Night.
+        this.legacyCycle = TEST_MODE && new URLSearchParams(window.location.search).get('cycle') === 'legacy';
         this.cycle = new ShiftCycle({
             clock: this.clock,
             economy: this.economy,
+            dayTicks: this.legacyCycle ? null : DAY_TICKS,
+            duskTicks: DUSK_TICKS,
             canEndDay: () => !this.hqRequired || this.placement.hqBuilt,
             settleNight: (day) => settleNight({
                 day,
@@ -333,6 +359,7 @@ export class GameScene extends Phaser.Scene {
         this.roads = this.hqRequired ? new RoadNetwork({grid: this.grid}) : null;
         this.placement = new BuildingPlacement(this.grid, this.economy, {
             isConstructionAllowed: () => this.cycle.isConstructionAllowed,
+            isPaused: () => this.cycle.pausedDay, // look, select and inspect only
             requireHq: this.hqRequired,
             roads: this.roads,
         });
@@ -372,6 +399,7 @@ export class GameScene extends Phaser.Scene {
             }),
         });
         this.mutantLayer = new MutantLayer(this, this.grid);
+        this.nightTint = new NightTintLayer(this, this.grid);
         this.autocannons = new Autocannons({
             cycle: this.cycle,
             placement: this.placement,
@@ -393,11 +421,14 @@ export class GameScene extends Phaser.Scene {
             grid: this.grid,
             gates: this.gates,
             mutants: this.mutants,
+            roads: this.roads,
         }) : null;
         this.mutants.setInfantry(this.infantry);
         this.infantryLayer = this.infantry ? new InfantryLayer(this, this.grid) : null;
         // HQ's squad, on the same terms: no roads means no HQ.
-        this.workers = this.roads ? new Workers({cycle: this.cycle, placement: this.placement, grid: this.grid, gates: this.gates}) : null;
+        this.workers = this.roads ? new Workers({
+            cycle: this.cycle, placement: this.placement, grid: this.grid, gates: this.gates, economy: this.economy, roads: this.roads,
+        }) : null;
         this.mutants.setWorkers(this.workers);
         this.workerLayer = this.workers ? new WorkerLayer(this, this.grid) : null;
 
@@ -524,8 +555,15 @@ export class GameScene extends Phaser.Scene {
     /** The night countdown is derived from remaining simulation ticks, to the tenth the HUD shows. */
     updateShiftHud() {
         const {day, shift, remainingNightTicks} = this.cycle.snapshot();
+        const remaining = shift === Shift.DUSK ? this.cycle.remainingDuskTicks : shift === Shift.DAY ? this.cycle.remainingDayTicks : remainingNightTicks;
         this.present(State.SHIFT, {
-            day, shift, seconds: (remainingNightTicks / this.clock.tickRate).toFixed(1), paused: this.clock.paused,
+            day,
+            shift,
+            seconds: (remaining / this.clock.tickRate).toFixed(1),
+            paused: this.clock.paused,
+            timed: this.cycle.timed,
+            fastForward: this.cycle.fastForwarding,
+            deployment: this.cycle.deployment ?? false,
         });
     }
 
@@ -547,7 +585,8 @@ export class GameScene extends Phaser.Scene {
     }
 
     presentMenu() {
-        const isDay = this.cycle.shift === Shift.DAY;
+        // Building is open only in a Day that is not being fast-forwarded.
+        const isDay = this.cycle.isConstructionAllowed;
         this.present(State.MENU, {
             visible: isDay,
             states: this.menuStates(),
@@ -555,7 +594,9 @@ export class GameScene extends Phaser.Scene {
             road: this.roads ? {state: this.placement.hqBuilt ? 'available' : 'locked'} : null,
             endDay: {visible: isDay, enabled: this.cycle.canEndDay},
             cancel: this.placement.isPlacing || this.roadMode || this.flagBarracksId !== null,
-            speed: this.cycle.shift === Shift.NIGHT,
+            speed: this.cycle.shift === Shift.NIGHT || this.cycle.shift === Shift.DUSK,
+            dayTime: {visible: this.cycle.canPause, paused: this.clock.paused, speed: this.clock.speed},
+            paused: this.cycle.pausedDay, // presentation only: the domain refuses every change itself
         });
     }
 
@@ -605,6 +646,13 @@ export class GameScene extends Phaser.Scene {
             units: [...(this.infantry?.soldiers() ?? []), ...(this.workers?.workers() ?? [])],
         });
         this.updateWaveHud(isSeen ? mutants.filter(isSeen) : mutants); // the count must not give away what the fog hides
+        this.nightTint.sync({
+            shift: this.cycle.shift,
+            timed: this.cycle.timed,
+            day: this.cycle.day,
+            elapsedDuskTicks: this.cycle.elapsedDuskTicks,
+            elapsedDayTicks: this.cycle.elapsedDayTicks,
+        });
         if (this.logistics) this.truckLayer.sync(this.logistics.snapshot());
         this.gateLayer.sync(this.gates.snapshot());
         this.autocannonLayer.sync({
@@ -680,6 +728,7 @@ export class GameScene extends Phaser.Scene {
     handleEndDay() {
         if (!this.cycle.canEndDay) return; // disabled, and must not disturb placement
         this.exitPlacementMode();
+        this.exitFlagMode();
         this.cycle.endDay();
         this.syncShiftUi();
     }
@@ -687,6 +736,22 @@ export class GameScene extends Phaser.Scene {
     handleSetSpeed(speed) {
         this.clock.setSpeed(speed);
         this.present(State.SPEED, {speed: this.clock.speed});
+    }
+
+    /** Day only: the player can stop the clock to plan, and start it again. */
+    handleToggleDayPause() {
+        if (!this.cycle?.canPause) return;
+        if (this.clock.paused) this.clock.resume();
+        else this.clock.pause();
+        this.syncShiftUi();
+    }
+
+    /** Day only: 1x, 2x, 4x and round again. The same clock speed Night uses, so it carries over. */
+    handleCycleDaySpeed() {
+        if (!this.cycle?.canPause) return;
+        const next = SIMULATION_SPEEDS[(SIMULATION_SPEEDS.indexOf(this.clock.speed) + 1) % SIMULATION_SPEEDS.length];
+        this.handleSetSpeed(next);
+        this.syncShiftUi();
     }
 
     // ---- Building selection / power switch ---------------------------------
@@ -710,12 +775,14 @@ export class GameScene extends Phaser.Scene {
             building: building ? {id: building.id, type: building.type, enabled: building.enabled, flag: isHq ? this.workers.flag : building.flag ?? null} : null,
             canFlag: isBarracks || isHq,
             workers: isHq,
+            sent: isHq && this.workers.sent,
             canDemolish: demolishable,
             confirmDemolish: !type?.fortification,
             refitTo: isBarracks && this.cycle.isConstructionAllowed
                 ? (building.role === BarracksRole.ROCKET ? BarracksRole.RIFLE : BarracksRole.ROCKET)
                 : null,
             switchable: Boolean(type) && type.switchable !== false,
+            paused: this.cycle.pausedDay,
         });
     }
 
@@ -724,7 +791,8 @@ export class GameScene extends Phaser.Scene {
         const {building} = this.selection();
         if (!building) return;
         EventBus.emit(Notice.DISARM);
-        this.placement.setEnabled(building.id, !building.enabled);
+        const result = this.placement.setEnabled(building.id, !building.enabled);
+        if (!result.ok) this.showHint(result.reason); // a paused Day changes nothing
         this.refreshPower();
     }
 
@@ -733,8 +801,11 @@ export class GameScene extends Phaser.Scene {
         const {building} = this.selection();
         if (!building) return;
         EventBus.emit(Notice.DISARM);
-        if (building.type === HQ_TYPE) this.workers.recall();
-        else this.placement.clearFlag(building.id);
+        let result;
+        if (building.type !== HQ_TYPE) result = this.placement.clearFlag(building.id);
+        else if (this.workers.sent) result = this.workers.recall();
+        else result = this.workers.dispatch(); // the squad is home and the flag is down: SEND WORKERS, free
+        if (!result.ok) this.showHint(result.reason);
         this.presentSelection();
     }
 
@@ -744,7 +815,7 @@ export class GameScene extends Phaser.Scene {
         if (!building) return;
         const result = this.placement.refit(building.id);
         this.lastResult = result;
-        this.showHint(result.ok ? null : Hint.REFIT_REFUSED);
+        this.showHint(result.ok ? null : result.reason === GAME_PAUSED ? GAME_PAUSED : Hint.REFIT_REFUSED);
         this.updateHud();
         this.renderedPostsKey = null; // the roof mark shows the role
         this.buildingArt?.sync(this.placement.buildings(), this.cycle.shift); // swap Barracks art on refit
@@ -753,7 +824,10 @@ export class GameScene extends Phaser.Scene {
 
     handleDemolish() {
         const {building} = this.selection();
-        if (building && this.placement.demolish(building.id).ok) this.handleBuildingsDestroyed([building.id]);
+        if (!building) return;
+        const result = this.placement.demolish(building.id);
+        if (result.ok) this.handleBuildingsDestroyed([building.id]);
+        else this.showHint(result.reason);
     }
 
     // ---- Placement mode ----------------------------------------------------
@@ -970,6 +1044,10 @@ export class GameScene extends Phaser.Scene {
     handleGridPointerDown(pointer) {
         this.dragCell = null; // lifting a finger sends no move, so a finished drag ends here
         if (!this.grid || this.phase === GamePhase.DEFEATED || isOrientationBlocked()) return;
+        // During END DAY's fast-forward a click only looks: construction is closed in
+        // the domain, and here a left click no longer selects or arms anything.
+        const looking = pointer.rightButtonDown() || pointer.middleButtonDown();
+        if (this.cycle?.fastForwarding && !pointer.wasTouch && !looking) return;
         EventBus.emit(Notice.WORLD_PRESSED);
         if (pointer.wasTouch) {
             this.handleTouchDown(pointer);
@@ -1425,7 +1503,13 @@ export class GameScene extends Phaser.Scene {
     update(_time, delta) {
         // Turned to portrait, frames simply stop reaching the clock: its speed and
         // pause state are not touched, so the run comes back exactly as it was.
-        if (!isOrientationBlocked()) this.clock.advance(delta, (tick) => this.stepSimulation(tick));
+        if (!isOrientationBlocked()) {
+            const onTick = (tick) => this.stepSimulation(tick);
+            // END DAY: the rest of the Day in bounded batches, every tick through the
+            // normal path. It stops at Dusk, which then plays in real time.
+            if (this.cycle?.fastForwarding) this.cycle.stepTicks(FAST_FORWARD_TICKS_PER_FRAME, onTick);
+            else this.clock.advance(delta, onTick);
+        }
         this.syncShiftUi();
     }
 
@@ -1577,6 +1661,7 @@ export class GameScene extends Phaser.Scene {
             infantry: this.infantry ? this.infantry.snapshot() : null,
             infantryViews: this.infantryLayer ? this.infantryLayer.views() : null,
             workers: this.workers ? this.workers.snapshot() : null,
+            nightTint: this.nightTint ? this.nightTint.view() : null,
             workerViews: this.workerLayer ? this.workerLayer.views() : null,
             flagMode: this.flagBarracksId,
             roadMode: this.roadMode,

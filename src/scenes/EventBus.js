@@ -22,13 +22,13 @@ export const Hud = Object.freeze({
 /** GameScene to HUD. */
 export const State = Object.freeze({
     PHASE: 'phase:changed', // {phase}
-    SHIFT: 'shift:changed', // {day, shift, seconds, paused}
+    SHIFT: 'shift:changed', // {day, shift, seconds, paused, timed, fastForward}
     ECONOMY: 'economy:changed', // {credits, ap}
     POLLUTION: 'pollution:changed', // {value, threat}
     POWER: 'power:changed', // {generation, demand, status}
     SETTLEMENT: 'settlement:changed', // {report, delivered}
     WAVE: 'wave:changed', // {visible, mutants, reached, total}
-    MENU: 'menu:changed', // {visible, states, selected, road, endDay, cancel, speed}
+    MENU: 'menu:changed', // {visible, states, selected, road, endDay, cancel, speed, dayTime}
     SELECTION: 'selection:changed', // {building, canFlag, workers, canDemolish, confirmDemolish, refitTo, switchable}
     HINT: 'hint:changed', // {reason}
     SPEED: 'speed:changed', // {speed}
@@ -59,6 +59,8 @@ export const Command = Object.freeze({
     ZOOM_IN: 'camera:zoomIn',
     ZOOM_OUT: 'camera:zoomOut',
     FIT: 'camera:fit',
+    TOGGLE_DAY_PAUSE: 'day:togglePause', // Day only
+    CYCLE_DAY_SPEED: 'day:cycleSpeed', // Day only: 1x, 2x, 4x, round again
 });
 
 /** Reasons only the HUD words, beside the domain's own failure codes. */

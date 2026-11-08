@@ -55,6 +55,8 @@ export const DESKTOP = Object.freeze({
         refit: {x: 1152, y: 650, ...WIDE},
     },
     speed: [1072, 1154, 1236].map((x) => ({x, y: 650, ...SPEED})),
+    // Day: the bottom band right of the camera buttons, clear of Refit and END DAY.
+    dayTime: {pause: {x: 836, y: 676, ...SPEED}, speed: {x: 922, y: 676, ...SPEED}},
     camera: {
         zoomOut: {x: 540, y: 676, ...CAMERA},
         fit: {x: 640, y: 676, ...CAMERA},
@@ -114,6 +116,7 @@ export const TOUCH = Object.freeze({
     narrowToggle: left(5),
     endDay: left(6),
     speed: [3, 4, 5].map(right),
+    dayTime: {pause: right(5), speed: right(6)}, // by Day, right(3) and right(4) hold Refit and Demolish
     camera: {zoomIn: right(0), fit: right(1), zoomOut: right(2)},
 });
 

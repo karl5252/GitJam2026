@@ -6,7 +6,8 @@
  *
  * HP and position stay on the building records in BuildingPlacement. This
  * module only holds {state, timer} per gate, keyed by building id, and only
- * during Night: outside it every gate is CLOSED.
+ * during Night: outside it every gate is CLOSED. In the ACTIVE cycle (ShiftCycle.timed)
+ * gates run in Day, Dusk and Night alike, and keep their state across boundaries.
  *
  * step() runs once per tick, after Autocannons.step() and before Mutants.step().
  * It is given the gates that trucks need this tick, derived afresh from the
@@ -58,7 +59,9 @@ export class Gates {
     step(wanted = new Set()) {
         const shift = this.#cycle.shift;
         if (shift === Shift.DEFEATED) return;
-        if (shift !== Shift.NIGHT) {
+        // ACTIVE cycle: trucks and workers cross by Day too, so gates run in every
+        // phase that ticks and keep their state across boundaries. LEGACY: Night only.
+        if (this.#cycle.timed ? !this.#cycle.active : shift !== Shift.NIGHT) {
             this.#gates.clear();
             return;
         }

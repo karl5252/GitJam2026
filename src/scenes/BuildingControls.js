@@ -1,6 +1,7 @@
 import {REFIT_COST} from '../core/buildingTypes.js';
 import {addProxy} from '../testShadow/TestProxy.js';
 
+const PAUSED_ALPHA = 0.45; // as the HUD's dimmed buttons: readable, pressable, refused in the domain
 const STROKE = 0x90a4ae;
 const FLAG_FILL = 0x37474f;
 const DEMOLISH_FILL = 0x8e2b2b;
@@ -23,6 +24,7 @@ const CONFIRM_STROKE = 0xffeb3b;
  */
 export class BuildingControls {
     #scene;
+    #paused = false;
     #flag;
     #reset;
     #refit;
@@ -58,7 +60,8 @@ export class BuildingControls {
      *   workers - the flag is HQ's work flag
      *   refitTo - the role a refit would give this building, or null when it cannot have one
      */
-    update(building, {canFlag, workers, canDemolish, confirmDemolish, refitTo}) {
+    update(building, {canFlag, workers, sent = true, canDemolish, confirmDemolish, refitTo, paused = false}) {
+        this.#paused = paused;
         this.#targetId = canDemolish ? building.id : null;
         this.#confirm = confirmDemolish;
         this.#refitTargetId = refitTo ? building.id : null;
@@ -69,13 +72,15 @@ export class BuildingControls {
         this.#show(this.#demolish, canDemolish, building?.id);
         this.#show(this.#refit, Boolean(refitTo), building?.id);
         this.#paintRefit();
-        if (canFlag) this.#labelFlags(building.flag, workers);
+        if (canFlag) this.#labelFlags(building.flag, workers, sent);
     }
 
-    #labelFlags(flag, workers) {
+    /** HQ's second button recalls a squad that is out, and sends one that is home to the flag already down. */
+    #labelFlags(flag, workers, sent) {
         if (workers) this.#flag.text.setText(flag ? 'MOVE\nFLAG' : 'SEND\nWORKERS');
         else this.#flag.text.setText(flag ? 'Move\nflag' : 'Set\nflag');
-        this.#reset.text.setText(workers ? 'RECALL\nWORKERS' : 'RESET\nFLAG');
+        if (!workers) this.#reset.text.setText('RESET\nFLAG');
+        else this.#reset.text.setText(sent ? 'RECALL\nWORKERS' : 'SEND\nWORKERS');
     }
 
     /** Back to a plain Demolish button. Safe to call at any time. */
@@ -100,6 +105,8 @@ export class BuildingControls {
             refitVisible: this.#refit.rect.visible,
             refitLabel: this.#refit.text.text,
             refitArmed: this.#refitArmedId,
+            paused: this.#paused,
+            alpha: this.#flag.rect.alpha,
         };
     }
 
@@ -164,7 +171,10 @@ export class BuildingControls {
             return;
         }
         rect.setInteractive({useHandCursor: true});
+        const alpha = this.#paused ? PAUSED_ALPHA : 1;
+        rect.setAlpha(alpha);
+        text.setAlpha(alpha);
         button.proxy ??= addProxy(this.#scene, rect, action, {label});
-        button.proxy.set({target, ...(button === this.#demolish ? {armed: this.#armedId !== null} : {})});
+        button.proxy.set({target, paused: this.#paused, ...(button === this.#demolish ? {armed: this.#armedId !== null} : {})});
     }
 }

@@ -44,7 +44,8 @@ import {calculatePower} from './power.js';
 import {barracksExit} from './roads.js';
 import {Shift} from './shiftCycle.js';
 import {bodyRadius, flightTicks, isBrute, mutantAt} from './shots.js';
-import {isGate, nextStep, openNeighbors, resolvePost, walkMap} from './walkField.js';
+import {approach, groundAt, speedOn} from './terrainSpeed.js';
+import {isGate, nextStep, openNeighbors, openTileTicks, resolvePost, walkMap} from './walkField.js';
 
 export const INFANTRY = Object.freeze({
     squadSize: 4,
@@ -118,20 +119,28 @@ export class Infantry {
     #living = [];
     #night = emptyTally();
     #totals = emptyTally();
+    #roads;
 
     /**
      * @param {{cycle: import('./shiftCycle.js').ShiftCycle,
      *          placement: import('./buildingPlacement.js').BuildingPlacement,
      *          grid: import('./grid.js').Grid,
      *          gates: import('./gates.js').Gates,
-     *          mutants: import('./mutants.js').Mutants}} deps
+     *          mutants: import('./mutants.js').Mutants,
+     *          roads?: import('./roads.js').RoadNetwork | null}} deps
+     *   roads - quicker ground (core/terrainSpeed.js); jungle comes from the grid's terrain
      */
-    constructor({cycle, placement, grid, gates, mutants}) {
+    constructor({cycle, placement, grid, gates, mutants, roads = null}) {
         this.#cycle = cycle;
         this.#placement = placement;
         this.#grid = grid;
         this.#gates = gates;
         this.#mutants = mutants;
+        this.#roads = roads;
+    }
+
+    #ground() {
+        return {roads: this.#roads, terrain: this.#grid.terrain ?? null};
     }
 
     /**
@@ -282,9 +291,10 @@ export class Infantry {
 
     /** Anything that changes walking changes the revision, so nothing is rebuilt in between. */
     #refreshNavigation(barracks) {
-        if (this.#revision === this.#placement.revision) return;
-        this.#revision = this.#placement.revision;
-        this.#map = walkMap(this.#grid, this.#placement.buildings());
+        const revision = `${this.#placement.revision}:${this.#roads?.revision ?? 0}`;
+        if (this.#revision === revision) return;
+        this.#revision = revision;
+        this.#map = walkMap(this.#grid, this.#placement.buildings(), this.#ground());
         const flags = new Map(barracks.map((building) => [building.id, building.flag]));
         for (const squad of this.#squads.values()) {
             const flag = squad.orphaned ? squad.post : flags.get(squad.id);
@@ -393,7 +403,8 @@ export class Infantry {
     }
 
     #withinLeash(cell, squad) {
-        return squad.field[cell.row * this.#grid.cols + cell.col] <= INFANTRY.leashTiles;
+        // The field is in ticks: the leash is that many tiles of open ground, so a road reaches a little further.
+        return squad.field[cell.row * this.#grid.cols + cell.col] <= INFANTRY.leashTiles * openTileTicks(this.#map);
     }
 
     /** One tile closer to a target out of range, if the leash allows. Never into a gate. */
@@ -447,10 +458,11 @@ export class Infantry {
         return soldier.x === x && soldier.y === y;
     }
 
-    /** Along one axis at a time, within a tile. */
-    #walkTo(soldier, {x, y}) {
-        if (soldier.x !== x) soldier.x += Math.sign(x - soldier.x) * INFANTRY.speed;
-        else if (soldier.y !== y) soldier.y += Math.sign(y - soldier.y) * INFANTRY.speed;
+    /** Along one axis at a time, within a tile, at the speed of the ground underfoot. */
+    #walkTo(soldier, goal) {
+        const {originX, originY, tileSize} = this.#grid;
+        const under = {col: Math.floor((soldier.x - originX) / tileSize), row: Math.floor((soldier.y - originY) / tileSize)};
+        approach(soldier, goal, speedOn(groundAt(under, this.#ground()), INFANTRY.speed));
     }
 
     /** Only reaching the far tile's centre ends an edge, and with it the demand on a gate behind. */

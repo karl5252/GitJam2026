@@ -36,6 +36,21 @@
  * crosses. gateDemands() reports what every truck needs right now, so a gate
  * stays open until the last one has reached the tile beyond it. A gate lost
  * while a truck waits simply stops being in the way.
+ *
+ * ACTIVE cycle (ShiftCycle.timed, what the game plays): everything above runs on
+ * every Day, Dusk and Night tick alike, and nothing resets at a change of phase:
+ * production progress, stored loads, cargo and trucks on the road all carry on,
+ * so a boundary can neither duplicate nor drop a load. The `night` tally then
+ * covers a whole cycle, from the tick that starts a Day to the end of its Night,
+ * and becomes `lastNight` when the next Day starts. The dusk reset and dawn
+ * parking described above are LEGACY behaviour only, for an untimed Day.
+ *
+ * Roads can change under a moving truck by Day. A truck always finishes the edge
+ * it is on. Edits that would take a road from under it, put a gate on a tile it
+ * touches, or leave it no way to where it is going are refused (#guard). When a
+ * road or gate change breaks the rest of its route, it takes the quickest way
+ * from the end of its current edge. A route that still works is kept, so a new
+ * road never changes a truck's plans halfway.
  */
 import {calculatePower} from './power.js';
 import {HQ_TYPE} from './buildingTypes.js';
@@ -60,6 +75,11 @@ export const TruckState = Object.freeze({
 });
 
 export const UNKNOWN_TRUCK = 'unknown-truck';
+
+export const LogisticsFailure = Object.freeze({
+    TRUCK_IN_THE_WAY: 'truck-in-the-way',
+    TRUCK_STRANDED: 'truck-stranded',
+});
 export const INVALID_DAMAGE = 'invalid-damage';
 
 const NO_EFFECTS = Object.freeze({deliveries: 0});
@@ -75,6 +95,8 @@ export class Logistics {
     #factories = new Map(); // Factory id -> {progress, stored, noRoute}
     #trucks = new Map(); // Factory id -> truck
     #inNight = false;
+    #tallyDay = null; // ACTIVE: the Day whose cycle `#night` counts
+    #roadsRevision = -1;
     #night = emptyTally();
     #lastNight = null;
     #totals = emptyTally();
@@ -97,6 +119,7 @@ export class Logistics {
         placement.onBuildingsChanged((type) => {
             if (cycle.shift === Shift.DAY && ROAD_ACCESS_TYPES.includes(type)) this.#sync(placement.buildings());
         });
+        placement.addGuard?.((question) => this.#guard(question));
     }
 
     /** The completed Night's {loads, credits, cargoLost}, or null before the first. */
@@ -108,13 +131,18 @@ export class Logistics {
     step() {
         const shift = this.#cycle.shift;
         if (shift === Shift.DEFEATED) return NO_EFFECTS;
-        if (shift !== Shift.NIGHT) {
-            if (this.#inNight) this.#endNight();
-            return NO_EFFECTS;
+        if (this.#cycle.timed) {
+            this.#rollTally();
+        } else {
+            if (shift !== Shift.NIGHT) {
+                if (this.#inNight) this.#endNight();
+                return NO_EFFECTS;
+            }
+            if (!this.#inNight) this.#startNight();
         }
-        if (!this.#inNight) this.#startNight();
 
         const buildings = this.#placement.buildings();
+        this.#followRoads();
         const factories = this.#sync(buildings);
         if (this.#trucks.size === 0) return NO_EFFECTS;
 
@@ -189,6 +217,81 @@ export class Logistics {
         };
     }
 
+    /** ACTIVE: a new Day closes the last cycle's tally. Nothing else changes at any boundary. */
+    #rollTally() {
+        this.#inNight = true; // every loss belongs to a cycle's tally
+        const day = this.#cycle.day;
+        if (this.#tallyDay === day) return;
+        if (this.#tallyDay !== null) this.#lastNight = {...this.#night};
+        this.#night = emptyTally();
+        this.#tallyDay = day;
+    }
+
+    /** After a road or gate change, any truck whose route no longer works takes another. */
+    #followRoads() {
+        if (this.#roads.revision === this.#roadsRevision) return;
+        this.#roadsRevision = this.#roads.revision;
+        for (const truck of this.#trucks.values()) {
+            if (truck.route && !truck.goal && !this.#stillDrivable(truck)) this.#reroute(truck);
+        }
+    }
+
+    /** Where a truck is on its route: the tiles it touches, and the tile it will next stand on. */
+    #position(truck) {
+        const {tileSize} = this.#grid;
+        const index = Math.min(Math.floor(truck.travelled / tileSize), truck.route.length - 1);
+        const frac = truck.travelled - index * tileSize;
+        const commit = frac === 0 ? index : index + 1;
+        return {index, frac, commit, touches: truck.route.slice(index, commit + 1)};
+    }
+
+    /** Every edge from the end of its current edge on is still a road it may drive. */
+    #stillDrivable(truck) {
+        const {commit} = this.#position(truck);
+        for (let i = commit; i < truck.route.length - 1; i++) {
+            if (!this.#roads.connects(truck.route[i], truck.route[i + 1])) return false;
+        }
+        return true;
+    }
+
+    /**
+     * Finish the current edge, then the quickest way to the same end. With no way
+     * there (only possible after an edit that skips the guards, such as a layout
+     * fixture), it stops at the end of its edge and asks again each tick: no jump,
+     * and its cargo stays aboard.
+     */
+    #reroute(truck, to = null) {
+        const {index, frac, commit} = this.#position(truck);
+        const goal = to ?? truck.goal ?? truck.route[truck.route.length - 1];
+        const path = this.#roads.route(truck.route[commit], goal);
+        const kept = truck.route.slice(index, commit);
+        truck.route = path ? [...kept, ...path] : [...kept, truck.route[commit]];
+        truck.travelled = frac;
+        truck.goal = path ? null : goal;
+    }
+
+    /**
+     * Refuse edits a truck cannot survive: a road taken from under it, a gate put on
+     * a tile it touches, or a road it needs to reach where it is going. Never mutates.
+     * @returns {null | {ok: false, reason: string}}
+     */
+    #guard(question) {
+        const gate = question.action === 'place' ? question.type.gate : null;
+        if (question.action === 'place' && !gate) return null; // nothing else goes on a road
+        const cell = question.action === 'remove-road' ? question.cell : {col: question.footprint.col, row: question.footprint.row};
+        const same = (other) => other.col === cell.col && other.row === cell.row;
+        for (const truck of this.#trucks.values()) {
+            if (!truck.route) continue;
+            const {commit, touches} = this.#position(truck);
+            if (touches.some(same)) return {ok: false, reason: LogisticsFailure.TRUCK_IN_THE_WAY};
+            const goal = truck.goal ?? truck.route[truck.route.length - 1];
+            if (!truck.goal && !truck.route.slice(commit).some(same)) continue; // its way does not use the tile
+            const asIf = gate ? {gate: {cell, axis: gate.passageAxis}} : {without: cell};
+            if (!this.#roads.route(truck.route[commit], goal, asIf)) return {ok: false, reason: LogisticsFailure.TRUCK_STRANDED};
+        }
+        return null;
+    }
+
     /** Records follow the buildings: new Factories get a truck, lost ones lose theirs. */
     #sync(buildings) {
         const factories = buildings.filter((b) => ROAD_ACCESS_TYPES.includes(b.type));
@@ -249,6 +352,7 @@ export class Logistics {
     #park(truck) {
         truck.state = TruckState.IDLE;
         truck.route = null;
+        truck.goal = null;
         truck.travelled = 0;
         Object.assign(truck, this.#grid.cellCenter(truck.dock.col, truck.dock.row));
     }
@@ -275,6 +379,10 @@ export class Logistics {
         truck.travelled = Math.min(length, truck.travelled + LOGISTICS.truckSpeed);
         this.#place(truck);
         if (truck.travelled < length) return 0;
+        if (truck.goal) { // cut off by an unguarded edit: wait here until a way opens
+            this.#reroute(truck);
+            return 0;
+        }
         if (truck.state === TruckState.RETURNING) {
             this.#park(truck);
             return 0;
@@ -320,6 +428,11 @@ export class Logistics {
         truck.state = TruckState.RETURNING;
         truck.route = [...truck.route].reverse();
         truck.travelled = 0;
+        // Home is its own dock. A rerouted outbound route starts where the truck was
+        // when it turned off, not at the dock, and the way back may have changed.
+        const end = truck.route[truck.route.length - 1];
+        const home = end.col === truck.dock.col && end.row === truck.dock.row;
+        if (!home || !this.#stillDrivable(truck)) this.#reroute(truck, truck.dock);
         return 1;
     }
 

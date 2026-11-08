@@ -34,6 +34,8 @@ export const BARRACKS_TYPE = 'barracks';
 /** A Barracks is rifles unless it has been refitted, and only then does its record say so. */
 export const BarracksRole = Object.freeze({RIFLE: 'rifle', ROCKET: 'rocket'});
 export const REFIT_COST = Object.freeze({credits: 200, ap: 1});
+/** Each newly placed player road tile. The automatic HQ ring is free. GDD v0.3. */
+export const ROAD_COST = Object.freeze({credits: 2, ap: 0});
 
 const NO_OPERATIONS = Object.freeze({income: 0, upkeep: 0});
 const NO_POWER = Object.freeze({supply: 0, demand: 0});

@@ -1,6 +1,6 @@
 import Phaser from 'phaser';
 import {BARRACKS_LIMIT, FlagFailure, MAX_BARRACKS} from '../core/buildingPlacement.js';
-import {BARRACKS_TYPE, BUILDING_TYPES, REFIT_COST, getBuildingType} from '../core/buildingTypes.js';
+import {BARRACKS_TYPE, BUILDING_TYPES, REFIT_COST, ROAD_COST, getBuildingType} from '../core/buildingTypes.js';
 import {PlacementFailure} from '../core/grid.js';
 import {PowerStatus} from '../core/power.js';
 import {RoadFailure} from '../core/roads.js';
@@ -37,6 +37,12 @@ const PLACEMENT_HINTS = {
     [FlagFailure.UNREACHABLE]: 'Soldiers cannot reach this tile',
     [WorkFlagFailure.OCCUPIED]: 'Work flags go on open ground, roads or jungle',
     [WorkFlagFailure.UNREACHABLE]: 'Workers cannot reach this tile',
+    [WorkFlagFailure.DAY_ONLY]: 'Workers go out only while a Day is running',
+    [WorkFlagFailure.NO_FLAG]: 'Put a work flag down first',
+    'game-paused': 'Paused: press PLAY to act',
+    'truck-in-the-way': 'A truck is on this road',
+    'truck-stranded': 'A truck needs this road to get home',
+    'unit-in-the-way': 'A worker is standing there',
 };
 
 const POWER_STATUS_LABELS = {
@@ -48,6 +54,12 @@ const POWER_STATUS_LABELS = {
 const IDLE_STROKE = 0x90a4ae;
 const SELECTED_STROKE = 0xffeb3b;
 const DISABLED_ALPHA = 0.45;
+/**
+ * A paused Day's gameplay buttons: dimmed but still readable and still pressable,
+ * so a press reaches the domain, which refuses it and says why. PLAY, END DAY, the
+ * Day speed, the camera and the drawer stay as they are.
+ */
+export const PAUSED_ALPHA = DISABLED_ALPHA;
 const BAND_COLOR = 0x263238;
 const DRAWER_COLOR = 0x1c262b;
 const BUTTON_DEPTH = 4;
@@ -58,7 +70,7 @@ const signed = (n) => (n > 0 ? `+${n}` : `${n}`);
 const cost = ({cost: {credits, ap}}) => (ap ? `${credits}c · ${ap} AP` : `${credits}c`);
 
 const MENU_LABELS = {
-    road: () => 'Road\nfree',
+    road: () => `Road\n${ROAD_COST.credits}c`,
     barracks: (type) => `Barracks 3x3\n${cost(type)}`,
     wall: (type) => `Wall\n${cost(type)}`,
     gateVertical: (type) => `Gate |\n${cost(type)}`,
@@ -209,8 +221,28 @@ export class HUDScene extends Phaser.Scene {
             onRefit: () => EventBus.emit(Command.REFIT),
         }, layout.actions);
         this.ui.speed = new SpeedControls(this, (speed) => EventBus.emit(Command.SET_SPEED, {speed}), layout.speed);
+        this.ui.dayPause = this.button(layout.dayTime.pause, 'PAUSE', 0x37474f, () => EventBus.emit(Command.TOGGLE_DAY_PAUSE));
+        this.ui.daySpeed = this.button(layout.dayTime.speed, '1×', 0x37474f, () => EventBus.emit(Command.CYCLE_DAY_SPEED));
+        this.ui.dayPauseProxy = null;
+        this.ui.daySpeedProxy = null;
+        this.showButton(this.ui.dayPause, false);
+        this.showButton(this.ui.daySpeed, false);
         this.ui.gameOver = new GameOverLayer(this, () => EventBus.emit(Command.RESTART));
         this.createCameraControls();
+    }
+
+    /** By Day: pause or run the clock, and step through 1x, 2x and 4x. Night keeps its own buttons. */
+    renderDayTime() {
+        const {visible = false, paused = false, speed = 1} = this.menu?.dayTime ?? {};
+        const {dayPause, daySpeed} = this.ui;
+        this.showButton(dayPause, visible);
+        this.showButton(daySpeed, visible);
+        dayPause.text.setText(paused ? 'PLAY' : 'PAUSE');
+        daySpeed.text.setText(`${speed}×`);
+        this.ui.dayPauseProxy = this.syncProxy(this.ui.dayPauseProxy, dayPause, visible, 'day-pause', 'Pause Day');
+        this.ui.daySpeedProxy = this.syncProxy(this.ui.daySpeedProxy, daySpeed, visible, 'day-speed', 'Day speed');
+        this.ui.dayPauseProxy?.set({paused});
+        this.ui.daySpeedProxy?.set({speed});
     }
 
     button({x, y, width, height}, text, fill, onPress) {
@@ -304,12 +336,30 @@ export class HUDScene extends Phaser.Scene {
 
     // ---- State -------------------------------------------------------------
 
-    onShift({day, shift, seconds, paused}) {
+    /**
+     * LEGACY counts Day N and its Night N. ACTIVE starts on Day 0, the untimed
+     * deployment, and Night N follows Day N - 1: the domain's `day` is the Night's
+     * number, so plans and settlements keep theirs.
+     */
+    onShift({day, shift, seconds, paused, timed = false, fastForward = false, deployment = false}) {
         if (!this.ui) return;
-        let text = `Day ${day} · Day Shift`;
-        if (shift === Shift.DEFEATED) text = `Day ${day} · Headquarters destroyed`;
-        if (shift === Shift.NIGHT) text = `Day ${day} · Night Shift · ${seconds} s left${paused ? ' (paused)' : ''}`;
-        this.ui.shift.setText(text);
+        const pause = paused ? ' (paused)' : '';
+        if (!timed) {
+            let text = `Day ${day} · Day Shift`;
+            if (shift === Shift.DEFEATED) text = `Day ${day} · Headquarters destroyed`;
+            if (shift === Shift.NIGHT) text = `Day ${day} · Night Shift · ${seconds} s left${pause}`;
+            this.ui.shift.setText(text);
+            return;
+        }
+        const today = `Day ${day - 1}`;
+        const texts = {
+            [Shift.DAY]: deployment ? `${today} · Initial Deployment`
+                : fastForward ? `${today} · Day Shift · ending…` : `${today} · Day Shift · ${seconds} s left${pause}`,
+            [Shift.DUSK]: `${today} · Dusk · ${seconds} s${pause}`,
+            [Shift.NIGHT]: `Night ${day} · Night Shift · ${seconds} s left${pause}`,
+            [Shift.DEFEATED]: `Night ${day} · Headquarters destroyed`,
+        };
+        this.ui.shift.setText(texts[shift] ?? today);
     }
 
     onWave({visible, mutants, reached, total}) {
@@ -340,6 +390,7 @@ export class HUDScene extends Phaser.Scene {
         this.setCancelVisible(menu.cancel);
         this.renderEndDay();
         this.ui.speed.setVisible(menu.speed);
+        this.renderDayTime();
         this.renderDrawerButtons();
     }
 
@@ -372,7 +423,7 @@ export class HUDScene extends Phaser.Scene {
     /** A hidden drawer keeps its proxies, hidden too, so tests can read a button's state in any layout. */
     renderMenu() {
         if (!this.ui || !this.menu) return;
-        const {visible, states, selected, road} = this.menu;
+        const {visible, states, selected, road, paused = false} = this.menu;
         const shown = visible && (!this.layout.touch || this.drawerOpen);
         for (const [id, button] of Object.entries(this.ui.buttons)) {
             const isRoad = id === 'road';
@@ -387,7 +438,7 @@ export class HUDScene extends Phaser.Scene {
             this.showButton(button, shown);
             const state = isRoad ? road.state : states[id];
             const isSelected = selected === id;
-            const alpha = state === 'available' ? 1 : DISABLED_ALPHA;
+            const alpha = state === 'available' && !paused ? 1 : DISABLED_ALPHA;
             button.rect.setAlpha(alpha).setStrokeStyle(3, isSelected ? SELECTED_STROKE : IDLE_STROKE);
             button.text.setAlpha(alpha);
             if (state === 'built') {
@@ -400,7 +451,7 @@ export class HUDScene extends Phaser.Scene {
                 continue;
             }
             this.ui.proxies[id] ??= addProxy(this, button.rect, `build-${id}`, {label: isRoad ? 'Road' : BUILDING_TYPES[id].name});
-            this.ui.proxies[id].set({selected: isSelected, state}).show(shown);
+            this.ui.proxies[id].set({selected: isSelected, state, paused}).show(shown);
         }
     }
 
@@ -423,8 +474,8 @@ export class HUDScene extends Phaser.Scene {
     onSelection(selection) {
         this.selection = selection;
         if (!this.ui) return;
-        const {building, canFlag, workers, canDemolish, confirmDemolish, refitTo, switchable} = selection;
-        this.ui.controls.update(building, {canFlag, workers, canDemolish, confirmDemolish, refitTo});
+        const {building, canFlag, workers, sent, canDemolish, confirmDemolish, refitTo, switchable, paused = false} = selection;
+        this.ui.controls.update(building, {canFlag, workers, sent, canDemolish, confirmDemolish, refitTo, paused});
         const narrow = this.layout.touch || building?.type === BARRACKS_TYPE;
         if (switchable) this.layoutToggle(narrow);
         this.showButton(this.ui.toggle, switchable);
@@ -435,8 +486,11 @@ export class HUDScene extends Phaser.Scene {
         }
         const label = building.enabled ? 'Switch OFF' : 'Switch ON';
         this.ui.toggle.text.setText(narrow ? label.replace(' ', '\n') : `${building.id}\n${label}`);
+        const alpha = paused ? PAUSED_ALPHA : 1;
+        this.ui.toggle.rect.setAlpha(alpha);
+        this.ui.toggle.text.setAlpha(alpha);
         this.ui.toggleProxy ??= addProxy(this, this.ui.toggle.rect, 'toggle-power', {label: 'Toggle power'});
-        this.ui.toggleProxy.set({target: building.id, enabled: building.enabled});
+        this.ui.toggleProxy.set({target: building.id, enabled: building.enabled, paused});
     }
 
     /** A Barracks shares the row with RESET FLAG. A proxy keeps the size it was made with, so it goes too. */
@@ -476,6 +530,16 @@ export class HUDScene extends Phaser.Scene {
             gameOverView: ui ? ui.gameOver.view() : null,
             pollutionView: textView(ui?.pollution),
             speedView: ui ? ui.speed.view() : null,
+            // How dimmed each gameplay button is: 1, or PAUSED_ALPHA in a paused Day.
+            actionAlphaView: ui ? {
+                menu: Object.fromEntries(Object.entries(ui.buttons).filter(([, btn]) => btn.rect.visible).map(([id, btn]) => [id, btn.rect.alpha])),
+                toggle: ui.toggle.rect.visible ? ui.toggle.rect.alpha : null,
+                endDay: ui.endDay.rect.visible ? ui.endDay.rect.alpha : null,
+                dayPause: ui.dayPause.rect.visible ? ui.dayPause.rect.alpha : null,
+            } : null,
+            dayTimeView: ui ? {
+                visible: ui.dayPause.rect.visible, pause: ui.dayPause.text.text, speed: ui.daySpeed.text.text,
+            } : null,
             buildingControlsView: ui ? ui.controls.view() : null,
             placementHint: ui ? ui.hint.text : null,
             hudView: textView(ui?.resources),

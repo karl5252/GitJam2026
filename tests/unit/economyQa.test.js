@@ -58,7 +58,8 @@ test('in debt every purchase is refused, and leaves the debt as it was', () => {
     assert.equal(qa.setCredits(-200), -200);
     for (const type of ['wall', 'outpost', 'autocannon']) assert.equal(w.place(type, 3, 3).reason, 'insufficient-credits');
     assert.deepEqual(w.economy.snapshot(), {credits: -200, ap: 5});
-    assert.equal(w.placement.placeRoad({col: 9, row: 8}).ok, true, 'roads are free, so debt does not stop them');
+    assert.equal(w.placement.placeRoad({col: 9, row: 8}).reason, 'insufficient-credits', 'roads cost 2 Credits now, so debt stops them too');
+    assert.deepEqual(w.economy.snapshot(), {credits: -200, ap: 5});
     assert.deepEqual(w.placement.buildings().map((b) => b.type), ['hq']);
     assert.equal(qa.addCredits(225), 25);
     assert.equal(w.place('wall', 3, 3).ok, true, 'out of debt, the same purchase works');

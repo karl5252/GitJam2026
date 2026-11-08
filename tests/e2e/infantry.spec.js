@@ -121,7 +121,7 @@ function suite(input) {
         await expect(byAction(page, 'demolish')).toHaveAttribute('data-armed', 'true');
         await pressAction(page, 'demolish');
         await expect(byAction(page, 'build-barracks')).toHaveAttribute('data-state', 'available');
-        expect((await sample(page)).resources.credits).toBe(10_000 - 4 * 400);
+        expect((await sample(page)).resources.credits).toBe(10_000 - 5 * 2 - 4 * 400); // five road tiles at 2 Credits
     });
 
     test('a flag is set through the selected Barracks, and rejected tiles keep the tool open', async ({page}) => {

@@ -126,11 +126,17 @@ test('bounds, existing roads and buildings are rejected', () => {
     assert.equal(roads.tiles().length, 16);
 });
 
-test('roads are free and never use Credits or AP', () => {
+test('a new road tile costs 2 Credits and no AP; the HQ ring is free and removal refunds nothing', () => {
     const {placement, economy} = hqGame({credits: 0, ap: 0});
+    assert.deepEqual(economy.snapshot(), {credits: 0, ap: 0}, 'the HQ ring cost nothing');
+    assert.deepEqual(placement.previewRoad({col: 12, row: 5}), {ok: false, reason: 'insufficient-credits'});
+    assert.deepEqual(placement.placeRoad({col: 12, row: 5}), {ok: false, reason: 'insufficient-credits'});
+    economy.adjustCredits(3);
     assert.equal(placement.placeRoad({col: 12, row: 5}).ok, true);
+    assert.deepEqual(economy.snapshot(), {credits: 1, ap: 0});
     assert.equal(placement.removeRoad({col: 12, row: 5}).ok, true);
-    assert.deepEqual(economy.snapshot(), {credits: 0, ap: 0});
+    assert.deepEqual(economy.snapshot(), {credits: 1, ap: 0});
+    assert.equal(placement.placeRoad({col: 12, row: 5}).reason, 'insufficient-credits', 'space comes back, the 2 Credits do not');
 });
 
 test('roads never touch the Grid, so they cannot affect combat rules', () => {
@@ -157,10 +163,10 @@ test('construction rules gate roads at Night', () => {
 
 test('nothing can be built on a road', () => {
     const {build, placement, economy} = hqGame();
+    placement.placeRoad({col: 12, row: 5});
     const before = economy.snapshot();
     assert.deepEqual(build('autocannon', 10, 6), {ok: false, reason: RoadFailure.ROAD_OCCUPIED});
     assert.deepEqual(build('outpost', 14, 10), {ok: false, reason: RoadFailure.ROAD_OCCUPIED});
-    placement.placeRoad({col: 12, row: 5});
     assert.deepEqual(build('powerPlant', 12, 4), {ok: false, reason: RoadFailure.ROAD_OCCUPIED});
     assert.deepEqual(economy.snapshot(), before);
     assert.equal(placement.buildings().length, 1);

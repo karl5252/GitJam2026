@@ -1,4 +1,4 @@
-import {BARRACKS_TYPE, BarracksRole, HQ_TYPE, REFIT_COST, getBuildingType} from './buildingTypes.js';
+import {BARRACKS_TYPE, BarracksRole, HQ_TYPE, REFIT_COST, ROAD_COST, getBuildingType} from './buildingTypes.js';
 import {ROAD_ACCESS_TYPES, RoadFailure, barracksExit, outgoingDock} from './roads.js';
 import {isFree, resolvePost, walkMap} from './walkField.js';
 
@@ -33,6 +33,8 @@ import {isFree, resolvePost, walkMap} from './walkField.js';
 
 export const NO_SELECTION = 'no-selection';
 export const CONSTRUCTION_DISABLED = 'construction-disabled';
+/** A paused timed Day: nothing may change until it runs again. */
+export const GAME_PAUSED = 'game-paused';
 export const UNKNOWN_BUILDING = 'unknown-building';
 export const INVALID_STATE = 'invalid-state';
 export const HQ_REQUIRED = 'hq-required';
@@ -74,11 +76,13 @@ export class BuildingPlacement {
 
     #economy;
     #isConstructionAllowed;
+    #isPaused;
     #requireHq;
     #hqBuilt = false;
     #roads;
     #revision = 0;
     #listeners = [];
+    #guards = [];
 
     /**
      * @param {import('./grid.js').Grid} grid
@@ -90,10 +94,11 @@ export class BuildingPlacement {
      *   this. The false default is legacy compatibility, for fixtures that test
      *   other rules without an HQ; do not rely on it in new gameplay code.
      */
-    constructor(grid, economy, {isConstructionAllowed = () => true, requireHq = false, roads = null} = {}) {
+    constructor(grid, economy, {isConstructionAllowed = () => true, isPaused = () => false, requireHq = false, roads = null} = {}) {
         this.#grid = grid;
         this.#economy = economy;
         this.#isConstructionAllowed = isConstructionAllowed;
+        this.#isPaused = isPaused;
         this.#requireHq = requireHq;
         this.#roads = roads;
         this.selectedType = null; // building type id, or null when not in placement mode
@@ -107,6 +112,24 @@ export class BuildingPlacement {
     /** Be told the type of every building that is placed or removed, as it happens. */
     onBuildingsChanged(listener) {
         this.#listeners.push(listener);
+    }
+
+    /**
+     * Let something that moves on the map refuse an edit that would put a building
+     * on it or take a road from under it. A guard is asked `{action: 'place', type,
+     * footprint}` or `{action: 'remove-road', cell}` and answers null, or a
+     * refusal `{ok: false, reason}`. It must never mutate.
+     */
+    addGuard(guard) {
+        this.#guards.push(guard);
+    }
+
+    #guarded(question) {
+        for (const guard of this.#guards) {
+            const refusal = guard(question);
+            if (refusal) return refusal;
+        }
+        return {ok: true};
     }
 
     #changed(type) {
@@ -211,6 +234,7 @@ export class BuildingPlacement {
         const building = this.#buildings.find((b) => b.id === id);
         if (!building) return {ok: false, reason: UNKNOWN_BUILDING};
         if (getBuildingType(building.type).switchable === false) return {ok: false, reason: INVALID_STATE};
+        if (this.#isPaused()) return {ok: false, reason: GAME_PAUSED};
         building.enabled = enabled;
         return {ok: true, building: {...building}};
     }
@@ -247,6 +271,7 @@ export class BuildingPlacement {
      */
     demolish(id) {
         if (!this.#isConstructionAllowed()) return {ok: false, reason: CONSTRUCTION_DISABLED};
+        if (this.#isPaused()) return {ok: false, reason: GAME_PAUSED};
         const index = this.#buildings.findIndex((b) => b.id === id);
         if (index === -1) return {ok: false, reason: UNKNOWN_BUILDING};
         if (getBuildingType(this.#buildings[index].type).demolishable === false) return {ok: false, reason: INVALID_STATE};
@@ -273,6 +298,7 @@ export class BuildingPlacement {
     canSetFlag(id, cell) {
         const barracks = this.#buildings.find((b) => b.id === id && b.type === BARRACKS_TYPE);
         if (!barracks) return {ok: false, reason: UNKNOWN_BUILDING};
+        if (this.#isPaused()) return {ok: false, reason: GAME_PAUSED};
         if (!this.#inBounds(cell)) return {ok: false, reason: FlagFailure.OUT_OF_BOUNDS};
         const map = walkMap(this.#grid, this.#buildings);
         if (!isFree(map, cell)) return {ok: false, reason: FlagFailure.OCCUPIED};
@@ -300,6 +326,7 @@ export class BuildingPlacement {
     clearFlag(id) {
         const barracks = this.#buildings.find((b) => b.id === id && b.type === BARRACKS_TYPE);
         if (!barracks) return {ok: false, reason: UNKNOWN_BUILDING};
+        if (this.#isPaused()) return {ok: false, reason: GAME_PAUSED}; // the one thing a recall can wait for
         if (barracks.flag === null) return {ok: true};
         barracks.flag = null;
         this.#revision++;
@@ -314,6 +341,7 @@ export class BuildingPlacement {
         const barracks = this.#buildings.find((b) => b.id === id && b.type === BARRACKS_TYPE);
         if (!barracks) return {ok: false, reason: UNKNOWN_BUILDING};
         if (!this.#isConstructionAllowed()) return {ok: false, reason: CONSTRUCTION_DISABLED};
+        if (this.#isPaused()) return {ok: false, reason: GAME_PAUSED};
         const afford = this.#economy.canAfford(REFIT_COST);
         if (!afford.ok) return afford;
         return {ok: true, role: barracks.role === BarracksRole.ROCKET ? BarracksRole.RIFLE : BarracksRole.ROCKET};
@@ -396,10 +424,13 @@ export class BuildingPlacement {
         return {ok: false, reason: RoadFailure.EXIT_REQUIRED};
     }
 
-    /** Add a free road, or say why not. Never touches the economy. */
+    /** Add a road for ROAD_COST, or say why not. Placed and paid for together, or neither. */
     placeRoad(cell) {
         const check = this.previewRoad(cell);
-        return check.ok ? this.#roads.add(cell) : check;
+        if (!check.ok) return check;
+        const added = this.#roads.add(cell);
+        if (added.ok) this.#economy.spend(ROAD_COST); // affordable: just checked
+        return added;
     }
 
     /** Remove a player road, unless a Factory or Barracks would lose every route. */
@@ -411,13 +442,17 @@ export class BuildingPlacement {
     /** Validation for adding a road. Never mutates. */
     previewRoad(cell) {
         if (!this.#isConstructionAllowed()) return {ok: false, reason: CONSTRUCTION_DISABLED};
-        return this.#roads.canAdd(cell);
+        if (this.#isPaused()) return {ok: false, reason: GAME_PAUSED};
+        const space = this.#roads.canAdd(cell);
+        return space.ok ? this.#economy.canAfford(ROAD_COST) : space;
     }
 
     /** Validation for removing a road. Never mutates. */
     previewRoadRemoval(cell) {
         if (!this.#isConstructionAllowed()) return {ok: false, reason: CONSTRUCTION_DISABLED};
-        return this.#nameDependent(this.#roads.canRemove(cell, this.#roadDependents()), (docks) => this.#roads.canRemove(cell, docks));
+        if (this.#isPaused()) return {ok: false, reason: GAME_PAUSED};
+        const check = this.#nameDependent(this.#roads.canRemove(cell, this.#roadDependents()), (docks) => this.#roads.canRemove(cell, docks));
+        return check.ok ? this.#guarded({action: 'remove-road', cell}) : check;
     }
 
     /** Road rules for a footprint the grid has already accepted. Never mutates. */
@@ -448,12 +483,15 @@ export class BuildingPlacement {
     /** Construction gate, HQ rules, spatial rules (grid, roads), then resources (economy). Never mutates. */
     #validate(type, footprint) {
         if (!this.#isConstructionAllowed()) return {ok: false, reason: CONSTRUCTION_DISABLED};
+        if (this.#isPaused()) return {ok: false, reason: GAME_PAUSED};
         const allowed = this.canBuild(type.id);
         if (!allowed.ok) return allowed;
         const spatial = this.#grid.canPlace(footprint);
         if (!spatial.ok) return spatial;
         const roads = this.#validateRoads(type, footprint);
         if (!roads.ok) return roads;
+        const guarded = this.#guarded({action: 'place', type, footprint});
+        if (!guarded.ok) return guarded;
         return this.#economy.canAfford(type.cost);
     }
 

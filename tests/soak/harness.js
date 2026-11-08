@@ -24,7 +24,7 @@ import {Pollution} from '../../src/core/pollution.js';
 import {RoadNetwork} from '../../src/core/roads.js';
 import {SeededRandom} from '../../src/core/seededRandom.js';
 import {settleNight} from '../../src/core/settlement.js';
-import {ShiftCycle} from '../../src/core/shiftCycle.js';
+import {DAY_TICKS, DUSK_TICKS, ShiftCycle} from '../../src/core/shiftCycle.js';
 import {SimulationClock} from '../../src/core/simulationClock.js';
 import {AUTOCANNON} from '../../src/core/autocannons.js';
 import {SiegeCannons, SIEGE} from '../../src/core/siegeCannons.js';
@@ -63,8 +63,10 @@ const gridFor = ({cols, rows, tileSize}, terrain) => ({
  *   rng - replaces the seeded RNG, so a test can choose spawn positions
  *   map, terrain - a map from core/worldMap.js and its terrain, as GameScene uses
  *   them. Without one, the world is the original 24x16 battlefield.
+ *   active - the real ACTIVE cycle GameScene plays: a timed Day, Dusk, then Night.
+ *   Off by default, which keeps the untimed Day every older test was written for.
  */
-export function createWorld({seed = 731, schedule = null, resources = STARTING_RESOURCES, openConstruction = false, requireHq = false, roads: useRoads = false, pollution: startingPollution = 0, firstNight = 1, rng: fixedRng = null, spitterSlots = [], bruteSlots = [], absorbedSlots = [], spitters = true, brutes = true, map = null, terrain = null} = {}) {
+export function createWorld({seed = 731, schedule = null, resources = STARTING_RESOURCES, openConstruction = false, requireHq = false, roads: useRoads = false, pollution: startingPollution = 0, firstNight = 1, rng: fixedRng = null, spitterSlots = [], bruteSlots = [], absorbedSlots = [], spitters = true, brutes = true, map = null, terrain = null, active = false} = {}) {
     const clock = new SimulationClock();
     const economy = new Economy(resources);
     const pollution = new Pollution(startingPollution);
@@ -72,10 +74,12 @@ export function createWorld({seed = 731, schedule = null, resources = STARTING_R
     const rng = fixedRng ?? new SeededRandom(seed);
     const roads = useRoads ? new RoadNetwork({grid}) : null;
     let cycle;
-    const placement = new BuildingPlacement(grid, economy, openConstruction ? {requireHq, roads} : {isConstructionAllowed: () => cycle.isConstructionAllowed, requireHq, roads});
+    const placement = new BuildingPlacement(grid, economy, openConstruction ? {requireHq, roads} : {isConstructionAllowed: () => cycle.isConstructionAllowed, isPaused: () => cycle.pausedDay, requireHq, roads});
     cycle = new ShiftCycle({
         clock,
         economy,
+        dayTicks: active ? DAY_TICKS : null,
+        duskTicks: DUSK_TICKS,
         canEndDay: () => !requireHq || placement.hqBuilt,
         settleNight: (day) => (day < firstNight ? null : settleNight({day, buildings: placement.buildings(), economy, pollution})),
     });
@@ -105,9 +109,9 @@ export function createWorld({seed = 731, schedule = null, resources = STARTING_R
     });
     const autocannons = new Autocannons({cycle, placement, grid, mutants});
     const siegeCannons = new SiegeCannons({cycle, placement, grid, mutants});
-    const infantry = roads ? new Infantry({cycle, placement, grid, gates, mutants}) : null;
+    const infantry = roads ? new Infantry({cycle, placement, grid, gates, mutants, roads}) : null;
     mutants.setInfantry(infantry);
-    const workers = roads ? new Workers({cycle, placement, grid, gates}) : null;
+    const workers = roads ? new Workers({cycle, placement, grid, gates, economy, roads}) : null;
     mutants.setWorkers(workers);
     cycle.begin();
 

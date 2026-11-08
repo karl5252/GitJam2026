@@ -76,6 +76,7 @@ export class RoadNetwork {
     #grid;
     #tiles = new Map(); // integer cell index -> {col, row, kind}
     #gates = new Map(); // integer cell index -> passage axis
+    #revision = 0;
 
     /** @param {{grid: import('./grid.js').Grid}} deps */
     constructor({grid}) {
@@ -89,6 +90,11 @@ export class RoadNetwork {
     #inBounds({col, row}) {
         return Number.isInteger(col) && Number.isInteger(row)
             && col >= 0 && row >= 0 && col < this.#grid.cols && row < this.#grid.rows;
+    }
+
+    /** Changes on every road or gate change, so walkers and trucks know to look again. */
+    get revision() {
+        return this.#revision;
     }
 
     has(cell) {
@@ -111,6 +117,11 @@ export class RoadNetwork {
     neighbors(cell) {
         return STEPS.map(([dc, dr]) => ({col: cell.col + dc, row: cell.row + dr}))
             .filter((next) => this.#inBounds(next) && this.has(next) && this.#crossable(cell, next));
+    }
+
+    /** Can a truck drive straight from `a` to the touching tile `b` right now? */
+    connects(a, b) {
+        return this.neighbors(a).some((next) => next.col === b.col && next.row === b.row);
     }
 
     overlaps({col, row, width, height}) {
@@ -158,7 +169,8 @@ export class RoadNetwork {
      * give a one-tile route.
      * @returns {Array<{col, row}> | null}
      */
-    route(from, to) {
+    route(from, to, {without = null, gate = null} = {}) {
+        if (without || gate) return this.#asIf({without, gate}, () => this.route(from, to));
         if (!this.#inBounds(from) || !this.#inBounds(to) || !this.has(from) || !this.has(to)) return null;
         const target = this.#key(to);
         const cost = new Map([[this.#key(from), 0]]);
@@ -186,6 +198,23 @@ export class RoadNetwork {
             }
         }
         return null;
+    }
+
+    /**
+     * Ask a question as if one tile were gone or one more gate stood, and put
+     * everything back before anyone can see it. Map order does not matter to any
+     * answer, but the tile goes back where it was anyway.
+     */
+    #asIf({without, gate}, ask) {
+        const saved = new Map(this.#tiles);
+        if (without) this.#tiles.delete(this.#key(without));
+        if (gate) this.#gates.set(this.#key(gate.cell), gate.axis);
+        try {
+            return ask();
+        } finally {
+            this.#tiles = saved;
+            if (gate) this.#gates.delete(this.#key(gate.cell));
+        }
     }
 
     /** The passage axis of the gate on a cell, or null. */
@@ -224,11 +253,13 @@ export class RoadNetwork {
     /** Record a gate that BuildingPlacement has already validated. */
     setGate(cell, axis) {
         this.#gates.set(this.#key(cell), axis);
+        this.#revision++;
     }
 
     /** The tile stays, as a plain road. */
     clearGate(cell) {
         this.#gates.delete(this.#key(cell));
+        this.#revision++;
     }
 
     /** A gate's own tile and the road it runs along must stay while it stands. */
@@ -256,6 +287,7 @@ export class RoadNetwork {
         const check = this.canAddHqRing(footprint);
         if (!check.ok) return check;
         for (const cell of hqRingCells(footprint)) this.#tiles.set(this.#key(cell), {...cell, kind: HQ_RING});
+        this.#revision++;
         return {ok: true};
     }
 
@@ -278,7 +310,10 @@ export class RoadNetwork {
 
     add(cell) {
         const check = this.canAdd(cell);
-        if (check.ok) this.#tiles.set(this.#key(cell), {col: cell.col, row: cell.row, kind: PLAYER_ROAD});
+        if (check.ok) {
+            this.#tiles.set(this.#key(cell), {col: cell.col, row: cell.row, kind: PLAYER_ROAD});
+            this.#revision++;
+        }
         return check;
     }
 
@@ -289,7 +324,10 @@ export class RoadNetwork {
      */
     restoreTile(cell) {
         const check = this.#canOccupy(cell);
-        if (check.ok) this.#tiles.set(this.#key(cell), {col: cell.col, row: cell.row, kind: PLAYER_ROAD});
+        if (check.ok) {
+            this.#tiles.set(this.#key(cell), {col: cell.col, row: cell.row, kind: PLAYER_ROAD});
+            this.#revision++;
+        }
         return check;
     }
 
@@ -312,7 +350,10 @@ export class RoadNetwork {
 
     remove(cell, docks = []) {
         const check = this.canRemove(cell, docks);
-        if (check.ok) this.#tiles.delete(this.#key(cell));
+        if (check.ok) {
+            this.#tiles.delete(this.#key(cell));
+            this.#revision++;
+        }
         return check;
     }
 

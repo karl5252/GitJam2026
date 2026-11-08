@@ -7,9 +7,13 @@ import {LURE_RANGE, MUTANT, borderSpawns} from '../../src/core/mutants.js';
 import {RoadFailure, barracksExit} from '../../src/core/roads.js';
 import {Shift} from '../../src/core/shiftCycle.js';
 import {GATE_TILE_COST, UNREACHABLE, canStep, nextStep, resolvePost, walkField, walkMap} from '../../src/core/walkField.js';
+import {Ground, speedOn} from '../../src/core/terrainSpeed.js';
 import {LAYOUT_VERSION, LAYOUT_VERSION_BARRACKS, LayoutFailure, exportLayout, loadLayout} from '../../src/testShadow/layoutSnapshot.js';
 import {stackOffsets} from '../../src/scenes/InfantryLayer.js';
 import {canonicalState, createWorld, digestOf, worldState} from '../soak/harness.js';
+
+/** Ticks to cross one tile of open ground: the unit walk fields count in. */
+const TILE_TICKS = 32;
 
 /**
  * Barracks, flags, walking, squads, gates and combat.
@@ -182,9 +186,9 @@ test('a gate can be crossed along its passage axis and costs the wait for it', (
     const m = map(barrier('gateHorizontal'));
     const field = walkField(m, {col: 2, row: 4});
     assert.equal(GATE_TILE_COST, 5);
-    assert.equal(field[fieldKey(2, 3)], 1);
-    assert.equal(field[fieldKey(2, 2)], 2);
-    assert.equal(field[fieldKey(2, 1)], 3 + GATE_TILE_COST);
+    assert.equal(field[fieldKey(2, 3)], TILE_TICKS);
+    assert.equal(field[fieldKey(2, 2)], 2 * TILE_TICKS);
+    assert.equal(field[fieldKey(2, 1)], (3 + GATE_TILE_COST) * TILE_TICKS, 'over open ground, the old tile counts times 32');
 });
 
 test('a gate is solid across its passage axis', () => {
@@ -387,7 +391,8 @@ test('a soldier appears on the exit tile and first moves on the next tick', () =
     const {x, y} = center(w, 14, 8);
     assert.deepEqual([first.col, first.row, first.x, first.y, first.hp], [14, 8, x, y, INFANTRY.maxHp]);
     step(w, 1);
-    assert.equal(Math.abs(soldiers(w)[0].x - x) + Math.abs(soldiers(w)[0].y - y), INFANTRY.speed);
+    // The exit is a road, so the first step is at road speed.
+    assert.ok(Math.abs(Math.abs(soldiers(w)[0].x - x) + Math.abs(soldiers(w)[0].y - y) - speedOn(Ground.ROAD, INFANTRY.speed)) < 1e-9);
 });
 
 test('a replacement arrives 600 powered ticks after a death, and no sooner', () => {
@@ -944,6 +949,7 @@ test('soldiers close on a mutant in the defended area, up to the pursuit limit a
     run(800, () => {
         for (const {col, row} of infantry.soldiers()) furthest = Math.max(furthest, field[row * 24 + col]);
     });
+    furthest /= TILE_TICKS; // the field is in ticks; open ground is TILE_TICKS a tile
     assert.ok(furthest >= 1, 'they moved');
     assert.ok(furthest <= INFANTRY.leashTiles, `went ${furthest} tiles`);
 });
@@ -961,7 +967,7 @@ test('the pursuit limit holds even with a target that could be reached one tile 
         for (const {col, row} of infantry.soldiers()) furthest = Math.max(furthest, field[row * 24 + col]);
     });
     assert.ok(infantry.soldiers().every((s) => s.targetId === 'mutant-1'), 'still locked');
-    assert.equal(furthest, INFANTRY.leashTiles);
+    assert.equal(furthest / TILE_TICKS, INFANTRY.leashTiles);
 });
 
 test('a target that leaves the area is let go, and the squad returns to its places', () => {
@@ -1421,7 +1427,7 @@ test('a recall moves soldiers one tile at a time, finishing the edge they are on
     w.placement.clearFlag(id);
     step(w, 1);
     const [soldier] = soldiers(w);
-    assert.equal(Math.abs(soldier.x - x) + Math.abs(soldier.y - y), INFANTRY.speed);
+    assert.ok(Math.abs(Math.abs(soldier.x - x) + Math.abs(soldier.y - y) - speedOn(Ground.ROAD, INFANTRY.speed)) < 1e-9, 'its first edge leaves the exit road');
 });
 
 test('a blocked flag can be reset', () => {
