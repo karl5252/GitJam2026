@@ -19,7 +19,7 @@ import {Mutants} from '../core/mutants.js';
 import {nightPlan, waveProgress} from '../core/waves.js';
 import {Autocannons} from '../core/autocannons.js';
 import {DEFAULT_MAP, TILE_SIZE, WORLD_MAPS, createTerrain} from '../core/worldMap.js';
-import {WORKER, Workers} from '../core/workers.js';
+import {WORKER, Workers, repairPrice} from '../core/workers.js';
 import {FogOfWar, buildingVision, fortificationTiles, startingKnown, unitVision} from '../core/vision.js';
 import {SIEGE, SIEGE_CANNON_TYPE, SiegeCannons} from '../core/siegeCannons.js';
 import {TEST_MODE} from '../testMode.js';
@@ -268,6 +268,7 @@ export class GameScene extends Phaser.Scene {
             [Command.MOVE_FLAG]: () => this.enterFlagMode(),
             [Command.RESET_FLAG]: () => this.handleResetFlag(),
             [Command.REFIT]: () => this.handleRefit(),
+            [Command.REPAIR]: () => this.handleRepair(),
             [Command.ZOOM_IN]: () => this.worldCamera.zoomIn(),
             [Command.ZOOM_OUT]: () => this.worldCamera.zoomOut(),
             [Command.FIT]: () => this.worldCamera.fit(),
@@ -807,7 +808,31 @@ export class GameScene extends Phaser.Scene {
                 : null,
             switchable: Boolean(type) && type.switchable !== false,
             paused: this.cycle.pausedDay,
+            repair: this.repairChoice(building, type),
         });
+    }
+
+    /**
+     * REPAIR on a damaged building, STOP REPAIR while one is ordered: only by a timed
+     * Day, after Day 0. Shown dimmed, and still pressable for its reason, when no
+     * worker can take it. Null hides the button.
+     */
+    repairChoice(building, type) {
+        if (!building || !this.workers || !this.cycle.timed || this.cycle.shift !== Shift.DAY || this.cycle.deployment) return null;
+        const ordered = this.workers.repairOrder(building.id) !== null;
+        if (!ordered && building.hp >= type.maxHp) return null;
+        const enabled = ordered ? !this.cycle.pausedDay : this.workers.canRepair(building.id, {quick: true}).ok;
+        return {ordered, enabled, price: repairPrice(type, type.maxHp - building.hp)}; // what full HP would cost now
+    }
+
+    /** REPAIR or STOP REPAIR on the selection; a refusal says why. */
+    handleRepair() {
+        const {building} = this.selection();
+        if (!building || !this.workers) return;
+        EventBus.emit(Notice.DISARM);
+        const result = this.workers.repairOrder(building.id) ? this.workers.stopRepair(building.id) : this.workers.orderRepair(building.id);
+        this.showHint(result.ok ? null : result.reason);
+        this.presentSelection();
     }
 
     /** Act on the selected building through the real domain methods. */
@@ -1564,7 +1589,8 @@ export class GameScene extends Phaser.Scene {
         const squads = this.infantry?.step();
         if (squads?.shots.length) this.infantryLayer.recordShots(squads.shots, this.clock.tick);
         if (squads?.impacts) this.infantryLayer.recordImpacts(squads.impacts, this.clock.tick);
-        this.workers?.step();
+        const work = this.workers?.step();
+        if (work?.cancelled.length) this.showHint(work.cancelled.at(-1).reason); // e.g. a repair that ran out of Credits
         const effects = this.mutants?.step();
         if (effects?.impacts) this.mutantLayer.recordImpacts(effects.impacts, this.clock.tick);
         if (effects?.destroyed.length) this.handleBuildingsDestroyed(effects.destroyed);

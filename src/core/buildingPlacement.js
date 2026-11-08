@@ -263,6 +263,24 @@ export class BuildingPlacement {
     }
 
     /**
+     * Restore HP to a standing building, never above its type's maximum. This is the
+     * only way HP goes up: HQ's workers call it as they finish each paid repair block
+     * (core/workers.js). A destroyed building is gone and cannot be repaired. It is
+     * simulation, not a player order, so the pause rule does not apply: no tick runs
+     * while paused anyway.
+     * @returns {{ok: true, hp: number, restored: number} | {ok: false, reason: 'unknown-building' | 'invalid-state'}}
+     */
+    repairBuilding(id, amount) {
+        if (!Number.isSafeInteger(amount) || amount <= 0) return {ok: false, reason: INVALID_STATE};
+        const building = this.#buildings.find((b) => b.id === id);
+        if (!building) return {ok: false, reason: UNKNOWN_BUILDING};
+        const hp = Math.min(getBuildingType(building.type).maxHp, building.hp + amount);
+        const restored = hp - building.hp;
+        building.hp = hp;
+        return {ok: true, hp, restored};
+    }
+
+    /**
      * Take down anything but HQ. Day only, free and with no refund. Always
      * possible, because losing a building can only add road connections and free
      * what depended on it: docks, exits and power are all derived. Rebuilding is

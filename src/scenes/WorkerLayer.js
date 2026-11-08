@@ -19,13 +19,22 @@ const POLE_COLOR = 0xeceff1; // light, because it often stands in the dark of un
 const RING_RADIUS = 15;
 const JOB_COLOR = 0xffca28;
 const JOB_BAR = {height: 4, inset: 4, back: 0x212121, fill: 0xffca28};
-// The sheet's ACTION row is two activities: 8-9 chop (axe up, axe down), 10-11 repair,
-// which is reserved for TASK 025.4C and not used yet.
+// The sheet's ACTION row is two activities: 8-9 chop (axe up, axe down), 10-11 repair.
 const CHOP_FRAMES = [8, 9];
+const REPAIR_FRAMES = [10, 11];
 const CHOP_FRAME_TICKS = 8;
 
 /** The chopping frame for this tick, looping while a worker works. */
 export const chopFrame = (tick) => CHOP_FRAMES[Math.floor(tick / CHOP_FRAME_TICKS) % CHOP_FRAMES.length];
+
+/** The repair frame for this tick, looping at the same pace while a worker mends a building. */
+export const repairFrame = (tick) => REPAIR_FRAMES[Math.floor(tick / CHOP_FRAME_TICKS) % REPAIR_FRAMES.length];
+
+/** What a worker's sprite shows: repair, chop, or its walk. */
+export const workerFrame = ({repairing = false, working = false}, moving, tick) => {
+    if (repairing) return repairFrame(tick);
+    return working ? chopFrame(tick) : walkFrame(moving, tick);
+};
 
 /**
  * Workers and the work flag. A worker is a small yellow circle in an orange hard hat,
@@ -95,9 +104,9 @@ export class WorkerLayer {
     /** Rendered workers, deaths and the flag, for QA. */
     views() {
         return {
-            workers: [...this.#workers].map(([id, {body, hat, hp, art, chopping}]) => ({
+            workers: [...this.#workers].map(([id, {body, hat, hp, art, chopping, repairing}]) => ({
                 id, visible: body.visible, x: body.x, y: body.y, radius: body.radius, hatColor: hat.fillColor, hpVisible: hp.visible,
-                chopping, frame: art ? Number(art.frame.name) : null,
+                chopping, repairing, frame: art ? Number(art.frame.name) : null,
             })),
             jobs: this.#jobViews,
             deaths: this.#deaths.map(({view}) => ({x: view.x, y: view.y})),
@@ -123,7 +132,7 @@ export class WorkerLayer {
         }
     }
 
-    #syncWorker({id, x: domainX, y: domainY, hp, working = false}, [dx, dy], maxHp, tick) {
+    #syncWorker({id, x: domainX, y: domainY, hp, working = false, repairing = false}, [dx, dy], maxHp, tick) {
         const view = this.#workers.get(id) ?? this.#addWorker(id);
         const x = domainX + dx;
         const y = domainY + dy;
@@ -132,7 +141,8 @@ export class WorkerLayer {
         view.body.setPosition(x, y);
         placeArt(view.art, 'worker', x, y);
         view.chopping = working;
-        view.art?.setFrame(working ? chopFrame(tick) : walkFrame(moving, tick));
+        view.repairing = repairing;
+        view.art?.setFrame(workerFrame({repairing, working}, moving, tick));
         view.hat.setPosition(x, y - BODY_RADIUS + 1);
         view.hp.setPosition(x - HP_BAR.width / 2, y - HP_BAR.offset)
             .setSize(HP_BAR.width * hp / maxHp, HP_BAR.height)

@@ -56,6 +56,7 @@ export const Command = Object.freeze({
     MOVE_FLAG: 'barracks:moveFlag',
     RESET_FLAG: 'barracks:resetFlag',
     REFIT: 'barracks:refit',
+    REPAIR: 'building:repair', // REPAIR or STOP REPAIR on the selection
     ZOOM_IN: 'camera:zoomIn',
     ZOOM_OUT: 'camera:zoomOut',
     FIT: 'camera:fit',

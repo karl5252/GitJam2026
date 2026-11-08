@@ -302,9 +302,12 @@ test.describe('walls and gates: mobile landscape', () => {
         await tapAction(page, 'cancel-placement');
         await expect(byAction(page, 'cancel-placement')).toHaveCount(0);
         await flow.select(page, state, {col: 3, row: 3}, 'wall-2');
+        // DESTROY is the agreed 48x48 logical icon square (TASK 025.4C UI hotfix).
         const demolish = await byAction(page, 'demolish').boundingBox();
-        expect(demolish.width).toBeGreaterThanOrEqual(MIN_TOUCH);
-        expect(demolish.height).toBeGreaterThanOrEqual(MIN_TOUCH);
+        const canvas = await page.locator('canvas').boundingBox();
+        const iconMin = 48 * Math.min(canvas.width / 1280, canvas.height / 720) - 0.5;
+        expect(demolish.width).toBeGreaterThanOrEqual(iconMin);
+        expect(demolish.height).toBeGreaterThanOrEqual(iconMin);
     });
 
     test('a touch drag proposes a wall, and a separate tap builds it', async ({page}) => {

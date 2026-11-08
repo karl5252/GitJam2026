@@ -22,6 +22,12 @@ const menuSlot = (slot) => ({x: MENU_COLUMNS[slot % 2], y: MENU_TOP + Math.floor
 const WIDE = {width: 192, height: 84};
 const CELL = {width: 120, height: 82};
 const ACTION = {width: 116, height: 84};
+const ICON = {width: 48, height: 48}; // compact square icon buttons
+/** Two icon buttons side by side in one action slot: REPAIR on the left, DESTROY on the right. */
+const pairIn = ({x, y, width}) => ({
+    repair: {x: x - width / 2 + ICON.width / 2 + 2, y, ...ICON},
+    demolish: {x: x + width / 2 - ICON.width / 2 - 2, y, ...ICON},
+});
 const SPEED = {width: 82, height: 84};
 const CAMERA = {width: 92, height: 84};
 
@@ -50,7 +56,7 @@ export const DESKTOP = Object.freeze({
     narrowToggle: {x: 1098, y: 560, ...ACTION, height: 84},
     actions: {
         flag: {x: 1098, y: 470, ...ACTION},
-        demolish: {x: 1218, y: 470, ...ACTION},
+        ...pairIn({x: 1218, y: 470, ...ACTION}), // the old Demolish slot holds both
         reset: {x: 1218, y: 560, ...ACTION},
         refit: {x: 1152, y: 650, ...WIDE},
     },
@@ -110,7 +116,7 @@ export const TOUCH = Object.freeze({
         flag: {...left(3), ...LABEL},
         reset: {...left(4), ...LABEL},
         refit: {...right(3), ...LABEL},
-        demolish: {...right(4), ...LABEL},
+        ...pairIn(right(4)), // the old Demolish slot holds both
     },
     toggle: left(5),
     narrowToggle: left(5),

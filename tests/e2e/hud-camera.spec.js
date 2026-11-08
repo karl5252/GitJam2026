@@ -361,10 +361,15 @@ test.describe('touch', () => {
         await tapWorld(page, cellCenter(state.grid, {col: 15, row: 7}), state);
         await expect.poll(async () => (await sample(page)).selectedBuilding).toBe(id);
         const actions = ['toggle-power', 'set-flag', 'reset-flag', 'refit', 'demolish', 'end-day'];
+        // DESTROY and REPAIR are the agreed 48x48 logical icon squares (TASK 025.4C UI hotfix);
+        // every other control keeps the 44 CSS px rule.
+        const iconCanvas = await page.locator('canvas').boundingBox();
+        const iconMin = 48 * Math.min(iconCanvas.width / 1280, iconCanvas.height / 720) - 0.5;
+        const minFor = (action) => (action === 'demolish' || action === 'repair' ? iconMin : MIN_TOUCH);
         const boxes = await Promise.all(actions.map((action) => byAction(page, action).boundingBox()));
         boxes.forEach((box, i) => {
-            expect(box.width, actions[i]).toBeGreaterThanOrEqual(MIN_TOUCH);
-            expect(box.height, actions[i]).toBeGreaterThanOrEqual(MIN_TOUCH);
+            expect(box.width, actions[i]).toBeGreaterThanOrEqual(minFor(actions[i]));
+            expect(box.height, actions[i]).toBeGreaterThanOrEqual(minFor(actions[i]));
             for (let j = i + 1; j < boxes.length; j++) expect(overlaps(box, boxes[j]), `${actions[i]}, ${actions[j]}`).toBe(false);
         });
         await tapAction(page, 'set-flag');

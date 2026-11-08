@@ -50,9 +50,29 @@
  * comes back; nothing advances without a worker on the tile. With nothing left to
  * clear, workers wait at the flag. The area never grows and the flag never moves.
  *
+ * REPAIR ORDERS (ACTIVE cycle, timed Day only). The player orders a repair on a
+ * damaged building; it is not tied to the flag or its area. Each order takes one
+ * worker, the nearest that is free by travel time (a worker outside, ties to id
+ * order, before one leaving HQ), and an order outranks clearing: a worker chopping
+ * drops its tile, whose progress stays with the tile. There is no queue: at most one
+ * order per living worker, three at most. The worker walks to the free tile beside
+ * the building it reaches soonest and works from its centre. Every REPAIR.ticksPerBlock
+ * ticks there it pays for and restores REPAIR.hpPerBlock (less at the top), charged
+ * before the HP goes on. A block it cannot pay for cancels the order and frees the
+ * worker; HP already restored stays. An order ends when the building is whole,
+ * destroyed or demolished, or on STOP REPAIR. Dusk calls the worker home as usual
+ * and the order waits, with its partial block, for the next running Day: a worker
+ * who reached HQ, or died, is replaced from HQ then.
+ *
+ * Price: an ordinary building costs REPAIR.share of its construction Credits to
+ * restore all its HP, in proportion to the HP restored; HQ, which costs nothing to
+ * build, costs REPAIR.hqCreditsPerHp. A block costs the difference between the price
+ * of the HP missing before and after it, rounded half up, so the blocks of a whole
+ * repair add up to the exact rounded total, never a Credit more.
+ *
  * `visionRadius` is how far a worker sees; `CLEARING.radius` is how far it works.
  */
-import {HQ_TYPE} from './buildingTypes.js';
+import {HQ_TYPE, getBuildingType} from './buildingTypes.js';
 import {GAME_PAUSED, UNKNOWN_BUILDING} from './buildingPlacement.js';
 import {receivingDock} from './roads.js';
 import {Shift} from './shiftCycle.js';
@@ -78,6 +98,39 @@ export const CLEARING = Object.freeze({
     ticksPerTile: 300,
     pollutionPerTile: 1,
 });
+
+/** Repairs, all provisional. Tune here and nowhere else. */
+export const REPAIR = Object.freeze({
+    hpPerBlock: 10,
+    ticksPerBlock: 60,
+    share: Object.freeze({numerator: 3, denominator: 5}), // 60% of the build price restores full HP
+    hqCreditsPerHp: 1,
+});
+
+export const RepairFailure = Object.freeze({
+    NOT_DAMAGED: 'repair-not-damaged',
+    ALREADY_ORDERED: 'repair-already-ordered',
+    NOT_ORDERED: 'repair-not-ordered',
+    NO_WORKER: 'repair-no-worker',
+    NO_CREDITS: 'repair-no-credits',
+    UNREACHABLE: 'repair-unreachable',
+});
+
+/** Credits to restore `missing` HP to a building of this type. Integers only, rounded half up. */
+export function repairPrice(type, missing) {
+    if (type.id === HQ_TYPE) return missing * REPAIR.hqCreditsPerHp;
+    const {numerator, denominator} = REPAIR.share;
+    const scaled = type.cost.credits * numerator * missing;
+    const whole = denominator * type.maxHp;
+    return Math.floor((2 * scaled + whole) / (2 * whole));
+}
+
+/** The next block for a building at `hp`: what it restores and what it costs. */
+export function repairBlock(type, hp) {
+    const missing = type.maxHp - hp;
+    const gain = Math.min(REPAIR.hpPerBlock, missing);
+    return {gain, credits: repairPrice(type, missing) - repairPrice(type, missing - gain)};
+}
 
 const tileKey = ({col, row}) => `${col},${row}`;
 
@@ -110,6 +163,10 @@ export class Workers {
     #progress = new Map(); // tile key -> ticks of work done, for tiles not yet cleared
     #cleared = 0;
     #jobFields = new Map(); // tile key -> walk field to it, for the current map
+    #orders = new Map(); // building id -> {worker: id | null, ticks, tile}, in the order given
+    #repairSpent = 0;
+    #repairRestored = 0;
+    #notices = []; // this tick's cancelled orders, for the HUD
     #flag = null;
     #workers = []; // leaving order
     #inside = WORKER.squadSize;
@@ -217,6 +274,66 @@ export class Workers {
         return check;
     }
 
+    /** The repair order on a building, or null. */
+    repairOrder(buildingId) {
+        const order = this.#orders.get(buildingId);
+        return order ? {buildingId, worker: order.worker, ticks: order.ticks} : null;
+    }
+
+    /**
+     * Could the player order a repair here now? Never mutates. `quick` skips the walk
+     * fields that check a worker can reach the building, for a button drawn every
+     * frame; the order itself always checks.
+     * @returns {{ok: true} | {ok: false, reason: string}}
+     */
+    canRepair(buildingId, {quick = false} = {}) {
+        if (!this.#cycle.timed || !this.#economy) return {ok: false, reason: WorkFlagFailure.DAY_ONLY};
+        const hq = this.#hq();
+        if (!hq) return {ok: false, reason: UNKNOWN_BUILDING};
+        if (this.#cycle.pausedDay) return {ok: false, reason: GAME_PAUSED};
+        if (!this.#mayDispatch()) return {ok: false, reason: WorkFlagFailure.DAY_ONLY};
+        const building = this.#placement.buildings().find(({id}) => id === buildingId);
+        if (!building) return {ok: false, reason: UNKNOWN_BUILDING};
+        if (this.#orders.has(buildingId)) return {ok: false, reason: RepairFailure.ALREADY_ORDERED};
+        if (building.hp >= getBuildingType(building.type).maxHp) return {ok: false, reason: RepairFailure.NOT_DAMAGED};
+        if (quick) return this.#freeRepairers() > 0 ? {ok: true} : {ok: false, reason: RepairFailure.NO_WORKER};
+        this.#refreshNavigation(hq);
+        const choice = this.#chooseRepairer(building, hq);
+        return choice.ok ? {ok: true} : choice;
+    }
+
+    /** REPAIR: one worker for this building. Free to order; each block is paid as it is done. */
+    orderRepair(buildingId) {
+        const check = this.canRepair(buildingId);
+        if (!check.ok) return check;
+        const building = this.#placement.buildings().find(({id}) => id === buildingId);
+        const {worker} = this.#chooseRepairer(building, this.#hq());
+        if (worker) {
+            worker.repair = buildingId;
+            worker.job = null; // a jungle tile keeps its progress for later
+            worker.arrived = false;
+        }
+        this.#orders.set(buildingId, {worker: worker?.id ?? null, ticks: 0, tile: null});
+        return {ok: true, worker: worker?.id ?? null};
+    }
+
+    /** STOP REPAIR: cancel at once and free the worker. HP restored so far stays. */
+    stopRepair(buildingId) {
+        if (this.#cycle.pausedDay) return {ok: false, reason: GAME_PAUSED};
+        if (!this.#orders.has(buildingId)) return {ok: false, reason: RepairFailure.NOT_ORDERED};
+        this.#endOrder(buildingId);
+        return {ok: true};
+    }
+
+    /** Detached repair state: orders in the order given, and what repairs have cost and restored. */
+    repairs() {
+        return {
+            orders: [...this.#orders].map(([buildingId, {worker, ticks, tile}]) => ({buildingId, worker, ticks, tile: tile && {...tile}})),
+            spent: this.#repairSpent,
+            restored: this.#repairRestored,
+        };
+    }
+
     /**
      * Everyone home, on foot. Free, and at any time except a paused Day, where no
      * order changes anything until PLAY. ACTIVE: the flag stays where it is, ready
@@ -245,20 +362,24 @@ export class Workers {
      * One simulation tick. Runs after Infantry.step() and before Mutants.step().
      */
     step() {
+        this.#notices = [];
         const shift = this.#cycle.shift;
-        if (shift === Shift.DEFEATED) return;
+        if (shift === Shift.DEFEATED) return {cancelled: this.#notices};
         if (this.#cycle.timed) {
             this.#followCycle(shift);
+            this.#tidyOrders();
         } else if (shift !== Shift.NIGHT) {
             this.#standDown();
-            return;
+            return {cancelled: this.#notices};
         }
-        if (this.#target() === null && this.#workers.length === 0) return;
+        if (this.#target() === null && this.#workers.length === 0 && this.#orders.size === 0) return {cancelled: this.#notices};
         const hq = this.#hq();
-        if (!hq) return; // nowhere to leave from or go home to: anyone out stays put
+        if (!hq) return {cancelled: this.#notices}; // nowhere to leave from or go home to: anyone out stays put
         this.#refreshNavigation(hq);
+        if (this.#repairTime()) this.#deployRepairers();
         for (const worker of [...this.#workers]) this.#move(worker);
         if (!this.#cycle.timed || shift === Shift.DAY) this.#deploy();
+        return {cancelled: this.#notices};
     }
 
     /**
@@ -294,6 +415,8 @@ export class Workers {
         if (worker.hp > 0) return {ok: true, killed: false, hp: worker.hp};
         this.#workers.splice(index, 1);
         this.#lost++;
+        const order = worker.repair ? this.#orders.get(worker.repair) : null;
+        if (order) order.worker = null; // the order waits for another worker
         return {ok: true, killed: true, hp: 0};
     }
 
@@ -305,6 +428,170 @@ export class Workers {
             held: worker.held && {...worker.held},
             job: worker.job && {...worker.job},
         }));
+    }
+
+    /** ACTIVE: HP goes up only on a running timed Day: ticks never run in Day 0 or while paused. */
+    #repairTime() {
+        return this.#cycle.timed === true && this.#cycle.shift === Shift.DAY;
+    }
+
+    /** Orders follow the buildings and the workers: a building gone or whole ends one; a worker gone frees it. */
+    #tidyOrders() {
+        if (this.#orders.size === 0) return;
+        const byId = new Map(this.#placement.buildings().map((building) => [building.id, building]));
+        const out = new Set(this.#workers.map(({id}) => id));
+        for (const [buildingId, order] of [...this.#orders]) {
+            const building = byId.get(buildingId);
+            if (!building || building.hp >= getBuildingType(building.type).maxHp) {
+                this.#endOrder(buildingId);
+                continue;
+            }
+            if (order.worker !== null && !out.has(order.worker)) order.worker = null; // went inside, or died
+        }
+    }
+
+    #endOrder(buildingId, reason = null) {
+        const order = this.#orders.get(buildingId);
+        if (!order) return;
+        const worker = this.#workers.find(({id}) => id === order.worker);
+        if (worker) {
+            worker.repair = null;
+            worker.repairing = false;
+        }
+        this.#orders.delete(buildingId);
+        if (reason) this.#notices.push({buildingId, reason});
+    }
+
+    /**
+     * Who takes a new order: the free worker who reaches the building soonest, a
+     * worker outside before one leaving HQ on equal time, then id order.
+     * @returns {{ok: true, worker: object | null} | {ok: false, reason: string}}
+     */
+    #chooseRepairer(building, hq) {
+        if (this.#orders.size >= WORKER.squadSize) return {ok: false, reason: RepairFailure.NO_WORKER};
+        const pending = [...this.#orders.values()].filter(({worker}) => worker === null).length;
+        const candidates = this.#workers.filter((worker) => !worker.repair).map((worker) => ({worker, from: worker}));
+        if (this.#inside - pending > 0) candidates.push({worker: null, from: receivingDock(hq)});
+        if (candidates.length === 0) return {ok: false, reason: RepairFailure.NO_WORKER};
+        const stands = this.#standTiles(building);
+        let best = null;
+        let bestTime = UNREACHABLE;
+        for (const candidate of candidates) {
+            const reach = isFree(this.#map, candidate.from) ? walkField(this.#map, {col: candidate.from.col, row: candidate.from.row}) : null;
+            if (!reach) continue;
+            const time = Math.min(...stands.map(({col, row}) => reach[row * this.#grid.cols + col]));
+            if (time < bestTime) {
+                best = candidate;
+                bestTime = time;
+            }
+        }
+        return best ? {ok: true, worker: best.worker} : {ok: false, reason: RepairFailure.UNREACHABLE};
+    }
+
+    /** Free tiles touching a building's footprint, row by row. */
+    #standTiles({col, row, width, height}) {
+        const tiles = [];
+        for (let r = row - 1; r <= row + height; r++) {
+            for (let c = col - 1; c <= col + width; c++) {
+                const inside = c >= col && c < col + width && r >= row && r < row + height;
+                const corner = (c === col - 1 || c === col + width) && (r === row - 1 || r === row + height);
+                if (inside || corner || c < 0 || r < 0 || c >= this.#grid.cols || r >= this.#grid.rows) continue;
+                if (isFree(this.#map, {col: c, row: r})) tiles.push({col: c, row: r});
+            }
+        }
+        return tiles;
+    }
+
+    /** Workers who could take a new order: outside and unordered, or inside and not promised. */
+    #freeRepairers() {
+        if (this.#orders.size >= WORKER.squadSize) return 0;
+        const pending = [...this.#orders.values()].filter(({worker}) => worker === null).length;
+        return this.#workers.filter((worker) => !worker.repair).length + Math.max(0, this.#inside - pending);
+    }
+
+    /** An order waiting for a worker gets one from HQ, if one is inside. */
+    #deployRepairers() {
+        for (const [buildingId, order] of this.#orders) {
+            if (order.worker !== null || this.#inside === 0) continue;
+            const worker = this.#spawn();
+            worker.repair = buildingId;
+            order.worker = worker.id;
+        }
+    }
+
+    /**
+     * A worker with an order on a Day: walk to the stand tile and work there.
+     * @returns {boolean} whether its tick is spent on the order
+     */
+    #repair(worker) {
+        const order = this.#orders.get(worker.repair);
+        const building = order && this.#placement.buildings().find(({id}) => id === worker.repair);
+        if (!building) {
+            worker.repair = null;
+            return false;
+        }
+        if (!order.tile || !isFree(this.#map, order.tile)) order.tile = this.#chooseStand(worker, building);
+        if (!order.tile) {
+            this.#endOrder(building.id, RepairFailure.UNREACHABLE);
+            return false;
+        }
+        if (sameCell(worker, order.tile)) {
+            const centre = this.#centerOf(order.tile);
+            if (worker.x !== centre.x || worker.y !== centre.y) this.#walkTo(worker, centre);
+            else this.#mend(worker, order, building);
+            return true;
+        }
+        if (!this.#atCentre(worker)) {
+            this.#walkTo(worker, this.#centerOf(worker));
+            return true;
+        }
+        const step = nextStep(this.#map, this.#jobField(order.tile), worker);
+        if (!step) {
+            order.tile = null; // walled off since: choose again next tick
+            return true;
+        }
+        if (isGate(this.#map, step) && !this.#gateIsPassable(step)) {
+            worker.held = step;
+            return true;
+        }
+        worker.next = step;
+        this.#walkEdge(worker);
+        return true;
+    }
+
+    /** The free tile beside the building this worker reaches soonest, ties by row then column. */
+    #chooseStand(worker, building) {
+        if (!isFree(this.#map, worker)) return null;
+        const reach = walkField(this.#map, {col: worker.col, row: worker.row});
+        let best = null;
+        let bestTime = UNREACHABLE;
+        for (const tile of this.#standTiles(building)) {
+            const time = reach[tile.row * this.#grid.cols + tile.col];
+            if (time < bestTime) {
+                best = tile;
+                bestTime = time;
+            }
+        }
+        return best;
+    }
+
+    /** One tick of repair. Each finished block is paid first, then restored; one it cannot pay ends the order. */
+    #mend(worker, order, building) {
+        worker.repairing = true;
+        if (++order.ticks < REPAIR.ticksPerBlock) return;
+        const type = getBuildingType(building.type);
+        const {gain, credits} = repairBlock(type, building.hp);
+        const cost = {credits, ap: 0};
+        if (!this.#economy.canAfford(cost).ok) {
+            this.#endOrder(building.id, RepairFailure.NO_CREDITS);
+            return;
+        }
+        this.#economy.spend(cost);
+        const repaired = this.#placement.repairBuilding(building.id, gain);
+        this.#repairSpent += credits;
+        this.#repairRestored += repaired.restored;
+        order.ticks = 0;
+        if (repaired.hp >= type.maxHp) this.#endOrder(building.id);
     }
 
     /** Clearing work: progress on unfinished tiles, in row-major order, and tiles cleared this run. */
@@ -332,7 +619,7 @@ export class Workers {
     /** Detached, JSON-serializable state. Reading it changes nothing. */
     snapshot() {
         const state = {route: this.route(), flag: this.flag, inside: this.#inside, lost: this.#lost, workers: this.workers()};
-        return this.#cycle.timed ? {...state, sent: this.#sent, clearing: this.clearing()} : state; // LEGACY keeps its old shape
+        return this.#cycle.timed ? {...state, sent: this.#sent, clearing: this.clearing(), repairs: this.repairs()} : state; // LEGACY keeps its old shape
     }
 
     #hq() {
@@ -392,11 +679,13 @@ export class Workers {
     #move(worker) {
         worker.held = null;
         worker.working = false;
+        worker.repairing = false;
         if (worker.next) {
             this.#walkEdge(worker);
             return;
         }
-        if (!this.#atWork()) this.#leaveWork(worker);
+        if (worker.repair && this.#repairTime() && this.#repair(worker)) return;
+        if (!this.#atWork() || worker.repair) this.#leaveWork(worker);
         else if (worker.arrived && this.#work(worker)) return;
         const {post, field} = this.#route;
         if (sameCell(worker, post)) {
@@ -421,7 +710,7 @@ export class Workers {
         this.#walkEdge(worker);
     }
 
-    /** Is the squad at work: ACTIVE, sent to a reachable flag, on a running Day? */
+    /** Is the squad at work on the jungle: ACTIVE, sent to a reachable flag, on a running Day? */
     #atWork() {
         return this.#cycle.timed === true && this.#cycle.shift === Shift.DAY && this.#target() !== null && !this.#route.blocked;
     }
@@ -559,12 +848,18 @@ export class Workers {
     }
 
     #deploy() {
-        if (this.#target() === null || this.#route.blocked || this.#inside === 0) return;
+        const pending = [...this.#orders.values()].filter(({worker}) => worker === null).length;
+        if (this.#target() === null || this.#route.blocked || this.#inside - pending <= 0) return;
         if (--this.#deployTimer > 0) return;
         this.#deployTimer = WORKER.deployGapTicks;
+        this.#spawn();
+    }
+
+    /** One worker out of HQ, onto its exit road. */
+    #spawn() {
         this.#inside--;
         const {exit} = this.#route;
-        this.#workers.push({
+        const worker = {
             id: `worker-${this.#nextId++}`,
             slot: SLOTS.findIndex((_, slot) => !this.#workers.some((worker) => worker.slot === slot)),
             col: exit.col,
@@ -576,6 +871,10 @@ export class Workers {
             arrived: false,
             job: null,
             working: false,
-        });
+            repair: null,
+            repairing: false,
+        };
+        this.#workers.push(worker);
+        return worker;
     }
 }

@@ -43,6 +43,10 @@ const PLACEMENT_HINTS = {
     'truck-in-the-way': 'A truck is on this road',
     'truck-stranded': 'A truck needs this road to get home',
     'unit-in-the-way': 'A worker is standing there',
+    'repair-no-worker': 'Every worker already has a repair',
+    'repair-no-credits': 'Repair stopped: not enough Credits',
+    'repair-unreachable': 'No worker can reach this building',
+    'repair-not-damaged': 'Nothing to repair',
 };
 
 const POWER_STATUS_LABELS = {
@@ -219,6 +223,7 @@ export class HUDScene extends Phaser.Scene {
             onResetFlag: () => EventBus.emit(Command.RESET_FLAG),
             onDemolish: () => EventBus.emit(Command.DEMOLISH),
             onRefit: () => EventBus.emit(Command.REFIT),
+            onRepair: () => EventBus.emit(Command.REPAIR),
         }, layout.actions);
         this.ui.speed = new SpeedControls(this, (speed) => EventBus.emit(Command.SET_SPEED, {speed}), layout.speed);
         this.ui.dayPause = this.button(layout.dayTime.pause, 'PAUSE', 0x37474f, () => EventBus.emit(Command.TOGGLE_DAY_PAUSE));
@@ -474,8 +479,8 @@ export class HUDScene extends Phaser.Scene {
     onSelection(selection) {
         this.selection = selection;
         if (!this.ui) return;
-        const {building, canFlag, workers, sent, canDemolish, confirmDemolish, refitTo, switchable, paused = false} = selection;
-        this.ui.controls.update(building, {canFlag, workers, sent, canDemolish, confirmDemolish, refitTo, paused});
+        const {building, canFlag, workers, sent, canDemolish, confirmDemolish, refitTo, switchable, paused = false, repair = null} = selection;
+        this.ui.controls.update(building, {canFlag, workers, sent, canDemolish, confirmDemolish, refitTo, paused, repair});
         const narrow = this.layout.touch || building?.type === BARRACKS_TYPE;
         if (switchable) this.layoutToggle(narrow);
         this.showButton(this.ui.toggle, switchable);
