@@ -91,13 +91,14 @@ function mutantSuite({pressWorld, pressAction}) {
         expect(s.mutants).toEqual([{
             id: 'mutant-1', ...FIRST_SPAWN, hp: 40, targetId: 'outpost-1', obstacleId: null, attackTimer: 60,
         }]);
-        expect(s.mutantViews).toEqual([{id: 'mutant-1', visible: true, ...FIRST_SPAWN, radius: 8}]);
+        // The art is authored facing right, and the Outpost is to the left.
+        expect(s.mutantViews).toEqual([{id: 'mutant-1', visible: true, ...FIRST_SPAWN, radius: 8, facing: 'left', flipX: true}]);
         expect(s.simulation.rng.state).not.toBe(731);
 
         await qaSim(page, 'stepTicks', 100);
         s = await sample(page);
         expect(s.mutants[0].x).toBeLessThan(FIRST_SPAWN.x); // moved toward the Outpost
-        expect(s.mutantViews[0]).toMatchObject({x: s.mutants[0].x, y: s.mutants[0].y});
+        expect(s.mutantViews[0]).toMatchObject({x: s.mutants[0].x, y: s.mutants[0].y, facing: 'left', flipX: true});
     });
 
     test('a blocked border cell moves the spawn to the next free position', async ({page}) => {

@@ -600,6 +600,9 @@ export class GameScene extends Phaser.Scene {
             tick: this.clock.tick,
             isNight: this.cycle.shift === Shift.NIGHT,
             isSeen,
+            // Read-only, so a sprite can face whatever is in its reach.
+            trucks: this.logistics?.attackableTrucks() ?? [],
+            units: [...(this.infantry?.soldiers() ?? []), ...(this.workers?.workers() ?? [])],
         });
         this.updateWaveHud(isSeen ? mutants.filter(isSeen) : mutants); // the count must not give away what the fog hides
         if (this.logistics) this.truckLayer.sync(this.logistics.snapshot());
