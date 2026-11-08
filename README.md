@@ -1,54 +1,35 @@
-# PAPI INDUSTRIES — Fortifications Art Patch v3.1
+# PAPI Industries - Office Menu v5.1 hotfix
 
-An incremental correction **after** Art Integration v1, Buildings Art v2, and Walls Art v3.
-It changes only rendering assets and presentation code. No simulation/core changes.
+**Requires the existing v5 Office Menu patch.** This is an incremental fix, not a replacement for the original v5 archive.
 
-## What this patch does
+## Fixes
 
-- Replaces `public/assets/sprites/buildings/walls.png` with the newest **64x320** (32x32 cells, 2 columns x 10 rows) wall spritesheet.
-- Updates the wall loader metadata from 32x26 to **32x32**. Existing neighbor-aware wall autotiling, damage frames (18 and 19), and tile-center placement stay intact. No scale or Y offsets.
-- Adds `public/assets/sprites/buildings/gate-regular.png`, a compact 512x32 Phaser spritesheet repacked without resampling from the supplied Aseprite sheet.
-- Links the gate art to the **existing** closed/opening/open/closing state machine, with one visual frame per calculated opening fraction. All collision, pathing, and delays remain in core.
-- Retains the procedural gate renderer as a fallback and the existing touch/mouse placement preview.
-- Adds focused unit tests for wall dimensions, frame mapping, gate sprite lifetime, and fallback behavior.
+1. Crops the original `ElColonelOfficeTiles.png` (32x104) correctly. There are three opaque 32x32 cells at y=0, y=36 and y=72. The 4 fully transparent pixel rows between cells must not be included in the exported textures.
+2. Removes the incorrect fake `wall-trim.png` crop, and lets the wall-bottom area meet the parquet without a gap.
+3. Uses only Aseprite `walk` animation for a moving Colonel. The source JSON has a 7-column (64x56) PNG grid: Aseprite's logical `walk` frames 4..7 are Phaser spritesheet indices **7,8,9,10**; `idle` remains 0..3, and `action` is 14..20.
+4. Mirrors (`flipX`) the left-facing source sprite only during rightward movement. Leftward walking uses the unflipped original.
+5. Moves the 51x50 telephone and 38x48 golden bust up to the visible desk surface. Both retain their native frames and scale.
+6. Leaves portrait switching disabled. Mutant portrait remains available for a later progression flag.
 
-**Important note about the supplied gate atlas:** the eight frames marked `vertical` are pixel-identical to horizontal frames 8..15 (the already-open portion). They cannot render a fully closed vertical gate. This patch temporarily uses the full horizontal opening sequence and rotates it 90 degrees for a vertical gate, until a distinct vertical animation is authored. No frames are fabricated. Check orientation visually in Phaser.
+## Install (from repository root)
 
-## Installation (Windows PowerShell, repo root)
-
-Prerequisite: your repo already includes v1, v2 and v3. Make a backup/commit of local changes first.
-
-1. Extract this ZIP into any temporary folder, not directly into the repo.
-2. Copy only the two PNGs from its `public/assets/sprites/buildings/` tree into the equivalent repo tree, overwriting `walls.png`.
-3. Copy `papi-fortifications-v3.1.patch` to the repo root.
-4. Check and apply:
-
-```powershell
-git apply --check .\papi-fortifications-v3.1.patch
-git apply .\papi-fortifications-v3.1.patch
+```bash
+git apply --check papi-office-menu-v5.1.patch
+git apply papi-office-menu-v5.1.patch
 ```
 
-> Note: `git apply` patches may contain PNG binary changes as well. This ZIP already contains both resulting PNGs in `public/`; because the patch was exported as **code only** (no binary assets), follow steps 2–4 in that order.
+The patch includes **binary PNG changes** and removal of `wall-trim.png`. Use `git apply`, not copy/paste. If your installed v5 differs locally, review and reconcile before applying.
 
-## Targeted smoke check
+Alternatively, manually copy changed files from `overlay/` and delete `public/assets/sprites/menu-office/wall-trim.png` if desired. Copying does not automatically delete files.
 
-- Create a wall line, corner, T and cross. Check junction textures at 1x and zoomed out.
-- Damage a wall to <= 66% and <= 33% HP; observe the two damaged frames.
-- Create both horizontal and vertical gate types. Check CLOSED, OPENING, OPEN and CLOSING states during truck passage.
-- Remove a gate and confirm its texture disappears; check old preview behaves as before.
-- Verify that wall and gate art does not affect unit pathing, HP, movement or test-mode QA.
+## Verify
 
-## Verification
+```bash
+node --test tests/unit/office-menu.test.js tests/unit/office-menu-layer.test.js
+```
 
-- Focused unit tests and JavaScript syntax checks were executed on a local reconstruction of the uploaded `src(3).zip` with v1+v2+v3 applied.
-- Patch tested with `git apply --check` on that reconstructed baseline.
-- **Not tested:** running Phaser/Vite in a browser. The uploaded source snapshot does not include the complete runnable repo (package.json, index.html, dependencies).
+The patch was checked against the v5 baseline reconstructed from the supplied `game.zip` and `menu_asets.zip`, and 9/9 focused Node tests pass. Original 32x104 source tiles were also checked for opaque content after cropping.
 
-## Deliberately deferred
+Not verified: a live Phaser 4 browser session (the supplied `game.zip` had no `index.html` or installed dependencies). Preview PNGs are static compositions assembled from the supplied assets.
 
-- Orange gate warning beacon lights
-- Jungle trees and chopping graphics
-- EL COLONEL menu art/animations
-- Music files and SoundManager
-
-The previously added `docs/audio-track-plan.md` remains unchanged and continues to describe the two provisional tracks; this patch contains no audio.
+No changes to `src/core` or game simulation/QA contracts.

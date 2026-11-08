@@ -10,6 +10,7 @@ import {addProxy} from '../testShadow/TestProxy.js';
 import {BuildingControls} from './BuildingControls.js';
 import {Command, EventBus, Hint, Hud, Notice, State} from './EventBus.js';
 import {GameOverLayer} from './GameOverLayer.js';
+import {OfficeMenuLayer} from './OfficeMenuLayer.js';
 import {SpeedControls} from './SpeedControls.js';
 import {currentLayout} from './hudLayout.js';
 
@@ -94,6 +95,10 @@ export class HUDScene extends Phaser.Scene {
         this.hasReport = false;
         this.toggleNarrow = false;
         this.createTitle();
+        this.events.once('shutdown', () => {
+            this.officeMenu?.destroy();
+            this.officeMenu = null;
+        });
         // Leaving a control counts as this scene capturing that move, so GameScene would
         // not see it, and a preview would wait for the next one.
         this.input.on('gameobjectout', (pointer) => EventBus.emit(Notice.POINTER_LEFT_HUD, pointer));
@@ -130,26 +135,35 @@ export class HUDScene extends Phaser.Scene {
     // ---- Title -------------------------------------------------------------
 
     createTitle() {
+        // Keep the existing START button, coordinates and test proxy.
+        this.officeMenu = new OfficeMenuLayer(this);
         const {width} = this.scale;
         this.title = this.add.text(width / 2, 52, 'PAPI Industries: The Green Shift', {
             fontFamily: 'monospace',
             fontSize: '48px',
-            color: '#c8e6c9',
-        }).setOrigin(0.5);
-        this.startButton = this.add.rectangle(width / 2, 668, 240, 72, 0x2e7d32)
-            .setStrokeStyle(3, 0xa5d6a7)
-            .setInteractive({useHandCursor: true});
+            color: '#f8d88b',
+        }).setOrigin(0.5).setDepth(50);
+        this.startButton = this.add.rectangle(width / 2, 668, 240, 72, 0x7c2628)
+            .setStrokeStyle(3, 0xf7d88b)
+            .setInteractive({useHandCursor: true})
+            .setDepth(51);
         this.startLabel = this.add.text(this.startButton.x, this.startButton.y, 'START', {
             fontFamily: 'monospace',
             fontSize: '32px',
             color: '#ffffff',
-        }).setOrigin(0.5);
+        }).setOrigin(0.5).setDepth(52);
         this.startButton.on('pointerdown', () => EventBus.emit(Command.START));
         this.startProxy = addProxy(this, this.startButton, 'start', {label: 'Start'});
     }
 
+    update(_time, delta) {
+        this.officeMenu?.update(delta);
+    }
+
     onPhase({phase}) {
         if (phase === 'ready' || this.ui) return;
+        this.officeMenu?.destroy();
+        this.officeMenu = null;
         this.title.setVisible(false);
         this.startLabel.setVisible(false);
         this.startButton.setVisible(false).disableInteractive();

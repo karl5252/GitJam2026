@@ -1,5 +1,6 @@
 import Phaser from 'phaser';
 import {preloadArt, ART, artKey} from './SpriteArt.js';
+import {preloadOfficeArt, filterOfficeArt} from './OfficeMenuArt.js';
 
 /**
  * Preloads the independent micro-scale PNG sprite sheets before starting the
@@ -12,6 +13,7 @@ export class BootScene extends Phaser.Scene {
 
     preload() {
         preloadArt(this);
+        preloadOfficeArt(this);
     }
 
     create() {
@@ -22,6 +24,7 @@ export class BootScene extends Phaser.Scene {
                 if (this.textures.exists(artKey(kind))) this.textures.get(artKey(kind)).setFilter?.(nearest);
             }
         }
+        filterOfficeArt(this, nearest);
         this.scene.start('game');
     }
 }
