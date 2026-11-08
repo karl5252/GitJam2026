@@ -1,5 +1,5 @@
 import {addArt, placeArt} from './SpriteArt.js';
-import {gateArtFrame, gateArtAngle} from './GateFrames.js';
+import {gateArtFrame, gateArtKind} from './GateFrames.js';
 import {GateState, GATE} from '../core/gates.js';
 
 const BAR_COLOR = 0xffb300;
@@ -7,7 +7,22 @@ const POST_COLOR = 0xeceff1;
 const BAR_THICKNESS = 8;
 const POST_LENGTH = 5;
 const GATE_DEPTH = 1.5; // over the building tile, under HP bars
+const ROW_DEPTH = 0.001; // a gate further south draws over one further north: 32 rows stay below 1.6
 const PREVIEW_DEPTH = 4;
+const GHOST_ALPHA = 0.75;
+
+/** Depth from the tile a gate stands on, never from the top of its art. */
+export const gateDepth = (row) => GATE_DEPTH + row * ROW_DEPTH;
+
+/** What QA sees of a gate sprite: sheet, frame, rotation and the rectangle it covers. */
+function spriteView(art, kind) {
+    if (!art) return {kind: null, frame: null, angle: null};
+    const frame = typeof art.frame === 'object' ? Number(art.frame.name) : art.frame;
+    return {
+        kind, frame, angle: art.angle, x: art.x, y: art.y, width: art.displayWidth, height: art.displayHeight,
+        originX: art.originX, originY: art.originY, depth: art.depth,
+    };
+}
 
 /** 0 is shut and 1 is fully open, so a moving barrier reads as moving. */
 function openness({state, timer}) {
@@ -18,9 +33,13 @@ function openness({state, timer}) {
 }
 
 /**
- * Gate barrier art follows the existing core gate state machine. Authored sprites
- * render above the road tile; the procedural barrier remains a fallback and the
- * placement preview remains unchanged. Neither affect road/pathing rules.
+ * Gate barrier art follows the existing core gate state machine. Each orientation
+ * draws its own sheet, unrotated, anchored bottom-centre on the bottom edge of the
+ * one tile the gate stands on: a vertical gate's art rises 16 px into the tile above
+ * without occupying it. Depth comes from the gate's own row. Sprites are never
+ * interactive, so a press on the overhang is a press on the tile under it, as the
+ * grid decides. The procedural barrier is the fallback when art is missing. None of
+ * this affects footprints, roads or pathing.
  */
 export class GateLayer {
     #scene;
@@ -31,6 +50,8 @@ export class GateLayer {
     #views = [];
     #key = '';
     #previewView = {visible: false, col: null, row: null, orientation: null};
+    #ghosts = new Map(); // orientation -> placement ghost sprite, made on first use
+    #ghostView = null;
 
     constructor(scene, grid) {
         this.#scene = scene;
@@ -54,19 +75,20 @@ export class GateLayer {
         this.#views = gates.map((gate) => {
             const open = openness(gate);
             let art = this.#sprites.get(gate.id);
+            const kind = gateArtKind(gate.orientation);
             if (!art) {
-                art = addArt(this.#scene, 'gate', GATE_DEPTH);
+                art = addArt(this.#scene, kind, gateDepth(gate.row));
                 if (art) this.#sprites.set(gate.id, art);
             }
             if (art) {
-                const {x, y} = this.#grid.cellCenter(gate.col, gate.row);
-                placeArt(art, 'gate', x, y);
-                art.setFrame(gateArtFrame(gate.orientation, open)).setAngle(gateArtAngle(gate.orientation));
+                this.#stand(art, kind, gate);
+                art.setFrame(gateArtFrame(gate.orientation, open)).setAngle(0); // each orientation has its own native sheet
             } else {
                 // Missing textures should not leave a completely invisible gate.
                 this.#draw(this.#graphics, gate, open, BAR_COLOR);
             }
-            return {id: gate.id, col: gate.col, row: gate.row, orientation: gate.orientation, state: gate.state, open};
+            // QA: which sheet frame and rotation the gate is drawn with, or null on the graphics fallback.
+            return {id: gate.id, col: gate.col, row: gate.row, orientation: gate.orientation, state: gate.state, open, ...spriteView(art, kind)};
         });
     }
 
@@ -74,8 +96,18 @@ export class GateLayer {
     showPreview(cell, orientation, color) {
         this.#preview.clear();
         this.#previewView = {visible: Boolean(cell), col: cell?.col ?? null, row: cell?.row ?? null, orientation: cell ? orientation : null};
+        for (const ghost of this.#ghosts.values()) ghost.setVisible(false);
+        this.#ghostView = null;
         if (!cell) return;
-        this.#draw(this.#preview, {...cell, orientation}, 0, color);
+        // The gate as it would stand, closed, at its real size; tinted by the verdict.
+        const ghost = this.#ghost(orientation);
+        if (ghost) {
+            this.#stand(ghost, gateArtKind(orientation), cell);
+            ghost.setFrame(0).setAngle(0).setTint(color).setAlpha(GHOST_ALPHA).setVisible(true);
+            this.#ghostView = spriteView(ghost, gateArtKind(orientation));
+        } else {
+            this.#draw(this.#preview, {...cell, orientation}, 0, color);
+        }
         const {x, y} = this.#grid.cellCenter(cell.col, cell.row);
         const half = this.#grid.tileSize / 2 - 2;
         const [dx, dy] = orientation === 'vertical' ? [1, 0] : [0, 1];
@@ -113,6 +145,21 @@ export class GateLayer {
     }
 
     previewView() {
-        return {...this.#previewView};
+        return {...this.#previewView, ghost: this.#ghostView && {...this.#ghostView}};
+    }
+
+    /** Bottom-centre on the bottom edge of the gate's one tile. */
+    #stand(sprite, kind, {col, row}) {
+        const {x, y} = this.#grid.cellCenter(col, row);
+        placeArt(sprite, kind, x, y + this.#grid.tileSize / 2);
+    }
+
+    #ghost(orientation) {
+        if (!this.#ghosts.has(orientation)) {
+            const art = addArt(this.#scene, gateArtKind(orientation), PREVIEW_DEPTH);
+            if (!art) return null;
+            this.#ghosts.set(orientation, art.setVisible(false));
+        }
+        return this.#ghosts.get(orientation);
     }
 }

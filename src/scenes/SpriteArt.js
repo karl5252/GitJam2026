@@ -23,7 +23,12 @@ export const ART = Object.freeze({
     factory: {path: 'buildings/factory.png', frameWidth: 32, frameHeight: 32, scale: 2.65, offsetX: 0, originY: 1},
     powerPlant: {path: 'buildings/power-plant.png', frameWidth: 32, frameHeight: 34, scale: 2.55, offsetX: 0, originY: 1},
     wall: {path: 'buildings/walls.png', frameWidth: 32, frameHeight: 32, scale: 1, offsetX: 0, originY: 0.5},
-    gate: {path: 'buildings/gate-regular.png', frameWidth: 32, frameHeight: 32, scale: 1, offsetX: 0, originY: 0.5},
+    // One sheet per orientation, 8 frames closed to open, each in a 32x48 cell with
+    // 5 px of transparent spacing (291 px wide). The art stands on the cell's bottom
+    // edge: a horizontal gate fills the bottom 32 px, a vertical one all 48, rising
+    // 16 px above its tile. Both anchor bottom-centre on the bottom of their one tile.
+    gateHorizontal: {path: 'buildings/gate-horizontal.png', frameWidth: 32, frameHeight: 48, spacing: 5, scale: 1, offsetX: 0, originY: 1},
+    gateVertical: {path: 'buildings/gate-vertical.png', frameWidth: 32, frameHeight: 48, spacing: 5, scale: 1, offsetX: 0, originY: 1},
 });
 
 const PREFIX = 'papi-art-';
@@ -31,8 +36,8 @@ const PREFIX = 'papi-art-';
 export const artKey = (kind) => `${PREFIX}${kind}`;
 
 export function preloadArt(scene) {
-    for (const [kind, {path, frameWidth, frameHeight}] of Object.entries(ART)) {
-        scene.load.spritesheet(artKey(kind), `assets/sprites/${path}`, {frameWidth, frameHeight});
+    for (const [kind, {path, frameWidth, frameHeight, spacing = 0, margin = 0}] of Object.entries(ART)) {
+        scene.load.spritesheet(artKey(kind), `assets/sprites/${path}`, {frameWidth, frameHeight, spacing, margin});
     }
 }
 

@@ -37,8 +37,20 @@
  * Nothing here runs without a flag or a worker out, so a base that never sends its
  * workers plays exactly as it did.
  *
- * `workRadius` is reserved for the work they will do. Nothing reads it yet, and it has
- * nothing to do with `visionRadius`, which is how far a worker sees.
+ * JUNGLE CLEARING (ACTIVE cycle, timed Day only). The flag is the centre of a work
+ * area: jungle tiles within CLEARING.radius of it, measured as Fog of War measures,
+ * circularly in whole tiles. A worker first walks to the flag; only then does it take
+ * jobs. Workers choose in leaving order, which is id order: each takes the eligible
+ * tile it can reach soonest from where it stands (the terrain-aware walk field), ties
+ * by row then column, never a tile another worker holds, and keeps it until done. It
+ * walks onto the tile and works from its centre; each tick there on a running Day adds
+ * one to that tile's progress. CLEARING.ticksPerTile completes it: the terrain turns
+ * to cleared ground, once, and Pollution rises by CLEARING.pollutionPerTile, once.
+ * Progress belongs to the tile, so a recall, Dusk or a death keeps it for whoever
+ * comes back; nothing advances without a worker on the tile. With nothing left to
+ * clear, workers wait at the flag. The area never grows and the flag never moves.
+ *
+ * `visionRadius` is how far a worker sees; `CLEARING.radius` is how far it works.
  */
 import {HQ_TYPE} from './buildingTypes.js';
 import {GAME_PAUSED, UNKNOWN_BUILDING} from './buildingPlacement.js';
@@ -46,7 +58,8 @@ import {receivingDock} from './roads.js';
 import {Shift} from './shiftCycle.js';
 import {approach, groundAt, speedOn} from './terrainSpeed.js';
 import {VISION_RADIUS} from './vision.js';
-import {isFree, isGate, nextStep, resolvePost, walkMap} from './walkField.js';
+import {TerrainKind} from './terrain.js';
+import {UNREACHABLE, isFree, isGate, nextStep, resolvePost, walkField, walkMap} from './walkField.js';
 
 export const WORKER = Object.freeze({
     squadSize: 3,
@@ -55,9 +68,18 @@ export const WORKER = Object.freeze({
     deployGapTicks: 30,
     flagCost: Object.freeze({credits: 0, ap: 1}), // a new flag, or the flag moved to another tile
     visionRadius: VISION_RADIUS.unit,
-    workRadius: 3, // tiles, for the work to come
+    workRadius: 3, // tiles round the flag, circular as Fog of War measures
     bodySize: 12, // px, what a mutant has to reach
 });
+
+/** Jungle clearing, all provisional. Tune here and nowhere else. */
+export const CLEARING = Object.freeze({
+    radius: WORKER.workRadius,
+    ticksPerTile: 300,
+    pollutionPerTile: 1,
+});
+
+const tileKey = ({col, row}) => `${col},${row}`;
 
 export const WorkFlagFailure = Object.freeze({
     OUT_OF_BOUNDS: 'work-flag-out-of-bounds',
@@ -84,6 +106,10 @@ export class Workers {
     #gates;
     #economy;
     #roads;
+    #pollution;
+    #progress = new Map(); // tile key -> ticks of work done, for tiles not yet cleared
+    #cleared = 0;
+    #jobFields = new Map(); // tile key -> walk field to it, for the current map
     #flag = null;
     #workers = []; // leaving order
     #inside = WORKER.squadSize;
@@ -103,16 +129,18 @@ export class Workers {
      *          grid: import('./grid.js').Grid,
      *          gates: import('./gates.js').Gates,
      *          economy?: import('./economy.js').Economy | null,
-     *          roads?: import('./roads.js').RoadNetwork | null}} deps
-     *   economy pays for the first dispatch of an ACTIVE Day; roads speed walkers up
+     *          roads?: import('./roads.js').RoadNetwork | null,
+     *          pollution?: import('./pollution.js').Pollution | null}} deps
+     *   economy pays for the flag; roads speed walkers up; pollution takes what clearing emits
      */
-    constructor({cycle, placement, grid, gates, economy = null, roads = null}) {
+    constructor({cycle, placement, grid, gates, economy = null, roads = null, pollution = null}) {
         this.#cycle = cycle;
         this.#placement = placement;
         this.#grid = grid;
         this.#gates = gates;
         this.#economy = economy;
         this.#roads = roads;
+        this.#pollution = pollution;
         placement.addGuard?.((question) => this.#guard(question));
     }
 
@@ -162,7 +190,10 @@ export class Workers {
     setFlag(cell) {
         const check = this.canSetFlag(cell);
         if (!check.ok) return check;
-        if (this.flagCostsAp(cell)) this.#economy?.spend(WORKER.flagCost); // affordable: just checked
+        if (this.flagCostsAp(cell)) {
+            this.#economy?.spend(WORKER.flagCost); // affordable: just checked
+            for (const worker of this.#workers) this.#leaveWork(worker); // a new area: walk to it first
+        }
         this.#flag = {col: cell.col, row: cell.row};
         this.#sent = true;
         this.#revision = -1;
@@ -272,7 +303,17 @@ export class Workers {
             ...worker,
             next: worker.next && {...worker.next},
             held: worker.held && {...worker.held},
+            job: worker.job && {...worker.job},
         }));
+    }
+
+    /** Clearing work: progress on unfinished tiles, in row-major order, and tiles cleared this run. */
+    clearing() {
+        const progress = [...this.#progress].map(([key, ticks]) => {
+            const [col, row] = key.split(',').map(Number);
+            return {col, row, ticks};
+        }).sort((a, b) => a.row - b.row || a.col - b.col);
+        return {progress, cleared: this.#cleared, ticksPerTile: CLEARING.ticksPerTile};
     }
 
     /**
@@ -291,7 +332,7 @@ export class Workers {
     /** Detached, JSON-serializable state. Reading it changes nothing. */
     snapshot() {
         const state = {route: this.route(), flag: this.flag, inside: this.#inside, lost: this.#lost, workers: this.workers()};
-        return this.#cycle.timed ? {...state, sent: this.#sent} : state; // LEGACY keeps its old shape
+        return this.#cycle.timed ? {...state, sent: this.#sent, clearing: this.clearing()} : state; // LEGACY keeps its old shape
     }
 
     #hq() {
@@ -326,11 +367,15 @@ export class Workers {
         return blocked ? {ok: false, reason: WorkerFailure.UNIT_IN_THE_WAY} : null;
     }
 
-    /** Fields are rebuilt only when walking, roads or the flag have changed. */
+    /**
+     * Fields are rebuilt only when walking, roads, terrain or the flag have changed:
+     * once on the next tick however many trees fell on this one.
+     */
     #refreshNavigation(hq) {
-        const revision = `${this.#placement.revision}:${this.#roads?.revision ?? 0}`;
+        const revision = `${this.#placement.revision}:${this.#roads?.revision ?? 0}:${this.#grid.terrain?.revision ?? 0}`;
         if (this.#revision === revision) return;
         this.#revision = revision;
+        this.#jobFields.clear();
         this.#map = walkMap(this.#grid, this.#placement.buildings(), this.#ground());
         const exit = receivingDock(hq);
         this.#route = {exit, ...resolvePost(this.#map, exit, this.#target())};
@@ -346,12 +391,19 @@ export class Workers {
 
     #move(worker) {
         worker.held = null;
+        worker.working = false;
         if (worker.next) {
             this.#walkEdge(worker);
             return;
         }
+        if (!this.#atWork()) this.#leaveWork(worker);
+        else if (worker.arrived && this.#work(worker)) return;
         const {post, field} = this.#route;
         if (sameCell(worker, post)) {
+            if (this.#atWork() && !worker.arrived) {
+                worker.arrived = true; // in the work area: jobs from the next tick
+                return;
+            }
             this.#settle(worker);
             return;
         }
@@ -367,6 +419,101 @@ export class Workers {
         }
         worker.next = step;
         this.#walkEdge(worker);
+    }
+
+    /** Is the squad at work: ACTIVE, sent to a reachable flag, on a running Day? */
+    #atWork() {
+        return this.#cycle.timed === true && this.#cycle.shift === Shift.DAY && this.#target() !== null && !this.#route.blocked;
+    }
+
+    /** Off the job, out of the area. A tile's progress stays with the tile. */
+    #leaveWork(worker) {
+        worker.arrived = false;
+        worker.job = null;
+    }
+
+    /**
+     * A worker in the work area: keep its job, or take one, then walk to it or work it.
+     * @returns {boolean} whether its tick is spent on the job
+     */
+    #work(worker) {
+        if (worker.job && this.#grid.terrain?.kindAt(worker.job.col, worker.job.row) !== TerrainKind.JUNGLE) worker.job = null;
+        worker.job ??= this.#chooseJob(worker);
+        if (!worker.job) return false; // nothing left: wait at the flag
+        if (sameCell(worker, worker.job)) {
+            const centre = this.#centerOf(worker.job);
+            if (worker.x !== centre.x || worker.y !== centre.y) {
+                this.#walkTo(worker, centre);
+                return true;
+            }
+            this.#chop(worker);
+            return true;
+        }
+        if (!this.#atCentre(worker)) {
+            this.#walkTo(worker, this.#centerOf(worker));
+            return true;
+        }
+        const step = nextStep(this.#map, this.#jobField(worker.job), worker);
+        if (!step) {
+            worker.job = null; // walled off since: let it go, and the tile keeps its progress
+            return false;
+        }
+        if (isGate(this.#map, step) && !this.#gateIsPassable(step)) {
+            worker.held = step;
+            return true;
+        }
+        worker.next = step;
+        this.#walkEdge(worker);
+        return true;
+    }
+
+    /** One tick of work on the tile underfoot. The last one clears it, once, and pollutes, once. */
+    #chop(worker) {
+        worker.working = true;
+        const key = tileKey(worker.job);
+        const done = (this.#progress.get(key) ?? 0) + 1;
+        if (done < CLEARING.ticksPerTile) {
+            this.#progress.set(key, done);
+            return;
+        }
+        this.#progress.delete(key);
+        const {col, row} = worker.job;
+        worker.job = null;
+        if (!this.#grid.terrain.clear(col, row)) return;
+        this.#cleared++;
+        this.#pollution?.add(CLEARING.pollutionPerTile);
+    }
+
+    /** The jungle this worker reaches soonest, inside the area and held by nobody else. */
+    #chooseJob(worker) {
+        const terrain = this.#grid.terrain;
+        if (!terrain) return null;
+        const flag = this.#flag;
+        const held = new Set(this.#workers.filter((other) => other !== worker && other.job).map((other) => tileKey(other.job)));
+        const reach = walkField(this.#map, {col: worker.col, row: worker.row}); // time to the worker = time from it
+        const radius = CLEARING.radius;
+        let best = null;
+        let bestTime = UNREACHABLE;
+        for (let row = flag.row - radius; row <= flag.row + radius; row++) {
+            for (let col = flag.col - radius; col <= flag.col + radius; col++) {
+                const [dc, dr] = [col - flag.col, row - flag.row];
+                if (dc * dc + dr * dr > radius * radius) continue;
+                if (terrain.kindAt(col, row) !== TerrainKind.JUNGLE || held.has(`${col},${row}`)) continue;
+                if (!isFree(this.#map, {col, row})) continue;
+                const time = reach[row * this.#grid.cols + col];
+                if (time < bestTime) { // rows then columns ascend, so the first of equals wins
+                    best = {col, row};
+                    bestTime = time;
+                }
+            }
+        }
+        return best;
+    }
+
+    #jobField(job) {
+        const key = tileKey(job);
+        if (!this.#jobFields.has(key)) this.#jobFields.set(key, walkField(this.#map, job));
+        return this.#jobFields.get(key);
     }
 
     /** At the flag, take a place and stay there. Home with no flag, go in. */
@@ -426,6 +573,9 @@ export class Workers {
             hp: WORKER.maxHp,
             next: null,
             held: null,
+            arrived: false,
+            job: null,
+            working: false,
         });
     }
 }

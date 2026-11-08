@@ -324,6 +324,11 @@ export class GameScene extends Phaser.Scene {
         const {width, height} = this.scale;
         const {cols, rows, tileSize, spawnFrame} = this.map;
         this.terrain = createTerrain(this.map, this.worldSeed);
+        // What the terrain looked like when last painted, so a clearing repaints exactly what changed.
+        this.renderedTerrainRevision = this.terrain?.revision ?? 0;
+        this.renderedTerrainKinds = this.terrain
+            ? Array.from({length: this.terrain.rows}, (_, row) => Array.from({length: this.terrain.cols}, (__, col) => this.terrain.kindAt(col, row)))
+            : null;
         this.grid = new Grid({
             cols,
             rows,
@@ -427,7 +432,7 @@ export class GameScene extends Phaser.Scene {
         this.infantryLayer = this.infantry ? new InfantryLayer(this, this.grid) : null;
         // HQ's squad, on the same terms: no roads means no HQ.
         this.workers = this.roads ? new Workers({
-            cycle: this.cycle, placement: this.placement, grid: this.grid, gates: this.gates, economy: this.economy, roads: this.roads,
+            cycle: this.cycle, placement: this.placement, grid: this.grid, gates: this.gates, economy: this.economy, roads: this.roads, pollution: this.pollution,
         }) : null;
         this.mutants.setWorkers(this.workers);
         this.workerLayer = this.workers ? new WorkerLayer(this, this.grid) : null;
@@ -636,6 +641,8 @@ export class GameScene extends Phaser.Scene {
         this.buildingArt?.syncWalls(buildings); // damage changes during combat, without power events
         const isSeen = this.seenBy();
         this.fogLayer?.sync();
+        this.syncTerrain();
+        this.updatePollutionHud(); // clearing adds Pollution by Day; it only re-presents when it changed
         this.mutantLayer.sync(mutants, buildings, {
             shells: this.mutants.shells(),
             tick: this.clock.tick,
@@ -672,6 +679,23 @@ export class GameScene extends Phaser.Scene {
         });
         if (this.infantry) this.syncInfantry();
         if (this.workers) this.syncWorkers();
+    }
+
+    /** Jungle the workers cleared since the last frame, repainted once however many trees fell. */
+    syncTerrain() {
+        if (!this.terrain || this.terrain.revision === this.renderedTerrainRevision) return;
+        this.renderedTerrainRevision = this.terrain.revision;
+        const {cols, rows} = this.terrain;
+        const changed = [];
+        for (let row = 0; row < rows; row++) {
+            for (let col = 0; col < cols; col++) {
+                const kind = this.terrain.kindAt(col, row);
+                if (kind === this.renderedTerrainKinds[row][col]) continue;
+                this.renderedTerrainKinds[row][col] = kind;
+                changed.push({col, row});
+            }
+        }
+        if (changed.length) this.terrainLayer.clearTiles(changed);
     }
 
     /** Once per change of shift, so the player's own zoom is never fought. */
@@ -712,8 +736,8 @@ export class GameScene extends Phaser.Scene {
             this.renderedWorkFlagKey = key;
             this.workerLayer.syncFlag(this.workers.route(), selected);
         }
-        const {workers, lost} = this.workers.snapshot();
-        this.workerLayer.sync({workers, lost, maxHp: WORKER.maxHp, tick: this.clock.tick, isNight: this.cycle.shift === Shift.NIGHT});
+        const {workers, lost, clearing = null} = this.workers.snapshot();
+        this.workerLayer.sync({workers, lost, clearing, maxHp: WORKER.maxHp, tick: this.clock.tick, isNight: this.cycle.shift === Shift.NIGHT});
     }
 
     /** Runs once: the Day/Night key changes only once into the defeated state. */

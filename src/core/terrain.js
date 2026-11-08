@@ -1,7 +1,10 @@
 /**
- * Generated terrain. Pure: no Phaser, and immutable once made.
+ * Generated terrain. Pure: no Phaser. Generation is fixed by the seed; the one
+ * change a run can make is clearing a jungle tile (`clear`), which HQ's workers do.
+ * A new run generates a new Terrain, so nothing cleared outlives its run.
  *
- * Every tile is jungle, clearing or dirt path. Jungle only stops construction: the
+ * Every tile is jungle, clearing, dirt path or cleared ground. Cleared ground is
+ * buildable open ground, like the clearing, and is never jungle again. Jungle only stops construction: the
  * Grid asks isBuildable, and nothing that walks reads this at all. Clearing and path
  * are both open ground, so the path is decoration: it is not a road, gives no truck
  * access and costs nothing.
@@ -16,10 +19,12 @@
  */
 import {SeededRandom} from './seededRandom.js';
 
-export const TerrainKind = Object.freeze({JUNGLE: 'jungle', CLEARING: 'clearing', PATH: 'path'});
+export const TerrainKind = Object.freeze({JUNGLE: 'jungle', CLEARING: 'clearing', PATH: 'path', CLEARED: 'cleared'});
 
-const GLYPHS = Object.freeze({[TerrainKind.JUNGLE]: '#', [TerrainKind.CLEARING]: '.', [TerrainKind.PATH]: '='});
-const KINDS = Object.freeze([TerrainKind.JUNGLE, TerrainKind.CLEARING, TerrainKind.PATH]);
+const GLYPHS = Object.freeze({
+    [TerrainKind.JUNGLE]: '#', [TerrainKind.CLEARING]: '.', [TerrainKind.PATH]: '=', [TerrainKind.CLEARED]: ',',
+});
+const KINDS = Object.freeze([TerrainKind.JUNGLE, TerrainKind.CLEARING, TerrainKind.PATH, TerrainKind.CLEARED]);
 const JUNGLE_CODE = KINDS.indexOf(TerrainKind.JUNGLE);
 const CLEARING_CODE = KINDS.indexOf(TerrainKind.CLEARING);
 const PATH_CODE = KINDS.indexOf(TerrainKind.PATH);
@@ -61,6 +66,7 @@ function wanderer(rng) {
 
 export class Terrain {
     #cells;
+    #revision = 0;
 
     /**
      * @param {{seed: number, cols: number, rows: number, cells: Uint8Array,
@@ -84,12 +90,28 @@ export class Terrain {
         return KINDS[this.#cells[row * this.cols + col]];
     }
 
+    /** Changes each time a tile is cleared, so anything derived from the terrain knows to look again. */
+    get revision() {
+        return this.#revision;
+    }
+
+    /**
+     * Turn one jungle tile into cleared ground, for the rest of the run.
+     * @returns {boolean} true only if this call cleared it: never twice, never anything but jungle
+     */
+    clear(col, row) {
+        if (this.kindAt(col, row) !== TerrainKind.JUNGLE) return false;
+        this.#cells[row * this.cols + col] = KINDS.indexOf(TerrainKind.CLEARED);
+        this.#revision++;
+        return true;
+    }
+
     isBuildable(col, row) {
         const kind = this.kindAt(col, row);
         return kind !== null && kind !== TerrainKind.JUNGLE;
     }
 
-    /** Detached. Each row is a string: # jungle, . clearing, = path. */
+    /** Detached. Each row is a string: # jungle, . clearing, = path, , cleared ground. */
     snapshot() {
         const rows = [];
         for (let row = 0; row < this.rows; row++) {

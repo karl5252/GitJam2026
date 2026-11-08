@@ -17,6 +17,15 @@ const FLAG_BLOCKED_COLOR = 0xe53935;
 const FLAG_IDLE_ALPHA = 0.55;
 const POLE_COLOR = 0xeceff1; // light, because it often stands in the dark of unexplored ground
 const RING_RADIUS = 15;
+const JOB_COLOR = 0xffca28;
+const JOB_BAR = {height: 4, inset: 4, back: 0x212121, fill: 0xffca28};
+// The sheet's ACTION row is two activities: 8-9 chop (axe up, axe down), 10-11 repair,
+// which is reserved for TASK 025.4C and not used yet.
+const CHOP_FRAMES = [8, 9];
+const CHOP_FRAME_TICKS = 8;
+
+/** The chopping frame for this tick, looping while a worker works. */
+export const chopFrame = (tick) => CHOP_FRAMES[Math.floor(tick / CHOP_FRAME_TICKS) % CHOP_FRAMES.length];
 
 /**
  * Workers and the work flag. A worker is a small yellow circle in an orange hard hat,
@@ -30,6 +39,8 @@ export class WorkerLayer {
     #workers = new Map(); // worker id -> {body, hat, hp, last}
     #deaths = []; // {view, tick}
     #graphics;
+    #jobs; // the tiles being cleared, redrawn every frame: there are never more than three
+    #jobViews = [];
     #flagView = null;
     #lost = 0;
 
@@ -37,10 +48,12 @@ export class WorkerLayer {
         this.#scene = scene;
         this.#grid = grid;
         this.#graphics = scene.add.graphics().setDepth(FLAG_DEPTH);
+        this.#jobs = scene.add.graphics().setDepth(FLAG_DEPTH);
     }
 
     /** Every frame. */
-    sync({workers, lost, maxHp, tick, isNight}) {
+    sync({workers, lost, maxHp, tick, isNight, clearing = null}) {
+        this.#drawJobs(workers, clearing);
         const alive = new Set(workers.map(({id}) => id));
         let died = lost - this.#lost; // anyone else who has gone went inside
         this.#lost = lost;
@@ -82,15 +95,35 @@ export class WorkerLayer {
     /** Rendered workers, deaths and the flag, for QA. */
     views() {
         return {
-            workers: [...this.#workers].map(([id, {body, hat, hp}]) => ({
+            workers: [...this.#workers].map(([id, {body, hat, hp, art, chopping}]) => ({
                 id, visible: body.visible, x: body.x, y: body.y, radius: body.radius, hatColor: hat.fillColor, hpVisible: hp.visible,
+                chopping, frame: art ? Number(art.frame.name) : null,
             })),
+            jobs: this.#jobViews,
             deaths: this.#deaths.map(({view}) => ({x: view.x, y: view.y})),
             flag: this.#flagView,
         };
     }
 
-    #syncWorker({id, x: domainX, y: domainY, hp}, [dx, dy], maxHp, tick) {
+    /** An outline on each tile being cleared, and how far along it is. */
+    #drawJobs(workers, clearing) {
+        this.#jobs.clear();
+        this.#jobViews = [];
+        const size = this.#grid.tileSize;
+        for (const {job} of workers) {
+            if (!job) continue;
+            const {x, y} = this.#grid.cellToWorld(job.col, job.row);
+            const ticks = clearing?.progress.find(({col, row}) => col === job.col && row === job.row)?.ticks ?? 0;
+            const share = clearing ? ticks / clearing.ticksPerTile : 0;
+            const barWidth = size - 2 * JOB_BAR.inset;
+            this.#jobs.lineStyle(2, JOB_COLOR, 0.9).strokeRect(x + 1, y + 1, size - 2, size - 2);
+            this.#jobs.fillStyle(JOB_BAR.back, 0.8).fillRect(x + JOB_BAR.inset, y + size - JOB_BAR.inset - JOB_BAR.height, barWidth, JOB_BAR.height);
+            this.#jobs.fillStyle(JOB_BAR.fill, 1).fillRect(x + JOB_BAR.inset, y + size - JOB_BAR.inset - JOB_BAR.height, barWidth * share, JOB_BAR.height);
+            this.#jobViews.push({col: job.col, row: job.row, progress: share});
+        }
+    }
+
+    #syncWorker({id, x: domainX, y: domainY, hp, working = false}, [dx, dy], maxHp, tick) {
         const view = this.#workers.get(id) ?? this.#addWorker(id);
         const x = domainX + dx;
         const y = domainY + dy;
@@ -98,7 +131,8 @@ export class WorkerLayer {
         view.last = {x, y};
         view.body.setPosition(x, y);
         placeArt(view.art, 'worker', x, y);
-        view.art?.setFrame(walkFrame(moving, tick));
+        view.chopping = working;
+        view.art?.setFrame(working ? chopFrame(tick) : walkFrame(moving, tick));
         view.hat.setPosition(x, y - BODY_RADIUS + 1);
         view.hp.setPosition(x - HP_BAR.width / 2, y - HP_BAR.offset)
             .setSize(HP_BAR.width * hp / maxHp, HP_BAR.height)

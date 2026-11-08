@@ -291,7 +291,7 @@ export class Infantry {
 
     /** Anything that changes walking changes the revision, so nothing is rebuilt in between. */
     #refreshNavigation(barracks) {
-        const revision = `${this.#placement.revision}:${this.#roads?.revision ?? 0}`;
+        const revision = `${this.#placement.revision}:${this.#roads?.revision ?? 0}:${this.#grid.terrain?.revision ?? 0}`;
         if (this.#revision === revision) return;
         this.#revision = revision;
         this.#map = walkMap(this.#grid, this.#placement.buildings(), this.#ground());

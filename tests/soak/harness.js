@@ -111,7 +111,7 @@ export function createWorld({seed = 731, schedule = null, resources = STARTING_R
     const siegeCannons = new SiegeCannons({cycle, placement, grid, mutants});
     const infantry = roads ? new Infantry({cycle, placement, grid, gates, mutants, roads}) : null;
     mutants.setInfantry(infantry);
-    const workers = roads ? new Workers({cycle, placement, grid, gates, economy, roads}) : null;
+    const workers = roads ? new Workers({cycle, placement, grid, gates, economy, roads, pollution}) : null;
     mutants.setWorkers(workers);
     cycle.begin();
 

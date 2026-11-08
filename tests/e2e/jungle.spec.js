@@ -184,6 +184,9 @@ for (const [label, viewport] of [['844x390', {width: 844, height: 390}], ['740x3
         test.use({viewport, hasTouch: true, isMobile: true});
 
         test('a whole opening goes down through the ghost and its confirming tap', async ({page}) => {
+            // Four touch placements, each a drawer, a ghost and a confirming tap: about 11 s
+            // alone, about 15.8 s beside the other workers of a normal run. This test only.
+            test.setTimeout(25_000);
             const state = await newGame(page, touch);
             await openingBase(page, touch, state);
             expect((await sample(page)).buildings.map((b) => b.type)).toEqual(['hq', 'powerPlant', 'factory']);

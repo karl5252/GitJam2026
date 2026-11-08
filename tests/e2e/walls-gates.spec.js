@@ -113,7 +113,7 @@ function suite(input) {
         await pressCell(page, state, [7, 8]);
         await expect.poll(async () => (await sample(page)).placementHint).toBe('This gate needs a straight road through it');
         let s = await sample(page);
-        expect(s.gatePreviewView).toEqual({visible: true, col: 7, row: 8, orientation: 'horizontal'});
+        expect(s.gatePreviewView).toMatchObject({visible: true, col: 7, row: 8, orientation: 'horizontal', ghost: {kind: 'gateHorizontal', frame: 0, angle: 0}});
         expect(s.placement.preview).toMatchObject({ok: false, reason: 'gate-needs-straight-road'});
         expect(await countOf(page, 'gateHorizontal')).toBe(0);
         await pressAction(page, 'cancel-placement');
@@ -125,7 +125,7 @@ function suite(input) {
         s = await sample(page);
         expect(s.gates).toMatchObject([{col: 7, row: 8, orientation: 'vertical', passageAxis: 'x', state: 'closed', tier: 'standard'}]);
         await expect.poll(async () => (await sample(page)).gateViews).toMatchObject([{col: 7, row: 8, orientation: 'vertical', state: 'closed', open: 0}]);
-        expect(s.resources).toEqual({credits: 1150, ap: 4});
+        expect(s.resources).toEqual({credits: 1250 - WEST_ROAD.length * 2 - 100, ap: 4}); // roads 2c a tile, gate 100c
         expect(s.roads.tiles.some((t) => t.col === 7 && t.row === 8)).toBe(true);
     });
 
@@ -165,13 +165,22 @@ function suite(input) {
         await place(page, state, 'powerPlant', {col: 20, row: 3});
         await place(page, state, 'factory', {col: 3, row: 8});
         await placeGate(page, state, 'gateVertical', [7, 8]);
+        // Its own sheet, closed, unrotated, 48 px tall standing on the bottom of its one tile.
+        const tileBottom = state.grid.originY + 9 * state.grid.tileSize;
+        expect((await sample(page)).gateViews[0]).toMatchObject({orientation: 'vertical', kind: 'gateVertical', frame: 0, angle: 0, y: tileBottom, height: 48, originY: 1});
 
         await nightTo(page, 660);
         await expect.poll(async () => (await sample(page)).gates[0].state).toBe('opening');
+        const opening = (await sample(page)).gateViews[0];
+        expect(opening.frame).toBeGreaterThan(0);
+        expect(opening.frame).toBeLessThan(7);
+        expect(opening.angle).toBe(0);
         await stepExactly(page, 150);
         await expect.poll(async () => (await sample(page)).gateViews[0].state).toBe('open');
+        expect((await sample(page)).gateViews[0]).toMatchObject({frame: 7, angle: 0});
         await stepExactly(page, 250);
         expect((await sample(page)).gates[0].state).toBe('closed');
+        expect((await sample(page)).gateViews[0]).toMatchObject({frame: 0, angle: 0});
         await stepExactly(page, 400);
         expect((await sample(page)).logistics.night.loads).toBe(1);
 
@@ -179,6 +188,53 @@ function suite(input) {
         const s = await sample(page);
         expect(s.gates[0].state).toBe('closed');
         expect(s.logistics.trucks[0].state).toBe('idle');
+    });
+
+    test('a gate ghost is the real sprite at full size on one tile, and a gate stays put and selectable at any zoom', async ({page}) => {
+        const state = await hqRun(page);
+        await layRoad(page, state, WEST_ROAD);
+        await pressAction(page, 'build-gateVertical');
+        await pressCell(page, state, [7, 8]);
+        const tileBottom = state.grid.originY + 9 * state.grid.tileSize;
+        await expect.poll(async () => (await sample(page)).gatePreviewView.ghost?.kind).toBe('gateVertical');
+        let s = await sample(page);
+        expect(s.gatePreviewView).toMatchObject({col: 7, row: 8, ghost: {frame: 0, angle: 0, y: tileBottom, height: 48, originY: 1}});
+        expect(s.placement.preview.footprint).toEqual({col: 7, row: 8, width: 1, height: 1}); // still one tile
+        await expect.poll(() => countOf(page, 'gateVertical')).toBe(1);
+        await pressAction(page, 'cancel-placement');
+        const placed = (await sample(page)).gateViews[0];
+
+        // Zoomed in, the gate is where it was, and a press on its tile still finds it.
+        for (let i = 0; i < 3; i++) await pressAction(page, 'camera-zoom-in');
+        await expect.poll(async () => (await sample(page)).camera.zoom).toBeGreaterThan(1.5);
+        s = await sample(page);
+        expect(s.gateViews[0]).toMatchObject({x: placed.x, y: placed.y, height: 48});
+        await select(page, s, {col: 7, row: 8}, s.gates[0].id);
+    });
+
+    test('a horizontal gate opens and closes on its own frames 0..7, never rotated', async ({page}) => {
+        const state = await start(page, '?mutants=off');
+        await buildHq(page, state, HQ);
+        await layRoad(page, state, [...NORTH_ROAD, [12, 2]]);
+        await place(page, state, 'powerPlant', {col: 20, row: 3});
+        await place(page, state, 'factory', {col: 10, row: 2}); // dock 12,2: its truck drives south through 12,4
+        await placeGate(page, state, 'gateHorizontal', [12, 4]);
+        expect((await sample(page)).gateViews[0]).toMatchObject({
+            orientation: 'horizontal', kind: 'gateHorizontal', frame: 0, angle: 0, y: state.grid.originY + 5 * state.grid.tileSize, originY: 1,
+        });
+
+        await nightTo(page, 660);
+        await expect.poll(async () => (await sample(page)).gates[0].state).toBe('opening');
+        const opening = (await sample(page)).gateViews[0];
+        expect(opening.frame).toBeGreaterThan(0);
+        expect(opening.frame).toBeLessThan(7);
+        expect(opening.angle).toBe(0);
+        await stepExactly(page, 150);
+        await expect.poll(async () => (await sample(page)).gateViews[0].state).toBe('open');
+        expect((await sample(page)).gateViews[0]).toMatchObject({frame: 7, angle: 0});
+        await stepExactly(page, 250);
+        expect((await sample(page)).gates[0].state).toBe('closed');
+        expect((await sample(page)).gateViews[0]).toMatchObject({frame: 0, angle: 0});
     });
 }
 
