@@ -28,16 +28,11 @@ function suite(input) {
 
     /** Every Day control in view is big enough and touches nothing else. */
     async function checkControls(page, actions) {
-        // DESTROY and REPAIR are the agreed 48x48 logical icon squares (TASK 025.4C UI hotfix);
-        // every other control keeps the 44 CSS px rule.
-        const canvas = await page.locator('canvas').boundingBox();
-        const iconMin = 48 * Math.min(canvas.width / 1280, canvas.height / 720) - 0.5;
-        const minFor = (action) => (action === 'demolish' || action === 'repair' ? iconMin : MIN_TOUCH);
         const boxes = await Promise.all(actions.map((action) => byAction(page, action).boundingBox()));
         boxes.forEach((box, i) => {
             expect(box, actions[i]).not.toBeNull();
-            expect(box.width, `${actions[i]} width`).toBeGreaterThanOrEqual(minFor(actions[i]));
-            expect(box.height, `${actions[i]} height`).toBeGreaterThanOrEqual(minFor(actions[i]));
+            expect(box.width, `${actions[i]} width`).toBeGreaterThanOrEqual(MIN_TOUCH);
+            expect(box.height, `${actions[i]} height`).toBeGreaterThanOrEqual(MIN_TOUCH);
             for (let j = i + 1; j < boxes.length; j++) {
                 expect(overlaps(box, boxes[j]), `${actions[i]} and ${actions[j]}`).toBe(false);
             }

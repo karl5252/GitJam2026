@@ -29,12 +29,32 @@ async function damagedHq(page, flow) {
     return {state: s, hq};
 }
 
-/** Both icon buttons share the old Demolish slot: REPAIR left, DESTROY right, 48 px squares. */
-function expectPair({repairBox, demolishBox}) {
-    expect([repairBox.width, repairBox.height, demolishBox.width, demolishBox.height]).toEqual([48, 48, 48, 48]);
+const MIN_TOUCH = 44; // CSS px, as every other touch control
+
+/**
+ * Both icon buttons share the old Demolish slot: REPAIR left, DESTROY right. Squares
+ * of 48 logical px on desktop and 90 on touch, side by side and never overlapping.
+ */
+function expectPair({repairBox, demolishBox}, touchLayout) {
+    const size = touchLayout ? 90 : 48;
+    expect([repairBox.width, repairBox.height, demolishBox.width, demolishBox.height]).toEqual([size, size, size, size]);
     expect(repairBox.y).toBe(demolishBox.y);
-    expect(demolishBox.x - repairBox.x).toBeGreaterThanOrEqual(48 + 4); // side by side, not overlapping
-    expect(demolishBox.x - repairBox.x).toBeLessThanOrEqual(64);
+    expect(demolishBox.x - repairBox.x).toBeGreaterThanOrEqual(size + 4);
+    expect(demolishBox.x - repairBox.x).toBeLessThanOrEqual(size + 16);
+}
+
+/** On a phone, each shown button's real rendered hit box is at least 44x44 CSS px, and none overlap. */
+async function expectTouchTargets(page, actions) {
+    const boxes = await Promise.all(actions.map((action) => byAction(page, action).boundingBox()));
+    boxes.forEach((box, i) => {
+        expect(box.width, `${actions[i]} width`).toBeGreaterThanOrEqual(MIN_TOUCH);
+        expect(box.height, `${actions[i]} height`).toBeGreaterThanOrEqual(MIN_TOUCH);
+        for (let j = i + 1; j < boxes.length; j++) {
+            const [a, b] = [box, boxes[j]];
+            const overlap = a.x < b.x + b.width && b.x < a.x + a.width && a.y < b.y + b.height && b.y < a.y + a.height;
+            expect(overlap, `${actions[i]} and ${actions[j]}`).toBe(false);
+        }
+    });
 }
 
 function suite(flow, touchLayout) {
@@ -46,10 +66,11 @@ function suite(flow, touchLayout) {
         const view = (await sample(page)).buildingControlsView;
         expect(view.repairVisible).toBe(true);
         expect(view.demolishVisible).toBe(false); // HQ cannot be destroyed
-        expectPair(view);
+        expectPair(view, touchLayout);
         await expect(byAction(page, 'repair')).toHaveAttribute('aria-label', 'REPAIR');
         if (touchLayout) {
             await expect(byAction(page, 'show-report')).toHaveCount(1); // REPORT stays where it was
+            await expectTouchTargets(page, ['repair', 'show-report', 'set-flag', 'camera-zoom-in', 'camera-fit', 'camera-zoom-out', 'end-day']);
         } else {
             // The tooltip names it and prices full HP: HQ costs 1 Credit per HP.
             const box = await byAction(page, 'repair').boundingBox();
@@ -97,7 +118,8 @@ function suite(flow, touchLayout) {
         await expect.poll(async () => (await sample(page)).selectedBuilding).toBe(cannon.id);
         let view = (await sample(page)).buildingControlsView;
         expect(view).toMatchObject({demolishVisible: true, demolishLabel: 'Demolish', repairVisible: false}); // full HP: no REPAIR
-        expectPair(view);
+        expectPair(view, touchLayout);
+        if (touchLayout) await expectTouchTargets(page, ['demolish', 'toggle-power', 'camera-fit', 'end-day']);
         await expect(byAction(page, 'demolish')).toHaveAttribute('aria-label', 'DESTROY');
 
         await flow.pressAction(page, 'demolish');
@@ -115,7 +137,9 @@ test.describe('repairs: desktop', () => {
     suite(mouse, false);
 });
 
-test.describe('repairs: mobile landscape touch', () => {
-    test.use({viewport: {width: 844, height: 390}, hasTouch: true, isMobile: true});
-    suite(touch, true);
-});
+for (const [label, viewport] of [['844x390', {width: 844, height: 390}], ['740x360', {width: 740, height: 360}]]) {
+    test.describe(`repairs: touch ${label}`, () => {
+        test.use({viewport, hasTouch: true, isMobile: true});
+        suite(touch, true);
+    });
+}

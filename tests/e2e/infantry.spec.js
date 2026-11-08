@@ -127,9 +127,10 @@ function suite(input) {
     test('a flag is set through the selected Barracks, and rejected tiles keep the tool open', async ({page}) => {
         const {state, id} = await base(page);
         await select(page, state, BARRACKS, id);
-        expect((await sample(page)).buildingControlsView).toEqual({
+        expect((await sample(page)).buildingControlsView).toMatchObject({
             flagVisible: true, flagLabel: 'Set\nflag', resetVisible: false, resetLabel: 'RESET\nFLAG', demolishVisible: true, demolishLabel: 'Demolish', demolishArmed: null,
             refitVisible: true, refitLabel: 'Refit: ROCKET\n200c · 1 AP', refitArmed: null,
+            repairVisible: false, paused: false, // full HP: no REPAIR; the view also reports button geometry
         });
         await expect(byAction(page, 'set-flag')).toHaveAttribute('data-target', id);
 
@@ -248,16 +249,11 @@ test.describe('infantry: mobile landscape', () => {
         await flow.select(page, state, BARRACKS, id);
         await showBuildMenu(page);
 
-        // DESTROY and REPAIR are the agreed 48x48 logical icon squares (TASK 025.4C UI hotfix);
-        // every other control keeps the 44 CSS px rule.
-        const iconCanvas = await page.locator('canvas').boundingBox();
-        const iconMin = 48 * Math.min(iconCanvas.width / 1280, iconCanvas.height / 720) - 0.5;
-        const minFor = (action) => (action === 'demolish' || action === 'repair' ? iconMin : MIN_TOUCH);
         const check = async (actions) => {
             const boxes = await Promise.all(actions.map((action) => byAction(page, action).boundingBox()));
             boxes.forEach((box, i) => {
-                expect(box.width, `${actions[i]} width`).toBeGreaterThanOrEqual(minFor(actions[i]));
-                expect(box.height, `${actions[i]} height`).toBeGreaterThanOrEqual(minFor(actions[i]));
+                expect(box.width, `${actions[i]} width`).toBeGreaterThanOrEqual(MIN_TOUCH);
+                expect(box.height, `${actions[i]} height`).toBeGreaterThanOrEqual(MIN_TOUCH);
                 for (let j = i + 1; j < boxes.length; j++) {
                     expect(overlaps(box, boxes[j]), `${actions[i]} and ${actions[j]}`).toBe(false);
                 }

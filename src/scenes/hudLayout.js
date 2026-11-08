@@ -24,9 +24,9 @@ const CELL = {width: 120, height: 82};
 const ACTION = {width: 116, height: 84};
 const ICON = {width: 48, height: 48}; // compact square icon buttons
 /** Two icon buttons side by side in one action slot: REPAIR on the left, DESTROY on the right. */
-const pairIn = ({x, y, width}) => ({
-    repair: {x: x - width / 2 + ICON.width / 2 + 2, y, ...ICON},
-    demolish: {x: x + width / 2 - ICON.width / 2 - 2, y, ...ICON},
+const pairIn = ({x, y, width}, icon = ICON) => ({
+    repair: {x: x - width / 2 + icon.width / 2 + 2, y, ...icon},
+    demolish: {x: x + width / 2 - icon.width / 2 - 2, y, ...icon},
 });
 const SPEED = {width: 82, height: 84};
 const CAMERA = {width: 92, height: 84};
@@ -75,6 +75,13 @@ const LEFT = 56;
 const RIGHT = 1224;
 const ROWS = [107, 201, 295, 389, 483, 577, 671];
 const left = (row) => ({x: LEFT, y: ROWS[row], ...TOUCH_SIZE});
+// REPAIR and DESTROY on touch: two 90 px squares (45 CSS px at 740x360, the smallest
+// target), so their row of the right column reaches further left than the others,
+// and the world's viewport ends before it. The fit is limited by height on both maps,
+// so the world loses no zoom.
+const TOUCH_ICON = {width: 90, height: 90};
+const PAIR_ROW = {x: 1278 - 94, y: ROWS[4], width: 188}; // x 1090..1278, flush with the column's right edge
+const VIEW_RIGHT = PAIR_ROW.x - PAIR_ROW.width / 2 - 2;
 const right = (row) => ({x: RIGHT, y: ROWS[row], ...TOUCH_SIZE});
 const LABEL = {fontSize: '16px', wrap: 100};
 
@@ -91,7 +98,7 @@ const DRAWER_TOP = 180;
 
 export const TOUCH = Object.freeze({
     touch: true,
-    viewport: {x: 112, y: 62, width: 1056, height: 658},
+    viewport: {x: 112, y: 62, width: VIEW_RIGHT - 112, height: 658},
     dayZoom: 2,
     text: {
         shift: text(8, 6, '22px'),
@@ -103,7 +110,7 @@ export const TOUCH = Object.freeze({
         settlement: text(120, 104, '22px', 0, {lineSpacing: 4}),
     },
     drawer: {
-        panel: {x: 640, y: 372, width: 1020, height: 600},
+        panel: {x: (112 + VIEW_RIGHT) / 2, y: 372, width: VIEW_RIGHT - 112, height: 600}, // within the viewport
         open: left(0),
         labels: DRAWER.map(([label], row) => ({label, x: DRAWER_LEFT - 40, y: DRAWER_TOP - 94 + row * DRAWER_STEP.y})),
     },
@@ -116,7 +123,7 @@ export const TOUCH = Object.freeze({
         flag: {...left(3), ...LABEL},
         reset: {...left(4), ...LABEL},
         refit: {...right(3), ...LABEL},
-        ...pairIn(right(4)), // the old Demolish slot holds both
+        ...pairIn(PAIR_ROW, TOUCH_ICON), // the old Demolish slot, widened to the left
     },
     toggle: left(5),
     narrowToggle: left(5),
