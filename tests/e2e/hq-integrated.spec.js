@@ -76,7 +76,7 @@ function integratedSuite(input) {
             power: {generation: 120, demand: 40, status: 'normal'},
             pollution: {emitted: 20, after: 20},
         });
-        expect(s.settlement.counts).toEqual({hq: 1, outpost: 0, factory: 1, powerPlant: 1, autocannon: 0, siegeCannon: 0, barracks: 0, wall: 0, gateVertical: 0, gateHorizontal: 0});
+        expect(s.settlement.counts).toEqual({hq: 1, outpost: 0, factory: 1, powerPlant: 1, autocannon: 0, siegeCannon: 0, barracks: 0, wall: 0, gateVertical: 0, gateHorizontal: 0, mine: 0});
         expect(s.resources).toEqual({credits: START - 900 + 150, ap: 5});
     });
 

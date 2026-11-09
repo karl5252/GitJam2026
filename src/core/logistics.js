@@ -54,7 +54,7 @@
  */
 import {calculatePower} from './power.js';
 import {HQ_TYPE} from './buildingTypes.js';
-import {ROAD_ACCESS_TYPES, outgoingDock, receivingDock} from './roads.js';
+import {ROAD_ACCESS_TYPES, receivingDock, shippingDock} from './roads.js';
 import {Shift} from './shiftCycle.js';
 
 export const LOGISTICS = Object.freeze({
@@ -66,6 +66,15 @@ export const LOGISTICS = Object.freeze({
     truckSpeed: 1, // px per tick; must divide the tile size
     respawnTicks: 600,
 });
+
+/**
+ * A Mine is a producer like a Factory, with its own rate and payout (TASK 026,
+ * provisional). It ships from its south dock; everything else is the same rules.
+ */
+export const MINE_OUTPUT = Object.freeze({loadTicks: 600, creditsPerLoad: 60, storageLoads: 2});
+
+/** What one producer type makes, stores and earns. */
+export const outputOf = (type) => (type === 'mine' ? MINE_OUTPUT : LOGISTICS);
 
 export const TruckState = Object.freeze({
     IDLE: 'idle',
@@ -94,6 +103,7 @@ export class Logistics {
     #gates;
     #factories = new Map(); // Factory id -> {progress, stored, noRoute}
     #trucks = new Map(); // Factory id -> truck
+    #types = new Map(); // producer id -> its type, so a Mine earns as a Mine; ids are never reused
     #inNight = false;
     #tallyDay = null; // ACTIVE: the Day whose cycle `#night` counts
     #roadsRevision = -1;
@@ -147,7 +157,7 @@ export class Logistics {
         if (this.#trucks.size === 0) return NO_EFFECTS;
 
         const powered = new Set(calculatePower(buildings).buildings.filter((b) => b.powered).map((b) => b.id));
-        for (const {id} of factories) this.#produce(this.#factories.get(id), powered.has(id));
+        for (const {id, type} of factories) this.#produce(this.#factories.get(id), powered.has(id), outputOf(type));
         let deliveries = 0;
         for (const truck of [...this.#trucks.values()]) deliveries += this.#advance(truck);
         const route = this.#dockRouter(buildings);
@@ -205,8 +215,9 @@ export class Logistics {
     snapshot() {
         const factories = this.#placement.buildings().filter(({id}) => this.#factories.has(id));
         return {
-            factories: factories.map(({id, col, row, width, height}) => ({
-                id, col, row, width, height, dock: outgoingDock({col, row, width, height}), ...this.#factories.get(id),
+            factories: factories.map(({id, type, col, row, width, height}) => ({
+                id, ...(type === 'mine' ? {type} : {}), col, row, width, height,
+                dock: shippingDock(type, {col, row, width, height}), ...this.#factories.get(id),
             })),
             trucks: [...this.#trucks.values()].map(({id, factoryId, state, hp, cargo, x, y, respawn}) => ({
                 id, factoryId, state, hp, cargo, x, y, respawn,
@@ -302,7 +313,8 @@ export class Logistics {
         for (const factory of factories) {
             if (this.#factories.has(factory.id)) continue;
             this.#factories.set(factory.id, {progress: 0, stored: 0, noRoute: false});
-            const dock = outgoingDock(factory);
+            this.#types.set(factory.id, factory.type);
+            const dock = shippingDock(factory.type, factory);
             this.#trucks.set(factory.id, {
                 id: `truck-${factory.id}`, factoryId: factory.id, dock, state: TruckState.IDLE, hp: LOGISTICS.truckHp,
                 cargo: 0, route: null, travelled: 0, respawn: 0, orphaned: false, ...this.#grid.cellCenter(dock.col, dock.row),
@@ -339,7 +351,7 @@ export class Logistics {
             }
             if (truck.state === TruckState.RESPAWNING) continue;
             const factory = this.#factories.get(truck.factoryId);
-            if (truck.cargo > 0 && factory.stored < LOGISTICS.storageLoads) {
+            if (truck.cargo > 0 && factory.stored < outputOf(this.#types.get(truck.factoryId)).storageLoads) {
                 factory.stored++;
                 truck.cargo = 0;
             }
@@ -357,9 +369,9 @@ export class Logistics {
         Object.assign(truck, this.#grid.cellCenter(truck.dock.col, truck.dock.row));
     }
 
-    #produce(factory, powered) {
-        if (!powered || factory.stored >= LOGISTICS.storageLoads) return;
-        if (++factory.progress < LOGISTICS.loadTicks) return;
+    #produce(factory, powered, output) {
+        if (!powered || factory.stored >= output.storageLoads) return;
+        if (++factory.progress < output.loadTicks) return;
         factory.progress = 0;
         factory.stored++;
     }
@@ -415,11 +427,12 @@ export class Logistics {
     }
 
     #deliver(truck) {
-        this.#economy.adjustCredits(LOGISTICS.creditsPerLoad);
+        const {creditsPerLoad} = outputOf(this.#types.get(truck.factoryId));
+        this.#economy.adjustCredits(creditsPerLoad);
         truck.cargo = 0;
         for (const tally of [this.#night, this.#totals]) {
             tally.loads++;
-            tally.credits += LOGISTICS.creditsPerLoad;
+            tally.credits += creditsPerLoad;
         }
         if (truck.orphaned) {
             this.#trucks.delete(truck.factoryId);

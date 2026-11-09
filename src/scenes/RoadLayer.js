@@ -6,7 +6,7 @@ const DOCK_INSET = 8;
 const FACTORY_DOCK_COLOR = 0xffb300;
 const HQ_DOCK_COLOR = 0x66bb6a;
 const BARRACKS_EXIT_COLOR = 0x29b6f6;
-const DOCK_COLORS = {factory: FACTORY_DOCK_COLOR, hq: HQ_DOCK_COLOR, barracks: BARRACKS_EXIT_COLOR};
+const DOCK_COLORS = {factory: FACTORY_DOCK_COLOR, mine: FACTORY_DOCK_COLOR, hq: HQ_DOCK_COLOR, barracks: BARRACKS_EXIT_COLOR};
 
 /** Road tiles and the HQ ring preview. Presentation only; redrawn on change. */
 export class RoadLayer {
@@ -26,7 +26,7 @@ export class RoadLayer {
 
     /**
      * @param {Array<{col, row, kind}>} tiles
-     * @param {Array<{col, row, kind: 'factory' | 'hq' | 'barracks'}>} docks
+     * @param {Array<{col, row, kind: 'factory' | 'mine' | 'hq' | 'barracks'}>} docks
      */
     sync(tiles, docks = []) {
         this.#graphics.clear();

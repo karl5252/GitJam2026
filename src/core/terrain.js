@@ -17,6 +17,7 @@
  * column, so it is always a single piece with no holes. Its core rectangle is always
  * open, which is what keeps a starting base from depending on a lucky seed.
  */
+import {generateDeposits} from './deposits.js';
 import {SeededRandom} from './seededRandom.js';
 
 export const TerrainKind = Object.freeze({JUNGLE: 'jungle', CLEARING: 'clearing', PATH: 'path', CLEARED: 'cleared'});
@@ -67,19 +68,25 @@ function wanderer(rng) {
 export class Terrain {
     #cells;
     #revision = 0;
+    #depositAt = new Map(); // "col,row" -> deposit id
 
     /**
      * @param {{seed: number, cols: number, rows: number, cells: Uint8Array,
      *          center: {col, row}, core: {col, row, width, height}, path: Array<{col, row}>}} parts
      *   path - the middle of the track, in order from the map edge
+     *   deposits - from core/deposits.js; fixed for the run, and not in snapshot()
      */
-    constructor({seed, cols, rows, cells, center, core, path}) {
+    constructor({seed, cols, rows, cells, center, core, path, deposits = []}) {
         this.seed = seed;
         this.cols = cols;
         this.rows = rows;
         this.center = Object.freeze({...center});
         this.core = Object.freeze({...core});
         this.path = Object.freeze(path.map((cell) => Object.freeze({...cell})));
+        this.deposits = Object.freeze([...deposits]);
+        for (const {id, tiles} of this.deposits) {
+            for (const {col, row} of tiles) this.#depositAt.set(`${col},${row}`, id);
+        }
         this.#cells = cells;
         Object.freeze(this);
     }
@@ -104,6 +111,19 @@ export class Terrain {
         this.#cells[row * this.cols + col] = KINDS.indexOf(TerrainKind.CLEARED);
         this.#revision++;
         return true;
+    }
+
+    /**
+     * The deposit under a tile, whatever grows on it: clearing reveals ore, it does
+     * not change it. @returns {string|null} a deposit id
+     */
+    depositAt(col, row) {
+        return this.#depositAt.get(`${col},${row}`) ?? null;
+    }
+
+    /** Detached deposits, for QA and the terrain picture. Kept out of snapshot(), which pins the map. */
+    depositSnapshot() {
+        return this.deposits.map(({id, core, dock, tiles}) => ({id, core: {...core}, dock: {...dock}, tiles: tiles.map((t) => ({...t}))}));
     }
 
     isBuildable(col, row) {
@@ -239,5 +259,7 @@ export function generateJungle({cols, rows, seed, spawnFrame}) {
         for (const [dc, dr] of [[0, 0], [1, 0], [0, 1], [1, 1]]) cells[(row + dr) * cols + col + dc] = PATH_CODE;
     }
     openPockets(cells, cols, rows);
-    return new Terrain({seed, cols, rows, cells, center, core, path});
+    const kindAt = (col, row) => KINDS[cells[row * cols + col]];
+    const deposits = generateDeposits({cols, rows, seed, center, kindAt, spawnFrame});
+    return new Terrain({seed, cols, rows, cells, center, core, path, deposits});
 }

@@ -1,5 +1,5 @@
-import {BARRACKS_TYPE, BarracksRole, HQ_TYPE, REFIT_COST, ROAD_COST, getBuildingType} from './buildingTypes.js';
-import {ROAD_ACCESS_TYPES, RoadFailure, barracksExit, outgoingDock} from './roads.js';
+import {BARRACKS_TYPE, BarracksRole, HQ_TYPE, MINE_TYPE, REFIT_COST, ROAD_COST, getBuildingType} from './buildingTypes.js';
+import {ROAD_ACCESS_TYPES, RoadFailure, barracksExit, shippingDock} from './roads.js';
 import {isFree, resolvePost, walkMap} from './walkField.js';
 
 /**
@@ -41,6 +41,12 @@ export const HQ_REQUIRED = 'hq-required';
 export const HQ_ALREADY_BUILT = 'hq-already-built';
 export const BARRACKS_LIMIT = 'barracks-limit';
 export const MAX_BARRACKS = 4;
+
+/** Why a Mine cannot stand somewhere: it needs all four tiles on one deposit, and one Mine per deposit. */
+export const MineFailure = Object.freeze({
+    NO_DEPOSIT: 'no-deposit',
+    DEPOSIT_TAKEN: 'deposit-taken',
+});
 
 export const FlagFailure = Object.freeze({
     OUT_OF_BOUNDS: 'flag-out-of-bounds',
@@ -423,12 +429,12 @@ export class BuildingPlacement {
 
     /** The road tile a type must have on this footprint, or null. */
     #accessTile(typeId, footprint) {
-        if (ROAD_ACCESS_TYPES.includes(typeId)) return outgoingDock(footprint);
+        if (ROAD_ACCESS_TYPES.includes(typeId)) return shippingDock(typeId, footprint);
         return typeId === BARRACKS_TYPE ? barracksExit(footprint) : null;
     }
 
     #factoryDocks() {
-        return this.#buildings.filter((b) => ROAD_ACCESS_TYPES.includes(b.type)).map(outgoingDock);
+        return this.#buildings.filter((b) => ROAD_ACCESS_TYPES.includes(b.type)).map((b) => shippingDock(b.type, b));
     }
 
     /** Docks and exits that must stay connected to the HQ network. */
@@ -498,7 +504,30 @@ export class BuildingPlacement {
         return {ok: true};
     }
 
-    /** Construction gate, HQ rules, spatial rules (grid, roads), then resources (economy). Never mutates. */
+    /**
+     * The deposit a Mine footprint stands on, or null unless every tile is the same
+     * one. Terrain comes from the Grid, so a map with none has no deposits.
+     */
+    depositUnder(footprint) {
+        const terrain = this.#grid.terrain;
+        if (!terrain?.depositAt) return null;
+        const ids = new Set();
+        for (let row = footprint.row; row < footprint.row + footprint.height; row++) {
+            for (let col = footprint.col; col < footprint.col + footprint.width; col++) ids.add(terrain.depositAt(col, row));
+        }
+        const [id] = ids;
+        return ids.size === 1 && id !== null ? id : null;
+    }
+
+    /** All four tiles on one deposit, and no other Mine on it. Never mutates. */
+    #validateDeposit(footprint) {
+        const deposit = this.depositUnder(footprint);
+        if (deposit === null) return {ok: false, reason: MineFailure.NO_DEPOSIT};
+        const taken = this.#buildings.some((b) => b.type === MINE_TYPE && this.depositUnder(b) === deposit);
+        return taken ? {ok: false, reason: MineFailure.DEPOSIT_TAKEN} : {ok: true};
+    }
+
+    /** Construction gate, HQ rules, spatial rules (grid, deposit, roads), then resources (economy). Never mutates. */
     #validate(type, footprint) {
         if (!this.#isConstructionAllowed()) return {ok: false, reason: CONSTRUCTION_DISABLED};
         if (this.#isPaused()) return {ok: false, reason: GAME_PAUSED};
@@ -506,6 +535,10 @@ export class BuildingPlacement {
         if (!allowed.ok) return allowed;
         const spatial = this.#grid.canPlace(footprint);
         if (!spatial.ok) return spatial;
+        if (type.id === MINE_TYPE) {
+            const deposit = this.#validateDeposit(footprint);
+            if (!deposit.ok) return deposit;
+        }
         const roads = this.#validateRoads(type, footprint);
         if (!roads.ok) return roads;
         const guarded = this.#guarded({action: 'place', type, footprint});

@@ -148,6 +148,87 @@ function paintCleared(ctx, tileSize, col, row) {
     }
 }
 
+// Ore: weathered rock lumps, never icons or blocks. Each colour is [shadow, body, facet].
+const ORE = [
+    ['#2c2118', '#8a5a2b', '#c08a4a'], // ochre
+    ['#2a1b16', '#7c3b22', '#b0623a'], // rust
+    ['#1e2224', '#5d6468', '#8f979a'], // slate
+    ['#231f1a', '#6e5d44', '#a08c66'], // weathered stone
+];
+const HINT_STAIN = 'rgba(150, 92, 40, 0.16)'; // a faint rusty thinning of the canopy
+const HINT_STONE = ['#7d6a52', '#8d8070', '#94643a'];
+
+/** An irregular rock: a jittered polygon, with a shadow under it and a lit facet. */
+function lump(ctx, rng, x, y, radius, [shadow, body, facet]) {
+    const sides = 6 + rng.nextInt(0, 2);
+    const turn = rng.next() * Math.PI;
+    const points = Array.from({length: sides}, (_, i) => {
+        const angle = turn + (i / sides) * Math.PI * 2;
+        const reach = radius * (0.65 + rng.next() * 0.45);
+        return [Math.cos(angle) * reach, Math.sin(angle) * reach * 0.8]; // rocks sit lower than they are wide
+    });
+    const shape = (dx, dy, scale) => {
+        ctx.beginPath();
+        points.forEach(([px, py], i) => (i ? ctx.lineTo : ctx.moveTo).call(ctx, x + dx + px * scale, y + dy + py * scale));
+        ctx.closePath();
+        ctx.fill();
+    };
+    ctx.fillStyle = shadow;
+    shape(1.5, 2, 1.08);
+    ctx.fillStyle = body;
+    shape(0, 0, 1);
+    ctx.fillStyle = facet;
+    shape(-radius * 0.22, -radius * 0.28, 0.45);
+}
+
+/**
+ * The ore itself, on its own transparent picture of the whole map. Only cleared
+ * deposit tiles ever show it (see clearTiles), so the canopy hides it until then.
+ * Lumps vary per tile and spill over tile edges, so a deposit has no grid in it;
+ * a tile at the cluster's edge gets fewer and smaller lumps, so the ore thins out.
+ */
+function paintOre(ctx, rng, terrain, tileSize) {
+    const inDeposit = (col, row) => terrain.depositAt(col, row) !== null;
+    for (const {tiles} of terrain.deposits) {
+        for (const {col, row} of tiles) {
+            const around = [[0, -1], [1, 0], [0, 1], [-1, 0]].filter(([dc, dr]) => inDeposit(col + dc, row + dr)).length;
+            const count = 2 + around + rng.nextInt(0, 1);
+            const scale = 0.55 + around * 0.12;
+            for (let i = 0; i < count; i++) {
+                const x = (col + 0.1 + rng.next() * 0.8) * tileSize;
+                const y = (row + 0.15 + rng.next() * 0.8) * tileSize;
+                lump(ctx, rng, x, y, (4 + rng.next() * 6) * scale, ORE[rng.nextInt(0, ORE.length - 1)]);
+            }
+        }
+    }
+}
+
+/**
+ * Surface signs under the trees: a faint rusty stain and a stone or two between the
+ * crowns, surest over the seam core. Subtle on purpose; the fog hides them until the
+ * ground is explored, and only clearing shows the ore.
+ */
+function paintHints(ctx, rng, terrain, tileSize) {
+    const stone = (x, y, radius) => {
+        ctx.fillStyle = HINT_STONE[rng.nextInt(0, HINT_STONE.length - 1)];
+        ctx.beginPath();
+        ctx.ellipse(x, y, radius, radius * 0.7, rng.next() * Math.PI, 0, Math.PI * 2);
+        ctx.fill();
+    };
+    for (const {core, tiles} of terrain.deposits) {
+        for (const {col, row} of tiles) {
+            const inCore = col >= core.col && col <= core.col + 1 && row >= core.row && row <= core.row + 1;
+            if (!inCore && rng.next() > 0.35) continue;
+            const [x, y] = [(col + 0.2 + rng.next() * 0.6) * tileSize, (row + 0.2 + rng.next() * 0.6) * tileSize];
+            ctx.fillStyle = HINT_STAIN;
+            ctx.beginPath();
+            ctx.ellipse(x, y, 7 + rng.next() * 4, 5 + rng.next() * 3, rng.next() * Math.PI, 0, Math.PI * 2);
+            ctx.fill();
+            stone(x + (rng.next() - 0.5) * 6, y + (rng.next() - 0.5) * 4, 1.6 + rng.next());
+        }
+    }
+}
+
 /**
  * Overlapping tree crowns, painted row by row so nearer trees cover farther ones.
  * They are clipped to jungle tiles, so the canopy is continuous inside the jungle and
@@ -206,6 +287,8 @@ export class TerrainLayer {
     #tileSize;
     #run; // this run's canvas texture: the only one ever painted on after generation
     #ground; // the generated ground and track, before tile lines and canopy
+    #ore; // the deposits' lumps on a transparent picture, shown only where cleared
+    #revealed = new Set(); // deposit tiles whose ore has been painted
     #repainted = 0;
 
     /**
@@ -232,7 +315,14 @@ export class TerrainLayer {
             ground.refresh();
             paintTileEdges(ctx, terrain, tileSize);
             paintCanopy(ctx, rng, terrain, tileSize);
+            // Their own streams, after everything else, so the jungle is painted exactly as before.
+            paintHints(ctx, new SeededRandom(mixSeed(terrain.seed + 2)), terrain, tileSize);
             texture.refresh();
+            const ore = scene.textures.createCanvas(`${key}-ore`, width, height);
+            const oreCtx = ore.getContext();
+            oreCtx.scale(RESOLUTION, RESOLUTION);
+            paintOre(oreCtx, new SeededRandom(mixSeed(terrain.seed + 3)), terrain, tileSize);
+            ore.refresh();
         }
         const runKey = `${key}-run`;
         if (scene.textures.exists(runKey)) scene.textures.remove(runKey);
@@ -240,6 +330,7 @@ export class TerrainLayer {
         this.#run.getContext().drawImage(scene.textures.get(key).getSourceImage(), 0, 0);
         this.#run.refresh();
         this.#ground = scene.textures.get(`${key}-ground`).getSourceImage();
+        this.#ore = scene.textures.get(`${key}-ore`).getSourceImage();
         this.#terrain = terrain;
         this.#tileSize = tileSize;
         this.#image = scene.add.image(grid.originX, grid.originY, runKey).setOrigin(0, 0).setScale(1 / RESOLUTION).setDepth(DEPTH);
@@ -271,8 +362,15 @@ export class TerrainLayer {
         ctx.setTransform(RESOLUTION, 0, 0, RESOLUTION, 0, 0);
         for (const {col, row} of open) {
             if (this.#terrain.kindAt(col, row) === TerrainKind.CLEARED) paintCleared(ctx, size, col, row);
-            paintTileEdge(ctx, this.#terrain, size, col, row);
         }
+        // Ore on every repainted tile, so lumps spilling from a cleared deposit tile show too.
+        ctx.setTransform(1, 0, 0, 1, 0, 0);
+        for (const {col, row} of open) {
+            ctx.drawImage(this.#ore, col * texel, row * texel, texel, texel, col * texel, row * texel, texel, texel);
+            if (this.#terrain.depositAt(col, row) !== null) this.#revealed.add(`${col},${row}`);
+        }
+        ctx.setTransform(RESOLUTION, 0, 0, RESOLUTION, 0, 0);
+        for (const {col, row} of open) paintTileEdge(ctx, this.#terrain, size, col, row);
         ctx.restore();
         this.#run.refresh();
         this.#repainted += cells.length;
@@ -280,6 +378,6 @@ export class TerrainLayer {
 
     view() {
         const {x, y, depth, displayWidth: width, displayHeight: height, texture} = this.#image;
-        return {x, y, width, height, depth, texture: texture.key, repainted: this.#repainted};
+        return {x, y, width, height, depth, texture: texture.key, repainted: this.#repainted, oreRevealed: this.#revealed.size};
     }
 }

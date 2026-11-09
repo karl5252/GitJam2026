@@ -1,5 +1,5 @@
 import Phaser from 'phaser';
-import {BARRACKS_LIMIT, FlagFailure, MAX_BARRACKS} from '../core/buildingPlacement.js';
+import {BARRACKS_LIMIT, FlagFailure, MAX_BARRACKS, MineFailure} from '../core/buildingPlacement.js';
 import {BARRACKS_TYPE, BUILDING_TYPES, REFIT_COST, ROAD_COST, getBuildingType} from '../core/buildingTypes.js';
 import {PlacementFailure} from '../core/grid.js';
 import {PowerStatus} from '../core/power.js';
@@ -32,6 +32,9 @@ const PLACEMENT_HINTS = {
     [RoadFailure.NO_EXIT_ACCESS]: 'Barracks exit (left side) needs a connected road',
     [RoadFailure.EXIT_REQUIRED]: 'A Barracks exit depends on this road',
     [BARRACKS_LIMIT]: `No more than ${MAX_BARRACKS} Barracks`,
+    [Hint.MINE_DOCK]: 'Mine dock (bottom side) needs a connected road',
+    [MineFailure.NO_DEPOSIT]: 'A Mine needs all four tiles on one ore deposit',
+    [MineFailure.DEPOSIT_TAKEN]: 'This deposit already has a Mine',
     [FlagFailure.OCCUPIED]: 'Flags go on open ground or roads',
     [FlagFailure.TAKEN]: 'Another squad holds this tile',
     [FlagFailure.UNREACHABLE]: 'Soldiers cannot reach this tile',

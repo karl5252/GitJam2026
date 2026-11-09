@@ -60,6 +60,7 @@
 import {HQ_TYPE, getBuildingType} from './buildingTypes.js';
 import {INFANTRY} from './infantry.js';
 import {firstSolid} from './lineOfFire.js';
+import {calculatePower} from './power.js';
 import {Shift} from './shiftCycle.js';
 import {BRUTE_KIND, flightTicks} from './shots.js';
 
@@ -100,7 +101,20 @@ const statsOf = ({kind}) => (kind === BRUTE.kind ? BRUTE : MUTANT);
 const ABSORBED = 'absorbed';
 
 /** Px subtracted from a building's distance: higher is more attractive. */
-export const TARGET_BIAS = Object.freeze({hq: 256, powerPlant: 256, factory: 128, autocannon: 64, siegeCannon: 64, barracks: 64, outpost: 0});
+export const TARGET_BIAS = Object.freeze({hq: 256, powerPlant: 256, factory: 128, autocannon: 64, siegeCannon: 64, barracks: 64, outpost: 0, mine: 64});
+
+/**
+ * A working Mine is noisy. Switched off or unpowered it is as quiet as a cannon
+ * (TARGET_BIAS.mine); enabled and powered, under the power rules, it draws more.
+ * Bias is read only when a mutant chooses a target, so a lock is never broken by it.
+ */
+export const MINE_BIAS = Object.freeze({idle: 64, active: 192});
+
+/** A building's bias right now. `powered` holds the ids power.js reports powered. */
+export function targetBias(building, powered = null) {
+    if (building.type === 'mine') return powered?.has(building.id) ? MINE_BIAS.active : MINE_BIAS.idle;
+    return TARGET_BIAS[building.type];
+}
 
 /** Px from a walking mutant to a soldier it will turn towards. */
 export const LURE_RANGE = 64;
@@ -140,14 +154,15 @@ const squaredDistance = (a, b) => (a.x - b.x) ** 2 + (a.y - b.y) ** 2;
 /**
  * Preferred target: lowest distance minus bias, then higher bias, then
  * earliest in the list (ids are not compared: 'x-10' sorts before 'x-2').
+ * @param {Set<string>|null} powered ids of powered buildings; only a Mine's bias reads it
  * @returns {string|null} building id, or null when there are no buildings
  */
-export function selectTarget(point, buildings, grid) {
+export function selectTarget(point, buildings, grid, powered = null) {
     let best = null;
     for (const building of buildings) {
         if (isFortification(building)) continue;
         if (!Object.hasOwn(TARGET_BIAS, building.type)) throw new TypeError(`No target bias for building type: ${building.type}`);
-        const bias = TARGET_BIAS[building.type];
+        const bias = targetBias(building, powered);
         const score = distanceToFootprint(point, grid.footprintRect(building)) - bias;
         if (!best || score < best.score || (score === best.score && bias > best.bias)) {
             best = {id: building.id, score, bias};
@@ -266,6 +281,7 @@ export class Mutants {
     #workers = null;
     #spawns;
     #spawnBounds;
+    #powered; // this tick's powered ids, or null with no Mine; see #poweredNow
     #bounds;
     #mutants = [];
     #nextId = 1;
@@ -344,6 +360,7 @@ export class Mutants {
 
         const effects = {spawned: [], attacks: [], destroyed: []};
         const buildings = this.#placement.buildings();
+        this.#powered = undefined; // worked out on this tick's first choice of target, if a Mine stands
         const byId = new Map(buildings.map((building) => [building.id, building]));
         const trucks = this.#logistics?.attackableTrucks() ?? [];
         const soldiers = [...(this.#infantry?.attackableSoldiers() ?? []), ...(this.#workers?.attackable() ?? [])];
@@ -355,6 +372,19 @@ export class Mutants {
         }
         if (spawnDue) this.#spawn(buildings, byId, effects, this.#slotKind(slot));
         return effects;
+    }
+
+    /**
+     * Powered building ids, once per tick and only where a Mine makes them matter.
+     * A building destroyed this tick has left the list; power is re-read next tick.
+     */
+    #poweredNow(buildings) {
+        if (this.#powered === undefined) {
+            this.#powered = buildings.some((b) => b.type === 'mine')
+                ? new Set(calculatePower(buildings).buildings.filter((b) => b.powered).map((b) => b.id))
+                : null;
+        }
+        return this.#powered;
     }
 
     /** What a schedule slot brings: null for an ordinary mutant. */
@@ -421,7 +451,7 @@ export class Mutants {
     #act(mutant, buildings, byId, effects, trucks, soldiers) {
         if (mutant.obstacleId && !byId.has(mutant.obstacleId)) mutant.obstacleId = null;
         if (!byId.has(mutant.targetId)) {
-            mutant.targetId = selectTarget(mutant, buildings, this.#grid);
+            mutant.targetId = selectTarget(mutant, buildings, this.#grid, this.#poweredNow(buildings));
             this.#endDetour(mutant);
         }
 
@@ -779,7 +809,7 @@ export class Mutants {
                 x,
                 y,
                 hp,
-                targetId: selectTarget({x, y}, buildings, this.#grid),
+                targetId: selectTarget({x, y}, buildings, this.#grid, this.#poweredNow(buildings)),
                 obstacleId: null,
                 attackTimer,
                 ...extra,

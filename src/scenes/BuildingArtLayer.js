@@ -1,7 +1,7 @@
-import {addArt, placeArt, buildingFrame} from './SpriteArt.js';
+import {addArt, placeArt, buildingFrame, doorwayAt} from './SpriteArt.js';
 import {wallAppearance} from './WallTiles.js';
 
-const ART_BUILDINGS = new Set(['hq', 'barracks', 'factory', 'powerPlant', 'wall']);
+const ART_BUILDINGS = new Set(['hq', 'barracks', 'factory', 'powerPlant', 'mine', 'wall']);
 const ART_DEPTH = 1.1; // above the low-contrast footprint, below FogOfWar (2.5)
 const DISABLED_ALPHA = 0.35;
 
@@ -39,6 +39,15 @@ export class BuildingArtLayer {
     }
 
     has(id) { return this.#sprites.has(id); }
+
+    /** QA: each sprite's position, and its doorway where the art has one. */
+    views() {
+        return [...this.#sprites.entries()].map(([id, sprite]) => ({
+            id, kind: sprite.texture.key.replace('papi-art-', ''), x: sprite.x, y: sprite.y,
+            width: sprite.displayWidth, height: sprite.displayHeight,
+            doorway: doorwayAt(sprite.texture.key.replace('papi-art-', ''), sprite),
+        }));
+    }
 
     update(building, shift) {
         const sprite = this.#sprites.get(building.id);

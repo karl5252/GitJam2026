@@ -22,6 +22,14 @@ export const ART = Object.freeze({
     barracks: {path: 'buildings/barracks.png', frameWidth: 32, frameHeight: 29, scale: 2.7, offsetX: 0, originY: 1},
     factory: {path: 'buildings/factory.png', frameWidth: 32, frameHeight: 32, scale: 2.65, offsetX: 0, originY: 1},
     powerPlant: {path: 'buildings/power-plant.png', frameWidth: 32, frameHeight: 34, scale: 2.55, offsetX: 0, originY: 1},
+    // A 2x2 (64x64) footprint. The 32x32 source has its doorway at columns 9..19
+    // (centre 14.5) with its sill at row 26, so at 2x the doorway's centre is 3 px
+    // left of the sprite's centre. offsetX 19 puts it over the south dock tile
+    // {col + 1, row + 2}, 16 px right of the footprint's centre, and offsetY 14 sets
+    // the sill on the footprint's bottom edge. The art overhangs 19 px east and the
+    // spoil heap 12 px south: presentation only.
+    mine: {path: 'buildings/mine.png', frameWidth: 32, frameHeight: 32, scale: 2, offsetX: 19, offsetY: 14, originY: 1,
+        doorway: {x: 14.5, sill: 26}},
     wall: {path: 'buildings/walls.png', frameWidth: 32, frameHeight: 32, scale: 1, offsetX: 0, originY: 0.5},
     // One sheet per orientation, 8 frames closed to open, each in a 32x48 cell with
     // 5 px of transparent spacing (291 px wide). The art stands on the cell's bottom
@@ -52,7 +60,14 @@ export function addArt(scene, kind, depth) {
 }
 
 export function placeArt(sprite, kind, x, y) {
-    if (sprite) sprite.setPosition(x + ART[kind].offsetX, y);
+    if (sprite) sprite.setPosition(x + ART[kind].offsetX, y + (ART[kind].offsetY ?? 0));
+}
+
+/** Where a sprite drawn by placeArt shows its doorway, in world pixels, for art that has one. */
+export function doorwayAt(kind, sprite) {
+    const {doorway, frameWidth, frameHeight, scale} = ART[kind];
+    if (!doorway || !sprite) return null;
+    return {x: sprite.x + (doorway.x - frameWidth / 2) * scale, y: sprite.y - (frameHeight - doorway.sill) * scale};
 }
 
 /** Eight directional turret images: N, NE, E, SE, S, SW, W, NW. */

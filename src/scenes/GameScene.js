@@ -11,7 +11,7 @@ import {MAX_MANUAL_STEPS, SIMULATION_SPEEDS} from '../core/simulationClock.js';
 import {Gates} from '../core/gates.js';
 import {INFANTRY, Infantry} from '../core/infantry.js';
 import {Logistics} from '../core/logistics.js';
-import {ROAD_ACCESS_TYPES, RoadFailure, RoadNetwork, barracksExit, outgoingDock, receivingDock} from '../core/roads.js';
+import {ROAD_ACCESS_TYPES, RoadFailure, RoadNetwork, barracksExit, receivingDock, shippingDock} from '../core/roads.js';
 import {settleNight} from '../core/settlement.js';
 import {calculatePower, causesLowPower} from '../core/power.js';
 import {Pollution, calculateEmissions, threatLevel} from '../core/pollution.js';
@@ -63,7 +63,7 @@ export const PREVIEW_VALID_COLOR = 0x4caf50;
 export const PREVIEW_INVALID_COLOR = 0xe53935;
 const ROAD_TILE_COLOR = 0x455a64; // a gate's barrier is drawn over its road
 const BUILDING_COLORS = {
-    hq: 0xc9a227, outpost: 0x9e9e9e, factory: 0x616161, powerPlant: 0x5c6bc0, autocannon: 0x00897b, siegeCannon: 0x7b1fa2, barracks: 0x558b2f,
+    hq: 0xc9a227, outpost: 0x9e9e9e, factory: 0x616161, mine: 0x8d6e63, powerPlant: 0x5c6bc0, autocannon: 0x00897b, siegeCannon: 0x7b1fa2, barracks: 0x558b2f,
     wall: 0xa1887f, gateVertical: ROAD_TILE_COLOR, gateHorizontal: ROAD_TILE_COLOR,
 };
 const BUILDING_STROKE = 0x212121;
@@ -578,6 +578,7 @@ export class GameScene extends Phaser.Scene {
         const offered = Object.values(BUILDING_TYPES).filter(({id, fortification}) => {
             if (id === HQ_TYPE) return this.hqRequired;
             if (fortification || id === BARRACKS_TYPE || id === SIEGE_CANNON_TYPE) return this.roads !== null;
+            if (id === 'mine') return this.roads !== null && (this.terrain?.deposits?.length ?? 0) > 0; // only where ore exists
             return true;
         });
         return Object.fromEntries(offered.map(({id}) => [id, this.buildState(id)]));
@@ -1007,13 +1008,15 @@ export class GameScene extends Phaser.Scene {
         const docks = buildings.flatMap((building) => {
             if (building.type === HQ_TYPE) return [{...receivingDock(building), kind: 'hq'}];
             if (building.type === BARRACKS_TYPE) return [{...barracksExit(building), kind: 'barracks'}];
-            return ROAD_ACCESS_TYPES.includes(building.type) ? [{...outgoingDock(building), kind: 'factory'}] : [];
+            if (!ROAD_ACCESS_TYPES.includes(building.type)) return [];
+            return [{...shippingDock(building.type, building), kind: building.type === 'mine' ? 'mine' : 'factory'}];
         });
         this.roadLayer.sync(this.roads.tiles(), docks);
     }
 
     /** One short reason after a rejection, because touch has no hover. */
     showHint(reason) {
+        if (reason === RoadFailure.NO_ROAD_ACCESS && this.placement?.selectedType === 'mine') reason = Hint.MINE_DOCK;
         this.present(State.HINT, {reason});
     }
 
@@ -1627,6 +1630,8 @@ export class GameScene extends Phaser.Scene {
             map: {id: this.map.id, cols: this.map.cols, rows: this.map.rows, seed: this.worldSeed, spawnFrame: this.map.spawnFrame},
             terrain: this.terrain ? this.terrain.snapshot() : null,
             terrainView: this.terrainLayer ? this.terrainLayer.view() : null,
+            deposits: this.terrain?.depositSnapshot ? this.terrain.depositSnapshot() : null,
+            buildingArtViews: this.buildingArt ? this.buildingArt.views() : null,
             fog: this.fog ? this.fog.snapshot() : null,
             fogView: this.fogLayer ? this.fogLayer.view() : null,
             selectedCell: this.selectedCell ? {...this.selectedCell} : null,

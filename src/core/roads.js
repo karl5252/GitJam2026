@@ -21,8 +21,8 @@ import {PlacementFailure} from './grid.js';
 export const HQ_RING = 'hq-ring';
 export const PLAYER_ROAD = 'player';
 
-/** Building types whose outgoing dock must be a connected road. */
-export const ROAD_ACCESS_TYPES = Object.freeze(['factory']);
+/** Building types whose outgoing dock must be a connected road. Each gets a truck. */
+export const ROAD_ACCESS_TYPES = Object.freeze(['factory', 'mine']);
 
 /** The tile a building ships from: the middle of its right side. No rotation. */
 export const outgoingDock = ({col, row, width, height}) => ({col: col + width, row: row + Math.floor(height / 2)});
@@ -32,6 +32,15 @@ export const barracksExit = ({col, row, height}) => ({col: col - 1, row: row + M
 
 /** The tile a building receives on: the middle of its bottom side. */
 export const receivingDock = ({col, row, width, height}) => ({col: col + Math.floor(width / 2), row: row + height});
+
+/**
+ * The tile a producer's truck leaves from. A Factory ships from its right side; a
+ * Mine's entrance faces south, so it ships from the middle of its bottom side,
+ * which for a 2x2 at {col, row} is exactly {col + 1, row + 2}.
+ * @param {string} typeId
+ * @param {{col, row, width, height}} footprint
+ */
+export const shippingDock = (typeId, footprint) => (typeId === 'mine' ? receivingDock(footprint) : outgoingDock(footprint));
 
 export const RoadFailure = Object.freeze({
     OUT_OF_BOUNDS: 'out-of-bounds',

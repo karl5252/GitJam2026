@@ -34,7 +34,7 @@ const CAMERA = {width: 92, height: 84};
 const text = (x, y, fontSize, originX = 0, extra = {}) => ({x, y, fontSize, originX, ...extra});
 
 /** Slots run left to right, top to bottom. Six rows end at y 565, clear of END DAY at y 578. */
-const DESKTOP_MENU = ['hq', 'outpost', 'factory', 'powerPlant', 'autocannon', 'road', 'wall', 'barracks', 'gateVertical', 'gateHorizontal', 'siegeCannon'];
+const DESKTOP_MENU = ['hq', 'outpost', 'factory', 'powerPlant', 'autocannon', 'road', 'wall', 'barracks', 'gateVertical', 'gateHorizontal', 'siegeCannon', 'mine'];
 
 export const DESKTOP = Object.freeze({
     touch: false,
@@ -87,9 +87,9 @@ const LABEL = {fontSize: '16px', wrap: 100};
 
 /** Buildings by what they are for. Nothing here needs more than one press from the drawer. */
 const DRAWER = [
-    ['ECONOMY', ['hq', 'factory', 'powerPlant', 'outpost']],
+    ['ECONOMY', ['hq', 'factory', 'powerPlant', 'mine']], // four fit a row
     ['DEFENCE', ['autocannon', 'siegeCannon', 'barracks', 'wall']],
-    ['INFRASTRUCTURE', ['road', 'gateVertical', 'gateHorizontal']],
+    ['INFRASTRUCTURE', ['road', 'gateVertical', 'gateHorizontal', 'outpost']],
 ];
 const DRAWER_CELL = {width: 228, height: 128};
 const DRAWER_LEFT = 180;

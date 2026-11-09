@@ -30,6 +30,7 @@
 export const HQ_TYPE = 'hq';
 export const WALL_TYPE = 'wall';
 export const BARRACKS_TYPE = 'barracks';
+export const MINE_TYPE = 'mine';
 
 /** A Barracks is rifles unless it has been refitted, and only then does its record say so. */
 export const BarracksRole = Object.freeze({RIFLE: 'rifle', ROCKET: 'rocket'});
@@ -142,6 +143,16 @@ export const BUILDING_TYPES = Object.freeze({
         fortification: true,
     }),
     ...gateTypes(),
+    // Earns through deliveries, like a Factory (see core/logistics.js). It stands
+    // only on a deposit, and its truck dock is on its south side. TASK 026 values.
+    mine: Object.freeze({
+        id: MINE_TYPE, name: 'Mine', width: 2, height: 2,
+        cost: Object.freeze({credits: 500, ap: 1}),
+        operations: NO_OPERATIONS,
+        power: Object.freeze({supply: 0, demand: 30}),
+        pollutionPerNight: 10,
+        maxHp: 250,
+    }),
 });
 
 /** Definition for a type id, or null if unknown. */
