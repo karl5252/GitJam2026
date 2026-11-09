@@ -117,6 +117,7 @@ export function createWorld({seed = 731, schedule = null, resources = STARTING_R
     mutants.setWorkers(workers);
     const ecologists = roads && useEcologists ? new Ecologists({cycle, placement, grid, roads, pollution, mutants, seed}) : null;
     if (ecologists) logistics.setBlockers(() => ecologists.blockedTiles());
+    if (ecologists) workers.setEcologists(ecologists);
     cycle.begin();
 
     const soldierKills = new Set(); // this tick's: a turret that had one locked has not stepped since

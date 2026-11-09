@@ -83,7 +83,7 @@ export class Ecologists {
     #map = null;
     #revision = null;
     #fields = new Map(); // goal key -> walk field
-    #totals = {groups: 0, arrived: 0, protests: 0, escaped: 0, killed: 0};
+    #totals = {groups: 0, arrived: 0, protests: 0, escaped: 0, killed: 0, dispersed: 0};
 
     /**
      * @param {{cycle, placement, grid, roads, pollution, mutants?, seed: number}} deps
@@ -137,6 +137,53 @@ export class Ecologists {
             if (standing && this.#roads.has(group.site)) blocked.add(key(group.site));
         }
         return blocked;
+    }
+
+    /**
+     * A group, while it is gathering on its site or protesting there: what a
+     * DISPERSE order can act on. Null otherwise, including once it flees or leaves.
+     * @returns {{id, site: {col, row}, state, members: string[]} | null}
+     */
+    protest(id) {
+        const group = this.#groups.find((g) => g.id === id);
+        if (!group || !this.#atSite(group)) return null;
+        return {id, site: {...group.site}, state: this.#atSite(group), members: this.#members(group).map((e) => e.id)};
+    }
+
+    /**
+     * The protest at a tile: its site, or a tile one of its members stands on.
+     * @returns {string|null} group id
+     */
+    protestAt(cell) {
+        for (const group of this.#groups) {
+            if (!this.#atSite(group)) continue;
+            if (sameCell(group.site, cell) || this.#members(group).some((e) => sameCell(e, cell))) return group.id;
+        }
+        return null;
+    }
+
+    /**
+     * Break a protest up: the group runs for the exit, as at Dusk, and stops
+     * blocking at once. A fleeing group never protests again. Changes nothing for
+     * a group that is not gathering or protesting.
+     * @returns {boolean}
+     */
+    disperse(id) {
+        const group = this.#groups.find((g) => g.id === id);
+        if (!group || !this.#atSite(group)) return false;
+        group.state = EcologistState.FLEEING;
+        group.pending = 0;
+        for (const e of this.#members(group)) e.state = EcologistState.FLEEING;
+        this.#totals.dispersed++;
+        return true;
+    }
+
+    /** 'gathering' while the group assembles on its site, 'protesting' during the protest, otherwise null. */
+    #atSite(group) {
+        if (group.state === EcologistState.PROTESTING) return EcologistState.PROTESTING;
+        if (group.state !== EcologistState.ARRIVING || group.pending > 0) return null;
+        const members = this.#members(group);
+        return members.length > 0 && members.some((e) => e.state === EcologistState.GATHERING) ? EcologistState.GATHERING : null;
     }
 
     /** Detached state. Reading it changes nothing. */

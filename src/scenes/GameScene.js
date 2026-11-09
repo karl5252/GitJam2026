@@ -145,6 +145,7 @@ export class GameScene extends Phaser.Scene {
         this.buildingArt = null;
         this.cycle = null;
         this.selectedBuildingId = null;
+        this.selectedProtestId = null;
         this.roads = null;
         this.roadLayer = null;
         this.logistics = null;
@@ -273,6 +274,7 @@ export class GameScene extends Phaser.Scene {
             [Command.RESET_FLAG]: () => this.handleResetFlag(),
             [Command.REFIT]: () => this.handleRefit(),
             [Command.REPAIR]: () => this.handleRepair(),
+            [Command.DISPERSE]: () => this.handleDisperse(),
             [Command.ZOOM_IN]: () => this.worldCamera.zoomIn(),
             [Command.ZOOM_OUT]: () => this.worldCamera.zoomOut(),
             [Command.FIT]: () => this.worldCamera.fit(),
@@ -447,6 +449,7 @@ export class GameScene extends Phaser.Scene {
             mutants: this.mutants, seed: this.rng.snapshot().seed,
         }) : null;
         if (this.ecologists) this.logistics.setBlockers(() => this.ecologists.blockedTiles());
+        if (this.ecologists) this.workers.setEcologists(this.ecologists); // DISPERSE
         this.ecologistLayer = this.ecologists ? new EcologistLayer(this, this.grid) : null;
 
         // Terrain paints its own tiles, and only where there is open ground to build on.
@@ -824,7 +827,34 @@ export class GameScene extends Phaser.Scene {
             switchable: Boolean(type) && type.switchable !== false,
             paused: this.cycle.pausedDay,
             repair: this.repairChoice(building, type),
+            disperse: building ? null : this.disperseChoice(),
         });
+    }
+
+    /**
+     * DISPERSE on a selected protest, CANCEL DISPERSE while ordered: a running timed
+     * Day only. A protest that is over drops the selection. Null hides the button.
+     */
+    disperseChoice() {
+        const groupId = this.selectedProtestId;
+        if (!groupId || !this.ecologists) return null;
+        const ordered = this.workers.disperseOrder(groupId) !== null;
+        if (!ordered && !this.ecologists.protest(groupId)) {
+            this.selectedProtestId = null;
+            this.selectionHighlight.setVisible(false);
+            return null;
+        }
+        if (!this.cycle.timed || this.cycle.shift !== Shift.DAY || this.cycle.deployment) return null;
+        const enabled = ordered ? !this.cycle.pausedDay : this.workers.canDisperse(groupId, {quick: true}).ok;
+        return {groupId, ordered, enabled};
+    }
+
+    handleDisperse() {
+        const groupId = this.selectedProtestId;
+        if (!groupId || !this.workers) return;
+        const result = this.workers.disperseOrder(groupId) ? this.workers.cancelDisperse(groupId) : this.workers.orderDisperse(groupId);
+        this.showHint(result.ok ? null : result.reason);
+        this.presentSelection();
     }
 
     /**
@@ -905,6 +935,7 @@ export class GameScene extends Phaser.Scene {
         // Selection (cell or building) is disabled while placing; it resumes after cancel.
         this.selectedCell = null;
         this.selectedBuildingId = null;
+        this.selectedProtestId = null;
         this.selectionHighlight.setVisible(false);
         this.presentSelection();
         this.presentMenu();
@@ -1551,7 +1582,15 @@ export class GameScene extends Phaser.Scene {
         EventBus.emit(Notice.DISARM); // any press on the map, even on the same building
         this.selectedCell = cell;
         this.selectedBuildingId = cell ? this.grid.occupantAt(cell.col, cell.row) : null;
-        if (cell) {
+        // A protest is picked by its site or a tile one of its people stands on, where the player can see it.
+        const protest = cell && !this.selectedBuildingId && this.ecologists && (!this.fog || this.fog.isVisible(cell.col, cell.row))
+            ? this.ecologists.protestAt(cell) : null;
+        this.selectedProtestId = protest;
+        if (protest) {
+            const {site} = this.ecologists.protest(protest);
+            const rect = this.grid.footprintRect({col: site.col, row: site.row, width: 1, height: 1});
+            this.selectionHighlight.setPosition(rect.x, rect.y).setSize(rect.width, rect.height).setVisible(true);
+        } else if (cell) {
             const building = this.selectedBuildingId
                 ? this.placement.buildings().find((b) => b.id === this.selectedBuildingId)
                 : null;
@@ -1734,6 +1773,7 @@ export class GameScene extends Phaser.Scene {
             nightTint: this.nightTint ? this.nightTint.view() : null,
             workerViews: this.workerLayer ? this.workerLayer.views() : null,
             ecologists: this.ecologists ? this.ecologists.snapshot() : null,
+            selectedProtest: this.selectedProtestId ?? null,
             ecologistViews: this.ecologistLayer ? this.ecologistLayer.views() : null,
             flagMode: this.flagBarracksId,
             roadMode: this.roadMode,

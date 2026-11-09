@@ -57,6 +57,7 @@ export const Command = Object.freeze({
     RESET_FLAG: 'barracks:resetFlag',
     REFIT: 'barracks:refit',
     REPAIR: 'building:repair', // REPAIR or STOP REPAIR on the selection
+    DISPERSE: 'protest:disperse', // DISPERSE or CANCEL DISPERSE on the selected protest
     ZOOM_IN: 'camera:zoomIn',
     ZOOM_OUT: 'camera:zoomOut',
     FIT: 'camera:fit',

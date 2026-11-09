@@ -1,5 +1,5 @@
 import {test, expect} from '@playwright/test';
-import {clickAction, clickWorld} from '../helpers/canvas.js';
+import {byAction, clickAction, clickWorld, tapAction, tapWorld} from '../helpers/canvas.js';
 import {cellCenter, hqFlow, qaSim, stepExactly} from '../helpers/hq.js';
 import {sample} from '../helpers/qa.js';
 
@@ -96,4 +96,81 @@ test.describe('ecologists: desktop', () => {
         expect(s.ecologists.totals).toMatchObject({groups: 1, protests: 1, killed: 0});
         expect(s.ecologists.totals.escaped).toBe(s.ecologists.totals.arrived);
     });
+});
+
+/**
+ * TASK 027.1: the player selects the protest and orders DISPERSE; two workers walk
+ * out, stand beside it for 120 ticks, and the group runs. The same body plays with
+ * the mouse and with touch.
+ */
+async function protestUnderWay(page, input) {
+    const touchFlow = hqFlow(input);
+    let s = await touchFlow.start(page, '', {map: null, cycle: null, mutants: false});
+    const {center} = s.terrain;
+    const site = {col: center.col - 3, row: center.row};
+    const dock = {col: center.col - 4, row: center.row};
+    await touchFlow.buildHq(page, s, center);
+    await touchFlow.place(page, s, 'powerPlant', {col: center.col + 5, row: center.row});
+    await input.pressAction(page, 'build-road');
+    for (const cell of [site, dock]) {
+        const count = (await sample(page)).roads.tiles.length;
+        await input.pressWorld(page, cellCenter(s.grid, cell), s);
+        await expect.poll(async () => (await sample(page)).roads.tiles.length).toBe(count + 1);
+    }
+    await input.pressAction(page, 'cancel-placement');
+    await touchFlow.place(page, s, 'factory', {col: center.col - 6, row: center.row});
+    await input.pressAction(page, 'end-day');
+    await expect.poll(async () => (await sample(page)).shiftCycle.shift).toBe('dusk');
+    await qaSim(page, 'pause');
+    await stepUntil(page, (now) => now.shiftCycle.shift === 'day', 8000, 240);
+    s = await stepUntil(page, (now) => now.ecologists.blocked.length > 0, 3000, 30);
+    return {s, site};
+}
+
+function disperseSuite(input, touchLayout) {
+    test('select the protest, DISPERSE: two workers break it up and the road clears', async ({page}) => {
+        test.setTimeout(90000);
+        let {s, site} = await protestUnderWay(page, input);
+        const groupId = s.ecologists.groups[0].id;
+
+        // Selecting the protest's tile shows DISPERSE in the selection's action slot, and nothing else.
+        await input.pressWorld(page, cellCenter(s.grid, site), s);
+        await expect.poll(async () => (await sample(page)).selectedProtest).toBe(groupId);
+        s = await sample(page);
+        expect(s.buildingControlsView).toMatchObject({disperseVisible: true, disperseLabel: 'DISPERSE', repairVisible: false, demolishVisible: false});
+        await expect(byAction(page, 'disperse')).toHaveAttribute('aria-label', 'DISPERSE');
+        await expect(byAction(page, 'disperse')).toHaveAttribute('data-target', groupId);
+        if (touchLayout) {
+            const box = await byAction(page, 'disperse').boundingBox();
+            expect(box.width).toBeGreaterThanOrEqual(44);
+            expect(box.height).toBeGreaterThanOrEqual(44);
+        }
+
+        // DISPERSE, on a running Day. The button turns into CANCEL DISPERSE.
+        await qaSim(page, 'resume');
+        await input.pressAction(page, 'disperse');
+        await expect.poll(async () => (await sample(page)).workers.dispersals.length).toBe(1);
+        await expect(byAction(page, 'disperse')).toHaveAttribute('aria-label', 'CANCEL DISPERSE');
+        await qaSim(page, 'pause');
+
+        // Two workers come out to their own tiles beside the site; then the group runs and the road clears.
+        s = await stepUntil(page, (now) => now.workers.dispersals.length === 0, 1500, 10);
+        expect(s.ecologists.totals.dispersed).toBe(1);
+        expect(s.ecologists.blocked).toEqual([]);
+        expect(s.ecologistViews.sites).toEqual([]);
+        expect(s.ecologists.ecologists.every(({state}) => state === 'fleeing')).toBe(true);
+        expect(s.workers.workers.length).toBeGreaterThanOrEqual(2);
+        expect(s.buildingControlsView.disperseVisible).toBe(false); // the protest is over: the selection goes
+        expect(s.selectedProtest).toBe(null);
+    });
+}
+
+test.describe('disperse: desktop', () => {
+    test.use({viewport: {width: 1280, height: 720}});
+    disperseSuite(mouse, false);
+});
+
+test.describe('disperse: touch 844x390', () => {
+    test.use({viewport: {width: 844, height: 390}, hasTouch: true, isMobile: true});
+    disperseSuite({pressWorld: tapWorld, pressAction: tapAction}, true);
 });

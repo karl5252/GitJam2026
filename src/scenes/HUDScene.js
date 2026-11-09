@@ -51,6 +51,10 @@ const PLACEMENT_HINTS = {
     'repair-no-credits': 'Repair stopped: not enough Credits',
     'repair-unreachable': 'No worker can reach this building',
     'repair-not-damaged': 'Nothing to repair',
+    'disperse-no-workers': 'Two free workers are needed to disperse a protest',
+    'disperse-unreachable': 'Workers cannot get beside this protest',
+    'disperse-busy': 'Workers are already dispersing a protest',
+    'disperse-not-a-protest': 'This protest is over',
 };
 
 const POWER_STATUS_LABELS = {
@@ -228,6 +232,7 @@ export class HUDScene extends Phaser.Scene {
             onDemolish: () => EventBus.emit(Command.DEMOLISH),
             onRefit: () => EventBus.emit(Command.REFIT),
             onRepair: () => EventBus.emit(Command.REPAIR),
+            onDisperse: () => EventBus.emit(Command.DISPERSE),
         }, layout.actions);
         this.ui.speed = new SpeedControls(this, (speed) => EventBus.emit(Command.SET_SPEED, {speed}), layout.speed);
         this.ui.dayPause = this.button(layout.dayTime.pause, 'PAUSE', 0x37474f, () => EventBus.emit(Command.TOGGLE_DAY_PAUSE));
@@ -483,8 +488,8 @@ export class HUDScene extends Phaser.Scene {
     onSelection(selection) {
         this.selection = selection;
         if (!this.ui) return;
-        const {building, canFlag, workers, sent, canDemolish, confirmDemolish, refitTo, switchable, paused = false, repair = null} = selection;
-        this.ui.controls.update(building, {canFlag, workers, sent, canDemolish, confirmDemolish, refitTo, paused, repair});
+        const {building, canFlag, workers, sent, canDemolish, confirmDemolish, refitTo, switchable, paused = false, repair = null, disperse = null} = selection;
+        this.ui.controls.update(building, {canFlag, workers, sent, canDemolish, confirmDemolish, refitTo, paused, repair, disperse});
         const narrow = this.layout.touch || building?.type === BARRACKS_TYPE;
         if (switchable) this.layoutToggle(narrow);
         this.showButton(this.ui.toggle, switchable);

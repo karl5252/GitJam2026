@@ -107,6 +107,21 @@ export const REPAIR = Object.freeze({
     hqCreditsPerHp: 1,
 });
 
+/** TASK 027.1: two workers break up a protest. Provisional. */
+export const DISPERSE = Object.freeze({workers: 2, ticks: 120});
+
+export const DisperseFailure = Object.freeze({
+    NOT_A_PROTEST: 'disperse-not-a-protest',
+    ALREADY_ORDERED: 'disperse-already-ordered',
+    NOT_ORDERED: 'disperse-not-ordered',
+    BUSY: 'disperse-busy', // one dispersal at a time
+    NO_WORKERS: 'disperse-no-workers',
+    UNREACHABLE: 'disperse-unreachable',
+});
+
+/** The four tiles beside a site, in N, E, S, W order. */
+const CARDINALS = Object.freeze([[0, -1], [1, 0], [0, 1], [-1, 0]]);
+
 export const RepairFailure = Object.freeze({
     NOT_DAMAGED: 'repair-not-damaged',
     ALREADY_ORDERED: 'repair-already-ordered',
@@ -179,6 +194,9 @@ export class Workers {
     #sent = false; // ACTIVE: the squad is sent to the flag; LEGACY uses the flag alone
     #dawnDay = null; // ACTIVE: the Day whose dawn has been handled
     #lastShift = null;
+    #ecologists = null;
+    #dispersals = new Map(); // protest group id -> {workers: [id | null, id | null], tiles, ticks}
+    #assigned = new Map(); // worker id -> {group, tile, resume: {job, flag} | null}: kept off the worker record
 
     /**
      * @param {{cycle: import('./shiftCycle.js').ShiftCycle,
@@ -199,6 +217,11 @@ export class Workers {
         this.#roads = roads;
         this.#pollution = pollution;
         placement.addGuard?.((question) => this.#guard(question));
+    }
+
+    /** Protesters are created after workers, and DISPERSE needs to read and break up their protests. */
+    setEcologists(ecologists) {
+        this.#ecologists = ecologists;
     }
 
     get flag() {
@@ -325,6 +348,66 @@ export class Workers {
         return {ok: true};
     }
 
+    /** The DISPERSE order on a protest group, or null. */
+    disperseOrder(groupId) {
+        const order = this.#dispersals.get(groupId);
+        return order ? {groupId, workers: [...order.workers], ticks: order.ticks} : null;
+    }
+
+    /**
+     * Could the player order DISPERSE on this protest now? Never mutates. Two free
+     * workers and two distinct reachable tiles beside the site, one each, are needed:
+     * a worker on a repair is never free. `quick` skips the walk fields, for a button
+     * drawn every frame; the order itself always checks.
+     * @returns {{ok: true} | {ok: false, reason: string}}
+     */
+    canDisperse(groupId, {quick = false} = {}) {
+        if (!this.#cycle.timed || !this.#ecologists) return {ok: false, reason: WorkFlagFailure.DAY_ONLY};
+        const hq = this.#hq();
+        if (!hq) return {ok: false, reason: UNKNOWN_BUILDING};
+        if (this.#cycle.pausedDay) return {ok: false, reason: GAME_PAUSED};
+        if (!this.#mayDispatch()) return {ok: false, reason: WorkFlagFailure.DAY_ONLY};
+        if (this.#dispersals.has(groupId)) return {ok: false, reason: DisperseFailure.ALREADY_ORDERED};
+        const protest = this.#ecologists.protest(groupId);
+        if (!protest) return {ok: false, reason: DisperseFailure.NOT_A_PROTEST};
+        if (this.#dispersals.size > 0) return {ok: false, reason: DisperseFailure.BUSY};
+        if (quick) return this.#freeRepairers() >= DISPERSE.workers ? {ok: true} : {ok: false, reason: DisperseFailure.NO_WORKERS};
+        this.#refreshNavigation(hq);
+        const plan = this.#planDispersal(protest.site, hq);
+        return plan.ok ? {ok: true} : plan;
+    }
+
+    /** DISPERSE: two workers to the protest. Free: no Credits, no AP. */
+    orderDisperse(groupId) {
+        const check = this.canDisperse(groupId);
+        if (!check.ok) return check;
+        const {site} = this.#ecologists.protest(groupId);
+        const {picks} = this.#planDispersal(site, this.#hq());
+        const order = {workers: [], tiles: [], ticks: 0};
+        for (const {worker, tile} of picks) {
+            order.tiles.push(tile);
+            order.workers.push(worker?.id ?? null);
+            if (worker) this.#assign(worker, groupId, tile);
+        }
+        this.#dispersals.set(groupId, order);
+        return {ok: true, workers: [...order.workers]};
+    }
+
+    /** CANCEL DISPERSE: at once, free; both workers go back to what they were doing. */
+    cancelDisperse(groupId) {
+        if (this.#cycle.pausedDay) return {ok: false, reason: GAME_PAUSED};
+        if (!this.#dispersals.has(groupId)) return {ok: false, reason: DisperseFailure.NOT_ORDERED};
+        this.#endDispersal(groupId);
+        return {ok: true};
+    }
+
+    /** Detached DISPERSE orders. */
+    dispersals() {
+        return [...this.#dispersals].map(([groupId, {workers, tiles, ticks}]) => ({
+            groupId, workers: [...workers], tiles: tiles.map((t) => ({...t})), ticks,
+        }));
+    }
+
     /** Detached repair state: orders in the order given, and what repairs have cost and restored. */
     repairs() {
         return {
@@ -368,16 +451,19 @@ export class Workers {
         if (this.#cycle.timed) {
             this.#followCycle(shift);
             this.#tidyOrders();
+            this.#tidyDispersals();
         } else if (shift !== Shift.NIGHT) {
             this.#standDown();
             return {cancelled: this.#notices};
         }
-        if (this.#target() === null && this.#workers.length === 0 && this.#orders.size === 0) return {cancelled: this.#notices};
+        if (this.#target() === null && this.#workers.length === 0 && this.#orders.size === 0 && this.#dispersals.size === 0) return {cancelled: this.#notices};
         const hq = this.#hq();
         if (!hq) return {cancelled: this.#notices}; // nowhere to leave from or go home to: anyone out stays put
         this.#refreshNavigation(hq);
         if (this.#repairTime()) this.#deployRepairers();
+        if (this.#repairTime()) this.#deployDispersers();
         for (const worker of [...this.#workers]) this.#move(worker);
+        if (this.#repairTime()) this.#countDispersals();
         if (!this.#cycle.timed || shift === Shift.DAY) this.#deploy();
         return {cancelled: this.#notices};
     }
@@ -468,9 +554,9 @@ export class Workers {
      * @returns {{ok: true, worker: object | null} | {ok: false, reason: string}}
      */
     #chooseRepairer(building, hq) {
-        if (this.#orders.size >= WORKER.squadSize) return {ok: false, reason: RepairFailure.NO_WORKER};
-        const pending = [...this.#orders.values()].filter(({worker}) => worker === null).length;
-        const candidates = this.#workers.filter((worker) => !worker.repair).map((worker) => ({worker, from: worker}));
+        if (this.#orders.size + this.#dispersingCount() >= WORKER.squadSize) return {ok: false, reason: RepairFailure.NO_WORKER};
+        const pending = [...this.#orders.values()].filter(({worker}) => worker === null).length + this.#pendingDispersers();
+        const candidates = this.#workers.filter((worker) => !worker.repair && !this.#assigned.has(worker.id)).map((worker) => ({worker, from: worker}));
         if (this.#inside - pending > 0) candidates.push({worker: null, from: receivingDock(hq)});
         if (candidates.length === 0) return {ok: false, reason: RepairFailure.NO_WORKER};
         const stands = this.#standTiles(building);
@@ -504,9 +590,164 @@ export class Workers {
 
     /** Workers who could take a new order: outside and unordered, or inside and not promised. */
     #freeRepairers() {
-        if (this.#orders.size >= WORKER.squadSize) return 0;
-        const pending = [...this.#orders.values()].filter(({worker}) => worker === null).length;
-        return this.#workers.filter((worker) => !worker.repair).length + Math.max(0, this.#inside - pending);
+        if (this.#orders.size + this.#dispersingCount() >= WORKER.squadSize) return 0;
+        const pending = [...this.#orders.values()].filter(({worker}) => worker === null).length + this.#pendingDispersers();
+        return this.#workers.filter((worker) => !worker.repair && !this.#assigned.has(worker.id)).length + Math.max(0, this.#inside - pending);
+    }
+
+    // ---- DISPERSE (TASK 027.1) ------------------------------------------------
+
+    /** Workers a dispersal holds, sent or still to leave HQ. */
+    #dispersingCount() {
+        return this.#dispersals.size * DISPERSE.workers;
+    }
+
+    #pendingDispersers() {
+        let pending = 0;
+        for (const {workers} of this.#dispersals.values()) pending += workers.filter((id) => id === null).length;
+        return pending;
+    }
+
+    /**
+     * Who goes where: two distinct free tiles beside the site (N, E, S, W, never the
+     * site), and two free workers, each to its own tile. Pairs are taken quickest
+     * first; ties go to a worker outside before one leaving HQ, then id order, then
+     * tile order. Never mutates.
+     * @returns {{ok: true, picks: Array<{worker: object | null, tile: {col, row}}>} | {ok: false, reason: string}}
+     */
+    #planDispersal(site, hq) {
+        if (this.#orders.size + DISPERSE.workers > WORKER.squadSize) return {ok: false, reason: DisperseFailure.NO_WORKERS};
+        const pendingRepairs = [...this.#orders.values()].filter(({worker}) => worker === null).length;
+        const candidates = this.#workers.filter((w) => !w.repair && !this.#assigned.has(w.id)).map((worker) => ({worker, from: worker}));
+        const fromHq = Math.max(0, this.#inside - pendingRepairs);
+        for (let i = 0; i < Math.min(fromHq, DISPERSE.workers); i++) candidates.push({worker: null, from: receivingDock(hq)});
+        if (candidates.length < DISPERSE.workers) return {ok: false, reason: DisperseFailure.NO_WORKERS};
+        const tiles = CARDINALS.map(([dc, dr]) => ({col: site.col + dc, row: site.row + dr}))
+            .filter(({col, row}) => col >= 0 && row >= 0 && col < this.#grid.cols && row < this.#grid.rows && isFree(this.#map, {col, row}));
+        const times = candidates.map(({from}) => {
+            const reach = isFree(this.#map, from) ? walkField(this.#map, {col: from.col, row: from.row}) : null;
+            return tiles.map(({col, row}) => (reach ? reach[row * this.#grid.cols + col] : UNREACHABLE));
+        });
+        const picks = [];
+        const used = {candidates: new Set(), tiles: new Set()};
+        for (let n = 0; n < DISPERSE.workers; n++) {
+            let best = null;
+            candidates.forEach((candidate, c) => {
+                if (used.candidates.has(c)) return;
+                tiles.forEach((tile, t) => {
+                    if (used.tiles.has(t) || times[c][t] === UNREACHABLE) return;
+                    if (!best || times[c][t] < best.time) best = {c, t, time: times[c][t]};
+                });
+            });
+            if (!best) return {ok: false, reason: DisperseFailure.UNREACHABLE};
+            used.candidates.add(best.c);
+            used.tiles.add(best.t);
+            picks.push({worker: candidates[best.c].worker, tile: tiles[best.t]});
+        }
+        return {ok: true, picks};
+    }
+
+    /** Off clearing for now, remembering the jungle tile it was on, whose progress stays with the tile. */
+    #assign(worker, groupId, tile) {
+        const resume = worker.job && this.#flag ? {job: {...worker.job}, flag: {...this.#flag}} : null;
+        this.#assigned.set(worker.id, {group: groupId, tile, resume});
+        worker.job = null;
+        worker.arrived = false;
+    }
+
+    /** Workers still to leave HQ for a dispersal set off. */
+    #deployDispersers() {
+        for (const [groupId, order] of this.#dispersals) {
+            order.workers.forEach((id, i) => {
+                if (id !== null || this.#inside === 0) return;
+                const worker = this.#spawn();
+                order.workers[i] = worker.id;
+                this.#assigned.set(worker.id, {group: groupId, tile: order.tiles[i], resume: null});
+            });
+        }
+    }
+
+    /** An order ends when its protest has gone, fled or left, or a worker it holds is no longer outside. */
+    #tidyDispersals() {
+        if (this.#dispersals.size === 0) return;
+        const out = new Set(this.#workers.map(({id}) => id));
+        for (const [groupId, order] of [...this.#dispersals]) {
+            if (!this.#ecologists?.protest(groupId)) {
+                this.#endDispersal(groupId);
+                continue;
+            }
+            const lost = order.workers.some((id) => id !== null && !out.has(id));
+            const blocked = this.#map !== null && order.tiles.some((tile) => !isFree(this.#map, tile));
+            if (lost || blocked) this.#endDispersal(groupId, {reason: DisperseFailure.UNREACHABLE});
+        }
+    }
+
+    /** Both at their tiles: count; the last tick breaks the protest up. */
+    #countDispersals() {
+        for (const [groupId, order] of [...this.#dispersals]) {
+            const ready = order.workers.every((id, i) => {
+                const worker = this.#workers.find((w) => w.id === id);
+                if (!worker || !sameCell(worker, order.tiles[i]) || worker.next) return false;
+                const centre = this.#centerOf(order.tiles[i]);
+                return worker.x === centre.x && worker.y === centre.y;
+            });
+            if (!ready || ++order.ticks < DISPERSE.ticks) continue;
+            this.#ecologists.disperse(groupId);
+            this.#endDispersal(groupId);
+        }
+    }
+
+    /**
+     * Release both workers. Each goes back to the jungle tile it left if it is still
+     * jungle, the flag has not moved and nobody else holds it; otherwise the usual
+     * flag rules apply. Dusk releases without that: everyone is going home.
+     */
+    #endDispersal(groupId, {reason = null, resume = true} = {}) {
+        const order = this.#dispersals.get(groupId);
+        if (!order) return;
+        this.#dispersals.delete(groupId);
+        for (const id of order.workers) {
+            if (id === null) continue;
+            const assignment = this.#assigned.get(id);
+            this.#assigned.delete(id);
+            const worker = this.#workers.find((w) => w.id === id);
+            if (!worker || !resume || !assignment?.resume) continue;
+            const {job, flag} = assignment.resume;
+            const held = this.#workers.some((w) => w !== worker && w.job && sameCell(w.job, job));
+            const stillJungle = this.#grid.terrain?.kindAt(job.col, job.row) === TerrainKind.JUNGLE;
+            if (stillJungle && !held && this.#flag && sameCell(this.#flag, flag) && this.#atWork()) {
+                worker.job = {...job};
+                worker.arrived = true; // it was in the work area on this flag already
+            }
+        }
+        if (reason) this.#notices.push({groupId, reason});
+    }
+
+    /**
+     * One tick towards a dispersal tile, then wait there at its centre.
+     * Mirrors a repair's walk; a way cut off since ends the order.
+     */
+    #toDispersal(worker, tile) {
+        if (sameCell(worker, tile)) {
+            const centre = this.#centerOf(tile);
+            if (worker.x !== centre.x || worker.y !== centre.y) this.#walkTo(worker, centre);
+            return;
+        }
+        if (!this.#atCentre(worker)) {
+            this.#walkTo(worker, this.#centerOf(worker));
+            return;
+        }
+        const step = nextStep(this.#map, this.#jobField(tile), worker);
+        if (!step) {
+            this.#endDispersal(this.#assigned.get(worker.id).group, {reason: DisperseFailure.UNREACHABLE});
+            return;
+        }
+        if (isGate(this.#map, step) && !this.#gateIsPassable(step)) {
+            worker.held = step;
+            return;
+        }
+        worker.next = step;
+        this.#walkEdge(worker);
     }
 
     /** An order waiting for a worker gets one from HQ, if one is inside. */
@@ -619,7 +860,9 @@ export class Workers {
     /** Detached, JSON-serializable state. Reading it changes nothing. */
     snapshot() {
         const state = {route: this.route(), flag: this.flag, inside: this.#inside, lost: this.#lost, workers: this.workers()};
-        return this.#cycle.timed ? {...state, sent: this.#sent, clearing: this.clearing(), repairs: this.repairs()} : state; // LEGACY keeps its old shape
+        if (!this.#cycle.timed) return state; // LEGACY keeps its old shape
+        const active = {...state, sent: this.#sent, clearing: this.clearing(), repairs: this.repairs()};
+        return this.#ecologists ? {...active, dispersals: this.dispersals()} : active; // only where protesters exist
     }
 
     #hq() {
@@ -636,7 +879,10 @@ export class Workers {
 
     /** ACTIVE: Dusk recalls, and each dawn makes up the squad without duplicating anyone. */
     #followCycle(shift) {
-        if (shift === Shift.DUSK && this.#lastShift !== Shift.DUSK) this.#callHome();
+        if (shift === Shift.DUSK && this.#lastShift !== Shift.DUSK) {
+            this.#callHome();
+            for (const groupId of [...this.#dispersals.keys()]) this.#endDispersal(groupId, {resume: false}); // unfinished: Dusk cancels
+        }
         this.#lastShift = shift;
         if (shift !== Shift.DAY || this.#dawnDay === this.#cycle.day) return;
         this.#dawnDay = this.#cycle.day;
@@ -682,6 +928,11 @@ export class Workers {
         worker.repairing = false;
         if (worker.next) {
             this.#walkEdge(worker);
+            return;
+        }
+        const assignment = this.#assigned.get(worker.id);
+        if (assignment && this.#repairTime()) {
+            this.#toDispersal(worker, assignment.tile);
             return;
         }
         if (worker.repair && this.#repairTime() && this.#repair(worker)) return;

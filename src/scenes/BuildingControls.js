@@ -50,14 +50,16 @@ export class BuildingControls {
     #refitArmedId = null;
     #refitRole = null;
     #repairState = null; // {ordered, enabled, price}
+    #disperse;
     #tooltip;
     #hovered = null;
 
     /**
-     * @param {{onFlag: () => void, onResetFlag: () => void, onDemolish: () => void, onRefit: () => void, onRepair: () => void}} handlers
-     * @param {{flag, reset, demolish, refit, repair}} positions each {x, y, width, height}
+     * @param {{onFlag: () => void, onResetFlag: () => void, onDemolish: () => void, onRefit: () => void, onRepair: () => void,
+     *          onDisperse?: () => void}} handlers
+     * @param {{flag, reset, demolish, refit, repair, disperse?}} positions each {x, y, width, height}
      */
-    constructor(scene, {onFlag, onResetFlag, onDemolish, onRefit, onRepair}, {flag, reset, demolish, refit, repair}) {
+    constructor(scene, {onFlag, onResetFlag, onDemolish, onRefit, onRepair, onDisperse}, {flag, reset, demolish, refit, repair, disperse}) {
         this.#scene = scene;
         this.#tooltip = scene.add.text(0, 0, '', TOOLTIP_STYLE).setOrigin(0.5, 1).setDepth(9).setVisible(false);
         this.#flag = this.#button(flag, FLAG_FILL, 'set-flag', 'Set flag', onFlag);
@@ -68,6 +70,8 @@ export class BuildingControls {
         this.#demolish = this.#iconButton(demolish, DEMOLISH_FILL, 'demolish', 'DESTROY', () => this.#pressDemolish(), this.#killdozer(demolish));
         this.#refit = this.#button(refit, FLAG_FILL, 'refit', 'Refit Barracks', () => this.#pressRefit());
         this.#repair = this.#iconButton(repair, REPAIR_FILL, 'repair', 'REPAIR', () => onRepair?.(), scene.add.graphics());
+        // TASK 027.1: shown only while a protest is selected, when no building action is.
+        this.#disperse = disperse ? this.#button(disperse, REPAIR_FILL, 'disperse', 'DISPERSE', () => onDisperse?.()) : null;
         this.#paintDemolish();
     }
 
@@ -77,8 +81,9 @@ export class BuildingControls {
      *   workers - the flag is HQ's work flag
      *   refitTo - the role a refit would give this building, or null when it cannot have one
      *   repair - {ordered, enabled, price} while REPAIR or STOP REPAIR applies, otherwise null
+     *   disperse - {groupId, ordered, enabled} while a protest is selected, otherwise null
      */
-    update(building, {canFlag, workers, sent = true, canDemolish, confirmDemolish, refitTo, paused = false, repair = null}) {
+    update(building, {canFlag, workers, sent = true, canDemolish, confirmDemolish, refitTo, paused = false, repair = null, disperse = null}) {
         this.#paused = paused;
         this.#targetId = canDemolish ? building.id : null;
         this.#confirm = confirmDemolish;
@@ -95,7 +100,22 @@ export class BuildingControls {
         if (canFlag) this.#labelFlags(building.flag, workers, sent);
         this.#show(this.#repair, Boolean(repair), building?.id);
         if (repair) this.#paintRepair(repair);
+        if (this.#disperse) this.#paintDisperse(disperse);
         this.#refreshTooltip();
+    }
+
+    /** DISPERSE on green, CANCEL DISPERSE on red; dimmed, still pressable for its reason, when it can only be refused. */
+    #paintDisperse(disperse) {
+        const button = this.#disperse;
+        button.label = disperse?.ordered ? 'CANCEL DISPERSE' : 'DISPERSE';
+        button.text.setText(disperse?.ordered ? 'CANCEL\nDISPERSE' : 'DISPERSE');
+        button.rect.setFillStyle(disperse?.ordered ? STOP_FILL : REPAIR_FILL);
+        this.#show(button, Boolean(disperse), disperse?.groupId);
+        if (!disperse) return;
+        const alpha = (disperse.enabled ? 1 : 0.45) * (this.#paused ? PAUSED_ALPHA : 1);
+        button.rect.setAlpha(alpha);
+        button.text.setAlpha(alpha);
+        button.proxy?.label(button.label).set({ordered: disperse.ordered, enabled: disperse.enabled});
     }
 
     /** A wrench on green; STOP REPAIR, the wrench crossed out on red. Dimmed when a press can only be refused. */
@@ -147,6 +167,10 @@ export class BuildingControls {
             repairLabel: this.#repair.label,
             repairAlpha: this.#repair.rect.alpha,
             repairBox: box(this.#repair),
+            disperseVisible: Boolean(this.#disperse?.rect.visible),
+            disperseLabel: this.#disperse?.label ?? null,
+            disperseAlpha: this.#disperse?.rect.alpha ?? null,
+            disperseBox: this.#disperse ? box(this.#disperse) : null,
             tooltip: this.#tooltip.visible ? this.#tooltip.text : null,
             paused: this.#paused,
             alpha: this.#flag.rect.alpha,

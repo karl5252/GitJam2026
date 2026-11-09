@@ -57,6 +57,7 @@ export const DESKTOP = Object.freeze({
     actions: {
         flag: {x: 1098, y: 470, ...ACTION},
         ...pairIn({x: 1218, y: 470, ...ACTION}), // the old Demolish slot holds both
+        disperse: {x: 1218, y: 470, ...ACTION, fontSize: '16px', wrap: 110}, // a selected protest: nothing else is shown
         reset: {x: 1218, y: 560, ...ACTION},
         refit: {x: 1152, y: 650, ...WIDE},
     },
@@ -124,6 +125,7 @@ export const TOUCH = Object.freeze({
         reset: {...left(4), ...LABEL},
         refit: {...right(3), ...LABEL},
         ...pairIn(PAIR_ROW, TOUCH_ICON), // the old Demolish slot, widened to the left
+        disperse: {...PAIR_ROW, height: TOUCH_ICON.height, ...LABEL}, // the same row, for a selected protest
     },
     toggle: left(5),
     narrowToggle: left(5),
