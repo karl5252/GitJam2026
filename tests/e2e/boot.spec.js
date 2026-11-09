@@ -20,6 +20,15 @@ test('game boots into the game scene in the ready phase with a live QA surface',
         fogView: null,
         workers: null,
         workerViews: null,
+        deposits: null, // TASK 026
+        buildingArtViews: null,
+        ecologists: null, // TASK 027
+        ecologistViews: null,
+        selectedProtest: null, // TASK 027.1
+        loudspeakers: null, // TASK 028
+        speakerRingView: null,
+        newspaper: null, // TASK 029
+        newspaperView: null,
         nightTint: null,
         dayTimeView: null,
         actionAlphaView: null,
@@ -28,7 +37,7 @@ test('game boots into the game scene in the ready phase with a live QA surface',
         ui: {
             titleVisible: true, startVisible: true, cancelVisible: false,
             endDayVisible: false, endDayEnabled: false, buildMenuVisible: false, toggleVisible: false,
-            hintVisible: false, drawerOpen: false, layout: 'desktop',
+            hintVisible: false, drawerOpen: false, newspaperOpen: false, layout: 'desktop',
         },
         camera: {zoom: 1, x: 640, y: 360, viewport: {x: 240, y: 88, width: 800, height: 544}, fitZoom: 1, maxZoom: 3.2},
         orientation: {blocked: false},

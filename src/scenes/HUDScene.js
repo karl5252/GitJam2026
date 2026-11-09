@@ -10,6 +10,7 @@ import {addProxy} from '../testShadow/TestProxy.js';
 import {BuildingControls} from './BuildingControls.js';
 import {Command, EventBus, Hint, Hud, Notice, State} from './EventBus.js';
 import {GameOverLayer} from './GameOverLayer.js';
+import {NewspaperLayer} from './NewspaperLayer.js';
 import {OfficeMenuLayer} from './OfficeMenuLayer.js';
 import {SpeedControls} from './SpeedControls.js';
 import {currentLayout} from './hudLayout.js';
@@ -118,6 +119,7 @@ export class HUDScene extends Phaser.Scene {
         this.drawerOpen = false;
         this.reportOpen = false;
         this.hasReport = false;
+        this.newsEnabled = false; // TASK 029: REPORT and the desktop panel open La Voz instead
         this.toggleNarrow = false;
         this.createTitle();
         this.events.once('shutdown', () => {
@@ -143,7 +145,11 @@ export class HUDScene extends Phaser.Scene {
                 this.ui?.hint.setText(hint).setVisible(hint !== ''); // the touch hint has a background of its own
             },
             [State.SPEED]: ({speed}) => this.ui?.speed.setSpeed(speed),
-            [State.GAME_OVER]: (report) => this.ui?.gameOver.show(report),
+            [State.GAME_OVER]: (report) => {
+                this.ui?.newspaper.hide(); // Game Over takes precedence
+                this.ui?.gameOver.show(report);
+            },
+            [State.NEWSPAPER]: (value) => this.onNewspaper(value),
             [Notice.DISARM]: () => this.ui?.controls.disarm(),
             [Notice.WORLD_PRESSED]: () => this.onWorldPressed(),
             [Hud.SNAPSHOT]: (entries) => {
@@ -243,6 +249,11 @@ export class HUDScene extends Phaser.Scene {
         this.showButton(this.ui.dayPause, false);
         this.showButton(this.ui.daySpeed, false);
         this.ui.gameOver = new GameOverLayer(this, () => EventBus.emit(Command.RESTART));
+        this.ui.newspaper = new NewspaperLayer(this, () => EventBus.emit(Command.CLOSE_NEWSPAPER));
+        this.ui.readProxy = null;
+        this.ui.settlement.on('pointerdown', () => {
+            if (this.newsEnabled && !this.layout.touch) EventBus.emit(Command.OPEN_NEWSPAPER);
+        });
         this.createCameraControls();
     }
 
@@ -318,7 +329,10 @@ export class HUDScene extends Phaser.Scene {
             .setDepth(DRAWER_DEPTH + 1)
             .setVisible(false));
         const open = this.button(drawer.open, 'BUILD', 0x2e7d32, () => this.setDrawerOpen(!this.drawerOpen));
-        const report = this.button(this.layout.report, 'REPORT', 0x37474f, () => this.setReportOpen(!this.reportOpen));
+        const report = this.button(this.layout.report, 'REPORT', 0x37474f, () => {
+            if (this.newsEnabled) EventBus.emit(Command.OPEN_NEWSPAPER); // TASK 029: the newspaper replaces the box
+            else this.setReportOpen(!this.reportOpen);
+        });
         report.rect.setVisible(false).disableInteractive();
         report.text.setVisible(false).setStyle({fontSize: '18px'});
         this.ui.drawer = {panel, headings, open, openProxy: null, report, reportProxy: null};
@@ -392,9 +406,36 @@ export class HUDScene extends Phaser.Scene {
             `Net     ${signed(report.net + delivered)}`,
             `Credits ${report.creditsAfter}`,
             `Power   ${POWER_STATUS_LABELS[report.power.status]}`,
+            ...(this.newsEnabled && !this.layout.touch ? ['▸ READ LA VOZ'] : []),
         ].join('\n'));
         this.hasReport = true;
-        this.setReportOpen(true);
+        if (!(this.newsEnabled && this.layout.touch)) this.setReportOpen(true); // on touch the newspaper replaces the box
+        this.syncReadLaVoz();
+    }
+
+    /** TASK 029: La Voz opens at dawn, and again through REPORT or READ LA VOZ. */
+    onNewspaper({enabled, open = false, reason = null, edition = null}) {
+        this.newsEnabled = enabled;
+        if (!this.ui) return;
+        if (open && edition) {
+            this.setReportOpen(this.reportOpen && !this.layout.touch);
+            this.setDrawerOpen(false);
+            this.ui.newspaper.show(edition, {reason, touch: this.layout.touch});
+        } else {
+            this.ui.newspaper.hide();
+        }
+        this.syncReadLaVoz();
+    }
+
+    /** Desktop: the settlement panel itself is the way in, by Day, while La Voz is closed. */
+    syncReadLaVoz() {
+        if (!this.ui) return;
+        const panel = this.ui.settlement;
+        const active = this.newsEnabled && !this.layout.touch && this.hasReport && panel.visible
+            && Boolean(this.menu?.visible) && !this.ui.newspaper.open;
+        if (active) panel.setInteractive({useHandCursor: true});
+        else panel.disableInteractive();
+        this.ui.readProxy = this.syncProxy(this.ui.readProxy, {rect: panel}, active, 'show-report', 'READ LA VOZ');
     }
 
     onMenu(menu) {
@@ -407,6 +448,7 @@ export class HUDScene extends Phaser.Scene {
         this.ui.speed.setVisible(menu.speed);
         this.renderDayTime();
         this.renderDrawerButtons();
+        this.syncReadLaVoz();
     }
 
     renderDrawerButtons() {
@@ -554,6 +596,7 @@ export class HUDScene extends Phaser.Scene {
                 toggleVisible: ui ? ui.toggle.rect.visible : false,
                 hintVisible: ui ? ui.hint.visible : false,
                 drawerOpen: this.drawerOpen,
+                newspaperOpen: Boolean(ui?.newspaper.open),
                 layout: this.layout.touch ? 'touch' : 'desktop',
             },
             powerView: textView(ui?.power),
@@ -561,6 +604,7 @@ export class HUDScene extends Phaser.Scene {
             shiftView: textView(ui?.shift),
             waveView: textView(ui?.wave),
             gameOverView: ui ? ui.gameOver.view() : null,
+            newspaperView: ui ? ui.newspaper.view() : null,
             pollutionView: textView(ui?.pollution),
             speedView: ui ? ui.speed.view() : null,
             // How dimmed each gameplay button is: 1, or PAUSED_ALPHA in a paused Day.

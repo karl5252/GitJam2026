@@ -74,6 +74,7 @@ export class ShiftCycle {
     #settleNight;
     #lastSettlement = null;
     #canEndDay;
+    #holdDawn; // ACTIVE: () => boolean; true keeps a new Day at tick 0, paused, until the caller resumes it
     #defeatReport = null;
 
     /**
@@ -89,7 +90,7 @@ export class ShiftCycle {
      *   value (a frozen report) becomes `lastSettlement`.
      *   canEndDay - false keeps the run in Day, e.g. until HQ is built
      */
-    constructor({clock, economy, nightTicks = NIGHT_TICKS, dayTicks = null, duskTicks = 0, dayAp = DAY_AP, settleNight = null, canEndDay = () => true}) {
+    constructor({clock, economy, nightTicks = NIGHT_TICKS, dayTicks = null, duskTicks = 0, dayAp = DAY_AP, settleNight = null, canEndDay = () => true, holdDawn = null}) {
         if (!isPositiveInt(nightTicks)) throw new RangeError(`nightTicks must be a positive integer, got ${nightTicks}`);
         if (dayTicks !== null && !isPositiveInt(dayTicks)) throw new RangeError(`dayTicks must be null or a positive integer, got ${dayTicks}`);
         if (!Number.isInteger(duskTicks) || duskTicks < 0) throw new RangeError(`duskTicks must be a non-negative integer, got ${duskTicks}`);
@@ -102,6 +103,7 @@ export class ShiftCycle {
         this.#dayAp = dayAp;
         this.#settleNight = settleNight;
         this.#canEndDay = canEndDay;
+        this.#holdDawn = holdDawn;
     }
 
     /** Report from the most recent completed night (frozen), or null. */
@@ -349,6 +351,10 @@ export class ShiftCycle {
         }
         // Every timed Day starts the same way, whatever the Night was played at.
         this.#clock.setSpeed(1);
-        this.#clock.resume();
+        // TASK 029: held, the clock pauses inside this tick, as LEGACY does, so no Day
+        // tick can follow in the same frame however fast the Night ran. The Day then
+        // waits at tick 0 as an ordinary paused Day until the caller resumes it.
+        if (this.#holdDawn?.()) this.#clock.pause();
+        else this.#clock.resume();
     }
 }

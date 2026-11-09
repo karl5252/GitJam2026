@@ -2,6 +2,7 @@ import Phaser from 'phaser';
 import {preloadArt, ART, artKey} from './SpriteArt.js';
 import {preloadOfficeArt, filterOfficeArt} from './OfficeMenuArt.js';
 import {KILLDOZER} from './killdozerIcon.js';
+import {filterNewspaperArt, preloadNewspaperArt} from './newspaperArt.js';
 
 /**
  * Preloads the independent micro-scale PNG sprite sheets before starting the
@@ -16,6 +17,7 @@ export class BootScene extends Phaser.Scene {
         preloadArt(this);
         preloadOfficeArt(this);
         this.load.image(KILLDOZER.key, KILLDOZER.path); // the DESTROY icon
+        preloadNewspaperArt(this); // La Voz's photographs
     }
 
     create() {
@@ -27,6 +29,7 @@ export class BootScene extends Phaser.Scene {
             }
         }
         filterOfficeArt(this, nearest);
+        filterNewspaperArt(this, nearest);
         if (nearest !== undefined && this.textures.exists(KILLDOZER.key)) this.textures.get(KILLDOZER.key).setFilter?.(nearest);
         this.scene.start('game');
     }

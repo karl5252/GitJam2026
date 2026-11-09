@@ -33,6 +33,7 @@ export const State = Object.freeze({
     HINT: 'hint:changed', // {reason}
     SPEED: 'speed:changed', // {speed}
     GAME_OVER: 'game:over', // {completedShifts}
+    NEWSPAPER: 'newspaper:changed', // {enabled, open, reason, edition}: TASK 029
 });
 
 /** Something happened that the HUD should react to, but which is not state. */
@@ -58,6 +59,8 @@ export const Command = Object.freeze({
     REFIT: 'barracks:refit',
     REPAIR: 'building:repair', // REPAIR or STOP REPAIR on the selection
     DISPERSE: 'protest:disperse', // DISPERSE or CANCEL DISPERSE on the selected protest
+    OPEN_NEWSPAPER: 'newspaper:open', // REPORT, or READ LA VOZ on desktop
+    CLOSE_NEWSPAPER: 'newspaper:close', // CONTINUE or Escape
     ZOOM_IN: 'camera:zoomIn',
     ZOOM_OUT: 'camera:zoomOut',
     FIT: 'camera:fit',

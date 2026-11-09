@@ -48,6 +48,7 @@ import {GateLayer} from './GateLayer.js';
 import {InfantryLayer} from './InfantryLayer.js';
 import {BuildingArtLayer} from './BuildingArtLayer.js';
 import {Command, EventBus, Hint, Hud, Notice, State} from './EventBus.js';
+import {edition as newspaperEdition} from '../content/newspaper.js';
 import {WorldCamera} from './WorldCamera.js';
 import {currentLayout} from './hudLayout.js';
 import {isOrientationBlocked} from './orientationGuard.js';
@@ -211,9 +212,14 @@ export class GameScene extends Phaser.Scene {
         this.input.on('pointerup', (pointer) => this.handleGridPointerUp(pointer));
         this.input.on('pointerupoutside', (pointer) => this.handleGridPointerUp(pointer));
         this.input.on('wheel', (pointer, _over, _dx, dy) => this.handleWheel(pointer, dy));
-        this.input.keyboard.on('keydown-ESC', () => this.exitPlacementMode());
+        this.input.keyboard.on('keydown-ESC', () => {
+            if (this.newspaper?.open) this.closeNewspaper();
+            else this.exitPlacementMode();
+        });
         for (const [key, dx, dy] of [['LEFT', 1, 0], ['RIGHT', -1, 0], ['UP', 0, 1], ['DOWN', 0, -1]]) {
-            this.input.keyboard.on(`keydown-${key}`, () => this.worldCamera.panBy(dx * KEY_PAN, dy * KEY_PAN));
+            this.input.keyboard.on(`keydown-${key}`, () => {
+                if (!this.newspaper?.open) this.worldCamera.panBy(dx * KEY_PAN, dy * KEY_PAN);
+            });
         }
 
         // Instantiated BEFORE markScene: the QA surface should exist by the
@@ -284,6 +290,8 @@ export class GameScene extends Phaser.Scene {
             [Command.ZOOM_OUT]: () => this.worldCamera.zoomOut(),
             [Command.FIT]: () => this.worldCamera.fit(),
             [Command.TOGGLE_DAY_PAUSE]: () => this.handleToggleDayPause(),
+            [Command.OPEN_NEWSPAPER]: () => this.openNewspaper('report'),
+            [Command.CLOSE_NEWSPAPER]: () => this.closeNewspaper(),
             [Command.CYCLE_DAY_SPEED]: () => this.handleCycleDaySpeed(),
         };
         // END DAY's fast-forward takes no further orders: only the camera still answers.
@@ -292,6 +300,14 @@ export class GameScene extends Phaser.Scene {
             const handler = handlers[event];
             handlers[event] = (payload) => {
                 if (!this.cycle?.fastForwarding) handler(payload);
+            };
+        }
+        // La Voz is a blocking modal: while it is open, only closing it is heard.
+        for (const event of Object.values(Command)) {
+            if (!handlers[event] || event === Command.CLOSE_NEWSPAPER) continue;
+            const handler = handlers[event];
+            handlers[event] = (payload) => {
+                if (!this.newspaper?.open) handler(payload);
             };
         }
         for (const [event, handler] of Object.entries(handlers)) EventBus.on(event, handler);
@@ -325,6 +341,7 @@ export class GameScene extends Phaser.Scene {
         if (previous === GamePhase.READY && this.phase === GamePhase.STARTED) {
             this.createGrid();
             this.present(State.PHASE, {phase: this.phase});
+            this.present(State.NEWSPAPER, {enabled: this.newsEnabled, open: false});
             this.cycle.begin(); // Day 1; the clock starts paused for Day Shift
             this.syncShiftUi();
             this.refreshPower();
@@ -359,12 +376,17 @@ export class GameScene extends Phaser.Scene {
         // TEST_MODE only: ?cycle=legacy keeps the untimed Day that older suites were
         // written for. Real play always runs the active Day, Dusk and Night.
         this.legacyCycle = TEST_MODE && new URLSearchParams(window.location.search).get('cycle') === 'legacy';
+        // TASK 029: La Voz at every dawn of the ACTIVE cycle. Only TEST_MODE can switch it off
+        // (?news=off, which boot() adds unless a test asks for the newspaper).
+        this.newsEnabled = !this.legacyCycle && !(TEST_MODE && new URLSearchParams(window.location.search).get('news') === 'off');
+        this.newspaper = {open: false, reason: null, edition: null, pausedByNews: false};
         this.cycle = new ShiftCycle({
             clock: this.clock,
             economy: this.economy,
             dayTicks: this.legacyCycle ? null : DAY_TICKS,
             duskTicks: DUSK_TICKS,
             canEndDay: () => !this.hqRequired || this.placement.hqBuilt,
+            holdDawn: () => this.newsEnabled, // the new Day waits at tick 0 for La Voz
             settleNight: (day) => settleNight({
                 day,
                 buildings: this.placement.buildings(),
@@ -655,6 +677,7 @@ export class GameScene extends Phaser.Scene {
             this.updateHud(); // AP is restored and the night settled at the start of each Day
             this.updatePollutionHud();
             if (isDay && this.cycle.lastSettlement) this.presentSettlement(this.cycle.lastSettlement);
+            if (isDay && this.cycle.lastSettlement && this.newsEnabled && this.cycle.timed && !this.cycle.deployment) this.printNewspaper();
             if (this.cycle.shift === Shift.DEFEATED) this.enterDefeat();
             if (this.cycle.shift !== this.renderedShift) this.handleShiftChange(isDay);
         }
@@ -773,6 +796,7 @@ export class GameScene extends Phaser.Scene {
 
     /** Runs once: the Day/Night key changes only once into the defeated state. */
     enterDefeat() {
+        this.closeNewspaper({resume: false}); // Game Over takes precedence
         this.phase = defeatGame(this.phase);
         this.selectAt(null);
         this.present(State.PHASE, {phase: this.phase});
@@ -926,6 +950,52 @@ export class GameScene extends Phaser.Scene {
         this.speakerRingKey = key;
         const radius = (LOUDSPEAKER.radius + 0.5) * this.grid.tileSize;
         this.speakerRing.clear().lineStyle(2, 0xfff176, this.loudspeakers.isOperating(building.id) ? 0.7 : 0.3).strokeCircle(x, y, radius);
+    }
+
+    /**
+     * Dawn: print this Day's issue from the Night just settled, once, and open it.
+     * ShiftCycle has held the Day at tick 0 (holdDawn); closing resumes it at 1x.
+     */
+    printNewspaper() {
+        const settlement = this.cycle.lastSettlement;
+        this.newspaper.edition = newspaperEdition({
+            issue: this.cycle.day - 1, // the HUD's Day N
+            settlement,
+            delivered: this.logistics?.lastNight?.credits ?? 0,
+        });
+        this.newspaper.pausedByNews = !this.cycle.running; // held at dawn: closing must start the Day
+        this.newspaper.open = true;
+        this.newspaper.reason = 'dawn';
+        this.presentNewspaper();
+    }
+
+    /** REPORT: the same issue again, by Day only. A running Day pauses, and resumes on closing. */
+    openNewspaper(reason) {
+        if (this.newspaper.open || !this.newspaper.edition || this.cycle?.shift !== Shift.DAY || !this.cycle.timed) return;
+        if (this.phase === GamePhase.DEFEATED) return;
+        this.exitPlacementMode();
+        this.newspaper.pausedByNews = this.cycle.running;
+        if (this.newspaper.pausedByNews) this.clock.pause();
+        this.newspaper.open = true;
+        this.newspaper.reason = reason;
+        this.presentNewspaper();
+        this.syncShiftUi();
+    }
+
+    /** CONTINUE or Escape. Only a pause the newspaper made is undone; a player's own pause stays. */
+    closeNewspaper({resume = true} = {}) {
+        if (!this.newspaper?.open) return;
+        this.newspaper.open = false;
+        this.newspaper.reason = null;
+        if (resume && this.newspaper.pausedByNews) this.cycle.resume();
+        this.newspaper.pausedByNews = false;
+        this.presentNewspaper();
+        this.syncShiftUi();
+    }
+
+    presentNewspaper() {
+        const {open, reason, edition} = this.newspaper;
+        this.present(State.NEWSPAPER, {enabled: this.newsEnabled, open, reason, edition});
     }
 
     /** The squad walks home. The flag's drawing follows the revision, like any flag change. */
@@ -1178,7 +1248,7 @@ export class GameScene extends Phaser.Scene {
     /** A press the HUD did not capture. A mouse acts now; a finger may yet become a gesture. */
     handleGridPointerDown(pointer) {
         this.dragCell = null; // lifting a finger sends no move, so a finished drag ends here
-        if (!this.grid || this.phase === GamePhase.DEFEATED || isOrientationBlocked()) return;
+        if (!this.grid || this.phase === GamePhase.DEFEATED || isOrientationBlocked() || this.newspaper?.open) return;
         // During END DAY's fast-forward a click only looks: construction is closed in
         // the domain, and here a left click no longer selects or arms anything.
         const looking = pointer.rightButtonDown() || pointer.middleButtonDown();
@@ -1525,7 +1595,7 @@ export class GameScene extends Phaser.Scene {
     }
 
     handleWheel(pointer, deltaY) {
-        if (!this.worldCamera.worldAt(pointer) || isOrientationBlocked()) return;
+        if (this.newspaper?.open || !this.worldCamera.worldAt(pointer) || isOrientationBlocked()) return;
         if (deltaY < 0) this.worldCamera.zoomIn(pointer);
         else if (deltaY > 0) this.worldCamera.zoomOut(pointer);
     }
@@ -1587,7 +1657,7 @@ export class GameScene extends Phaser.Scene {
     }
 
     handleGridPointerMove(pointer) {
-        if (!this.grid || isOrientationBlocked()) return;
+        if (!this.grid || isOrientationBlocked() || this.newspaper?.open) return;
         if (this.mousePan && !pointer.rightButtonDown() && !pointer.middleButtonDown()) this.mousePan = null; // released over the HUD
         if (this.mousePan) {
             this.worldCamera.panBy(pointer.x - this.mousePan.x, pointer.y - this.mousePan.y);
@@ -1813,6 +1883,8 @@ export class GameScene extends Phaser.Scene {
             workerViews: this.workerLayer ? this.workerLayer.views() : null,
             ecologists: this.ecologists ? this.ecologists.snapshot() : null,
             selectedProtest: this.selectedProtestId ?? null,
+            newspaper: this.newspaper ? {enabled: this.newsEnabled, open: this.newspaper.open, reason: this.newspaper.reason,
+                pausedByNews: this.newspaper.pausedByNews, edition: this.newspaper.edition} : null,
             loudspeakers: this.loudspeakers ? {...this.loudspeakers.snapshot(), network: this.placement.loudspeakerNetwork} : null,
             speakerRingView: this.speakerRing ? {visible: this.speakerRing.visible} : null,
             ecologistViews: this.ecologistLayer ? this.ecologistLayer.views() : null,
