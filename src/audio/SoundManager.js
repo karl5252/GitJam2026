@@ -3,6 +3,8 @@
  * (one manager per game, channel volumes, persisted settings, guarded sounds), with
  * a separate mute flag, semantic events, cooldowns and caps, one unit voice and one
  * PA broadcast, managed loops, and music states with crossfades and ducking.
+ * TASK 033.4: one presidential voice (`voice: 'president'`, through speak() only), which
+ * the units never talk over and which never overlaps another presidential line.
  *
  * It needs only a small backend: `locked`, `once('unlocked', fn)` and
  * `add(key, {volume, loop})` returning a sound with `play`, `stop`, `destroy`,
@@ -58,7 +60,9 @@ export class SoundManager {
     #active = new Map(); // event -> Set of playing sounds
     #lastAt = new Map(); // event -> when it last played
     #lastFile = new Map(); // event -> the file it last played, so pools never repeat at once
-    #voice = {sound: null, freeAt: 0};
+    #voice = {sound: null, freeAt: 0, event: null};
+    #president = {sound: null, event: null}; // TASK 033.4: the one presidential line
+    #events; // the event map: SOUND_EVENTS, unless a test gives its own
     #broadcast = {sound: null, nextAt: 0, on: false};
     #loops = new Map(); // id -> {event, sound, gain}
     #tracks = new Map(); // track name -> {sound, gain}
@@ -71,7 +75,8 @@ export class SoundManager {
      *          now?: () => number, random?: () => number, enabled?: boolean, touch?: boolean}} deps
      *   enabled - false makes every call a no-op (TEST_MODE's ?audio=off)
      */
-    constructor({backend, hasAudio = () => true, storage = browserStorage(), now = () => performance.now(), random = Math.random, enabled = true, touch = false, debug = null}) {
+    constructor({backend, hasAudio = () => true, storage = browserStorage(), now = () => performance.now(), random = Math.random, enabled = true, touch = false, debug = null, events = SOUND_EVENTS}) {
+        this.#events = events;
         this.#debug = debug ?? (() => {});
         this.#backend = enabled ? backend : null;
         this.#hasAudio = hasAudio;
@@ -156,10 +161,10 @@ export class SoundManager {
 
     #applyVolumes() {
         for (const [name, sounds] of this.#active) {
-            const {channel, volume} = SOUND_EVENTS[name];
+            const {channel, volume} = this.#events[name];
             for (const sound of sounds) sound.setVolume(this.#level(channel, volume * (sound.papiGain ?? 1)));
         }
-        for (const loop of this.#loops.values()) loop.sound.setVolume(this.#level('sfx', SOUND_EVENTS[loop.event].volume * loop.gain));
+        for (const loop of this.#loops.values()) loop.sound.setVolume(this.#level('sfx', this.#events[loop.event].volume * loop.gain));
         this.#applyMusic();
     }
 
@@ -173,27 +178,70 @@ export class SoundManager {
      * @returns {boolean} whether it played
      */
     play(name, {pan = 0, gain = 1} = {}) {
-        let definition = SOUND_EVENTS[name];
+        let definition = this.#events[name];
         if (!definition || !this.unlocked || this.#muted || gain <= 0) return false;
         if (definition.desktopOnly && this.#touch) return false;
         if (definition.voice === 'broadcast') return false; // only broadcast() speaks for the PA
+        if (definition.voice === 'president') return false; // only speak() speaks for the President
         const now = this.#now();
         if (now - (this.#lastAt.get(name) ?? -Infinity) < definition.cooldownMs) return false;
         if ((this.#active.get(name)?.size ?? 0) >= definition.maxConcurrent) return false;
-        if (definition.voice === 'unit' && (isLive(this.#voice.sound) && this.#voice.sound.isPlaying || now < this.#voice.freeAt)) return false;
+        if (definition.voice === 'unit' && (this.#speaking() || isLive(this.#voice.sound) && this.#voice.sound.isPlaying || now < this.#voice.freeAt)) return false;
         let played = name;
         if (definition.rare && this.#random() < RARE_CHANCE) {
             played = definition.rare;
-            definition = SOUND_EVENTS[played];
+            definition = this.#events[played];
         }
         const sound = this.#start(played, definition, {pan, gain});
         if (!sound) return false;
         this.#lastAt.set(name, now);
         if (definition.voice === 'unit') {
             this.#voice.sound = sound;
+            this.#voice.event = played;
             this.#voice.freeAt = now + VOICE_GAP_MS;
         }
         return true;
+    }
+
+    // ---- TASK 033.4: the presidential voice ---------------------------------------------
+
+    /** Is a presidential line sounding? */
+    #speaking() {
+        return isLive(this.#president.sound) && this.#president.sound.isPlaying;
+    }
+
+    /**
+     * A presidential line, global (no pan, no distance), on the VOICES channel. It never
+     * overlaps another and is never queued: refused while one speaks, or while audio is
+     * locked or muted. It outranks the units: a unit line talking now stops, and none
+     * starts until it ends.
+     * @param {string} name an event with voice: 'president'
+     * @returns {boolean} whether it started
+     */
+    speak(name) {
+        const definition = this.#events[name];
+        if (!definition || definition.voice !== 'president' || !this.unlocked || this.#muted) return false;
+        if (this.#speaking()) return false;
+        const unit = this.#voice.sound;
+        if (isLive(unit) && unit.isPlaying) {
+            unit.stop();
+            this.#release(this.#voice.event, unit);
+        }
+        const sound = this.#start(name, definition);
+        if (!sound) return false;
+        this.#president = {sound, event: name};
+        this.#voice.freeAt = this.#now() + VOICE_GAP_MS; // and a breath before the units speak again
+        return true;
+    }
+
+    /** Stop the presidential line, if one speaks: its tip has gone. */
+    silence() {
+        const {sound, event} = this.#president;
+        if (sound && isLive(sound)) {
+            sound.stop();
+            this.#release(event, sound);
+        }
+        this.#president = {sound: null, event: null};
     }
 
     /** A file from the pool, never the one it played last when there is a choice. */
@@ -267,7 +315,7 @@ export class SoundManager {
         }
         if (!this.unlocked) return;
         for (const [id, {event, pan = 0, gain = 1}] of wanted) {
-            const definition = SOUND_EVENTS[event];
+            const definition = this.#events[event];
             if (!definition?.loop) continue;
             const existing = this.#loops.get(id);
             if (existing) {
@@ -306,7 +354,7 @@ export class SoundManager {
             this.#broadcast.nextAt = Math.max(this.#broadcast.nextAt, now); // a fresh broadcast starts at once
         }
         if (speaking || now < this.#broadcast.nextAt) return;
-        const sound = this.#start('papi.broadcast', SOUND_EVENTS['papi.broadcast'], source);
+        const sound = this.#start('papi.broadcast', this.#events['papi.broadcast'], source);
         if (!sound) return;
         this.#broadcast.sound = sound;
         const {min, max} = BROADCAST_GAP_MS;
@@ -388,7 +436,8 @@ export class SoundManager {
                 this.#release(name, sound);
             }
         }
-        this.#voice = {sound: null, freeAt: 0};
+        this.#voice = {sound: null, freeAt: 0, event: null};
+        this.#president = {sound: null, event: null};
     }
 
     /** Detached, for QA. */
@@ -405,6 +454,9 @@ export class SoundManager {
                 tracks: Object.fromEntries([...this.#tracks].map(([name, t]) => [name, {gain: t.gain, playing: playing(t.sound)}])),
             },
             voiceBusy: playing(this.#voice.sound),
+            presidentSpeaking: playing(this.#president.sound), // TASK 033.4
+            presidentLine: playing(this.#president.sound) ? this.#president.event : null,
+            presidentVolume: playing(this.#president.sound) ? this.#president.sound.volume : null, // what the line really plays at
             broadcasting: playing(this.#broadcast.sound),
             worldActive: this.#worldActive,
             loops: [...this.#loops].map(([id, {event}]) => ({id, event})),

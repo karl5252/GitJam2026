@@ -2,6 +2,7 @@ import {test, expect} from '@playwright/test';
 import {body, byAction, clickAction, clickWorld, tapAction, tapWorld} from '../helpers/canvas.js';
 import {cellCenter, hqFlow, qaSim, stepExactly} from '../helpers/hq.js';
 import {sample} from '../helpers/qa.js';
+import {LEADS} from '../../src/content/newspaperStories.js';
 
 /**
  * TASK 029, LA VOZ DE SAN PAPI, on the map a new game gets, in the real ACTIVE
@@ -12,6 +13,32 @@ const mouse = {pressWorld: clickWorld, pressAction: clickAction};
 const touch = {pressWorld: tapWorld, pressAction: tapAction};
 
 const opened = async (page) => (await sample(page)).ui.newspaperOpen;
+const shots = process.env.SHOTS ?? null;
+const shoot = async (page, name) => {
+    if (shots) await page.screenshot({path: `${shots}/${name}.png`});
+};
+
+/**
+ * TASK 034: print the open paper as each issue of one round of leads (every lead once,
+ * and every rotation of the world columns), measuring each as drawn: every text inside its
+ * own region and above the footer, nothing cut with an ellipsis. Then it closes as ever.
+ */
+async function everyIssueFits(page, input, layout) {
+    await toNightsEnd(page, input, 0);
+    await expect.poll(() => opened(page)).toBe(true);
+    for (let issue = 1; issue <= LEADS.length; issue++) {
+        expect(await page.evaluate((n) => window.__qa.newspaper.preview(n), issue)).toBe(true);
+        await expect.poll(async () => (await sample(page)).newspaperView.lead?.id).toBe(LEADS[issue - 1].id);
+        const view = (await sample(page)).newspaperView;
+        expect(view.layout).toBe(layout);
+        expect(view.overflow, `issue ${issue}: ${view.lead.id}`).toEqual([]);
+        expect(view.headline.replace(/\s+/g, ' ')).toBe(LEADS[issue - 1].headline);
+        expect(view.story.replace(/\s+/g, ' ')).toBe(layout === 'touch' ? LEADS[issue - 1].brief : LEADS[issue - 1].body);
+        if (['great-disarmament', 'banana-ketchup', 'defense-restoration'].includes(view.lead.id)) await shoot(page, `news-${layout}-${view.lead.id}`);
+    }
+    await input.pressAction(page, 'close-newspaper');
+    await expect.poll(() => opened(page)).toBe(false);
+}
 
 /** HQ, END DAY, through Dusk and most of Night 1 with QA steps; the last ticks are left to the caller. */
 async function toNightsEnd(page, input, leave = 50) {
@@ -33,6 +60,11 @@ async function toNightsEnd(page, input, leave = 50) {
 
 test.describe('newspaper: desktop', () => {
     test.use({viewport: {width: 1280, height: 720}});
+
+    test('every issue of a round prints its decree, columns and notice in full, inside the page', async ({page}) => {
+        test.setTimeout(60000);
+        await everyIssueFits(page, mouse, 'desktop');
+    });
 
     test('at 4x the dawn holds the Day at tick 0 behind La Voz; nothing else answers; CONTINUE starts the Day at 1x', async ({page}) => {
         test.setTimeout(60000);
@@ -121,6 +153,11 @@ test.describe('newspaper: desktop', () => {
 for (const [label, viewport] of [['844x390', {width: 844, height: 390}], ['740x360', {width: 740, height: 360}]]) {
     test.describe(`newspaper: touch ${label}`, () => {
         test.use({viewport, hasTouch: true, isMobile: true});
+
+        test('every issue of a round prints its decree brief in full on a phone', async ({page}) => {
+            test.setTimeout(60000);
+            await everyIssueFits(page, touch, 'touch');
+        });
 
         test('the front page fits, reads, and CONTINUE and REPORT work by touch', async ({page}) => {
             test.setTimeout(60000);

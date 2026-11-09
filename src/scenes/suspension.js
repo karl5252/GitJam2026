@@ -15,6 +15,7 @@ export const SuspendReason = Object.freeze({
     ORIENTATION: 'orientation',
     AUDIO: 'audio',
     BUILD: 'build',
+    MANUAL: 'manual', // TASK 033.1: THE LITTLE YELLOW BOOK
 });
 
 const KNOWN = new Set(Object.values(SuspendReason));

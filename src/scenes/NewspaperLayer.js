@@ -35,7 +35,7 @@ const TEMPLATES = Object.freeze({
     touch: {
         page: {x: 16, y: 8, width: 1248, height: 704},
         size: {date: 24, banner: 26, masthead: 76, motto: 24, kicker: 24, headline: 42, subhead: 26, body: 26, columnHead: 26, column: 24, figures: 28, footer: 24, button: 34},
-        lead: {width: 780, photoScale: 3, bodyLines: 4},
+        lead: {width: 780, photoScale: 3, bodyLines: 4, brief: true}, // TASK 034: the phone prints the story's brief
         side: {width: 390},
         columns: {count: 0},
         advert: false,
@@ -89,6 +89,8 @@ export class NewspaperLayer {
         const scene = this.#scene;
         const objects = [];
         const texts = [];
+        const regions = {}; // TASK 034: where each kind of text must stay, for QA's overflow check
+        let region = 'page';
         const keep = (o) => {
             objects.push(o.setDepth(DEPTH + 1));
             return o;
@@ -97,11 +99,12 @@ export class NewspaperLayer {
             const o = keep(scene.add.text(x, y, content, {
                 fontFamily: font, fontSize: `${size}px`, color, fontStyle: style, align, ...(wrap ? {wordWrap: {width: wrap}} : {}),
             }).setOrigin(originX, 0));
-            texts.push({o, size});
+            texts.push({o, size, region});
             return o;
         };
         const {width: W, height: H} = scene.scale;
         const {page, size} = t;
+        regions.page = {x: page.x, right: page.x + page.width};
 
         // The dimmer takes every press; the paper and its speckles.
         const dimmer = scene.add.rectangle(0, 0, W, H, 0x000000, 0.62).setOrigin(0, 0).setDepth(DEPTH).setInteractive();
@@ -139,6 +142,10 @@ export class NewspaperLayer {
         // The lead: the photograph in a black frame with its caption, the story beside it;
         // the official figures beside both.
         const top = y;
+        const sideX = right - t.side.width;
+        regions.lead = {x: left, right: sideX - 14};
+        regions.side = {x: sideX, right};
+        region = 'lead';
         const photo = this.#photo(e.lead.photo, left, y, t.lead.photoScale, objects, g);
         const caption = text(left, photo.y + photo.height + 6, e.lead.photo.caption, Math.max(size.kicker, size.body - 4),
             {style: 'bold', wrap: photo.width, align: 'center'});
@@ -152,11 +159,11 @@ export class NewspaperLayer {
         ty += headline.height + 6;
         text(tx, ty, fitLines(e.lead.subhead, Math.floor(textWidth / (size.subhead * 0.5)), 1), size.subhead, {style: 'italic'});
         ty += size.subhead + 10;
-        const story = text(tx, ty, fitLines(e.lead.body, Math.floor(textWidth / (size.body * 0.5)), t.lead.bodyLines), size.body);
+        const story = text(tx, ty, fitLines(t.lead.brief ? e.lead.brief : e.lead.body, Math.floor(textWidth / (size.body * 0.5)), t.lead.bodyLines), size.body);
         y = Math.max(caption.y + caption.height, ty + story.height) + 14;
 
-        const sideX = right - t.side.width;
         g.fillStyle(RULE, 1).fillRect(sideX - 14, top, 2, y - top);
+        region = 'side';
         text(sideX, top, e.figuresTitle, size.kicker + 2, {style: 'bold', wrap: t.side.width});
         let fy = top + (size.kicker + 2) * 2 + 10;
         const figureTexts = e.figures.map(({label, value}) => {
@@ -171,11 +178,14 @@ export class NewspaperLayer {
             const colWidth = (page.width - 48 - t.side.width - 14) / t.columns.count;
             e.columns.slice(0, t.columns.count).forEach((col, i) => {
                 const cx = left + i * colWidth;
+                region = `column${i}`;
+                regions[region] = {x: cx, right: cx + colWidth - 8};
                 text(cx, y, col.headline, size.columnHead, {style: 'bold'});
                 text(cx, y + size.columnHead + 6, fitLines(col.body, t.columns.chars, t.columns.lines), size.column);
                 if (i > 0) g.fillStyle(RULE, 1).fillRect(cx - 8, y, 1, 100);
             });
             if (t.advert) {
+                region = 'side';
                 g.lineStyle(2, RULE, 1).strokeRect(sideX, y, t.side.width, 100);
                 text(sideX + t.side.width / 2, y + 10, e.advert.headline, size.columnHead, {style: 'bold', originX: 0.5});
                 text(sideX + 12, y + 38, fitLines(e.advert.body, 30, 2), size.column, {style: 'italic'});
@@ -185,7 +195,9 @@ export class NewspaperLayer {
         // Footer and CONTINUE.
         const {width: bw, height: bh} = t.button;
         const by = page.y + page.height - bh / 2 - 16;
-        rule(by - bh / 2 - 10, 2);
+        const footerTop = by - bh / 2 - 10;
+        rule(footerTop, 2);
+        region = 'footer';
         const soundWidth = this.#makeSound ? Math.max(150, bh * 1.6) + 16 : 0; // room for SOUND (TASK 030)
         text(left, by - size.footer / 2, fitLines(e.footer, Math.floor((page.width - bw - soundWidth - 80) / (size.footer * 0.55)), 1), size.footer, {style: 'italic'});
         const button = keep(scene.add.rectangle(right - bw / 2, by, bw, bh, BUTTON).setStrokeStyle(3, 0xf5e6c4).setInteractive({useHandCursor: true}));
@@ -194,7 +206,7 @@ export class NewspaperLayer {
         const proxy = addProxy(scene, button, 'close-newspaper', {label: 'Continue'});
         // TASK 030: SOUND ON / OFF beside CONTINUE, the same height.
         const sound = this.#makeSound?.({x: right - bw - 16 - Math.max(150, bh * 1.6) / 2, y: by, width: Math.max(150, bh * 1.6), height: bh}, DEPTH + 2) ?? null;
-        return {objects, texts, proxy, button, masthead, headline, figureTexts, photo, caption, sound};
+        return {objects, texts, regions, footerTop, proxy, button, masthead, headline, story, figureTexts, photo, caption, sound};
     }
 
     /**
@@ -215,7 +227,17 @@ export class NewspaperLayer {
     /** What QA sees. */
     view() {
         if (!this.#views) return {open: false};
-        const {texts, button, masthead, headline, figureTexts, photo, caption} = this.#views;
+        const {texts, regions, footerTop, button, masthead, headline, story, figureTexts, photo, caption} = this.#views;
+        // TASK 034: every text inside its own region and above the footer, and nothing cut short.
+        const overflow = [];
+        for (const {o, region} of texts) {
+            const b = o.getBounds();
+            const area = regions[region] ?? regions.page;
+            const below = region === 'footer' ? false : b.bottom > footerTop + 0.5;
+            if (b.x < area.x - 0.5 || b.right > area.right + 0.5 || below || o.text.includes('…')) {
+                overflow.push({region, text: o.text.slice(0, 40)});
+            }
+        }
         return {
             open: true,
             reason: this.#state.reason,
@@ -227,6 +249,10 @@ export class NewspaperLayer {
             figures: figureTexts,
             photo: {...photo, caption: caption.text},
             minFontPx: Math.min(...texts.map(({size}) => size)),
+            overflow,
+            lead: {id: this.#state.edition.lead.id, kicker: this.#state.edition.lead.kicker},
+            columns: this.#state.edition.columns.map(({id}) => id).slice(0, TEMPLATES[this.#state.layout].columns.count),
+            story: story.text, // the lead story as printed: the desktop's body, or the phone's brief
             continueBox: {x: button.x - button.width / 2, y: button.y - button.height / 2, width: button.width, height: button.height},
         };
     }

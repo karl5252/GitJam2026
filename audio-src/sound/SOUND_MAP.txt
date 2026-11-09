@@ -55,6 +55,16 @@ soldier.victory      -> soldier_victory_01/02.ogg
 soldier.rare         -> soldier_rare_01/02.ogg (low probability)
 papi.broadcast       -> loudspeeker_01/02/03/04/05.ogg (one global voice)
 papi.final           -> papi_final.ogg (ending only; not in normal rotation)
+advice.papi_hq       -> papi_hq.ogg (Presidential Advice: build-hq; one presidential voice)
+advice.papi_power    -> papi_power.ogg (Presidential Advice: low-power; one presidential voice)
+advice.papi_defense  -> papi_defense.ogg (Presidential Advice: night-defence; one presidential voice)
+advice.papi_ecologists -> papi_ecologists.ogg (Presidential Advice: ecologists; one presidential voice)
+advice.papi_workers  -> papi_workers.ogg (Presidential Advice: workers; one presidential voice)
+advice.papi_logistics -> papi_logistics.ogg (Presidential Advice: logistics; one presidential voice)
+advice.papi_ap       -> papi_ap.ogg (Presidential Advice: action-points; one presidential voice)
+advice.papi_barracks -> papi_barracks.ogg (Presidential Advice: barracks; one presidential voice)
+advice.papi_mining   -> papi_mining.ogg (Presidential Advice: mining; one presidential voice)
+advice.papi_pollution -> papi_pollution.ogg (Presidential Advice: pollution; one presidential voice)
 
 MUSIC  [MUSIC/]  (initial routing; confirm against music.txt)
 --------------------------------------------------------------------------

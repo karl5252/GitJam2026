@@ -14,6 +14,7 @@ import {Logistics} from '../core/logistics.js';
 import {ROAD_ACCESS_TYPES, RoadFailure, RoadNetwork, barracksExit, receivingDock, shippingDock} from '../core/roads.js';
 import {settleNight} from '../core/settlement.js';
 import {calculatePower, causesLowPower} from '../core/power.js';
+import {TerrainKind} from '../core/terrain.js';
 import {Pollution, calculateEmissions, threatLevel} from '../core/pollution.js';
 import {Mutants} from '../core/mutants.js';
 import {nightPlan, waveProgress} from '../core/waves.js';
@@ -41,6 +42,11 @@ import {SiegeLayer} from './SiegeLayer.js';
 import {RoadLayer} from './RoadLayer.js';
 import {FogLayer} from './FogLayer.js';
 import {WorkerLayer} from './WorkerLayer.js';
+import {PresidentCameo} from './presidentCameo.js';
+import {ADVICE_TIMING, PresidentialAdvice} from './presidentialAdvice.js';
+import {ADVICE} from '../content/advice.js';
+import {browserStorage} from '../audio/SoundManager.js';
+import {PresidentLayer} from './PresidentLayer.js';
 import {EcologistLayer} from './EcologistLayer.js';
 import {TerrainLayer} from './TerrainLayer.js';
 import {TruckLayer} from './TruckLayer.js';
@@ -206,6 +212,17 @@ export class GameScene extends Phaser.Scene {
         const {cols, rows, tileSize} = this.map;
         this.layout = currentLayout();
         this.suspension = new Suspension(); // TASK 032: a new scene holds no stale reason
+        // TASK 033.3: Presidential Advice, made here so the book's TIPS switches work on the
+        // menu too. Only TEST_MODE can switch it off for a session (?tips=off, which boot() adds).
+        const adviceParams = new URLSearchParams(TEST_MODE ? window.location.search : '');
+        const cooldown = Number(adviceParams.get('tipsCooldown')); // TEST_MODE: tests cannot wait 25 s between tips
+        this.advice = new PresidentialAdvice({
+            storage: browserStorage(),
+            forcedOff: adviceParams.get('tips') === 'off',
+            ...(Number.isInteger(cooldown) && cooldown > 0
+                ? {timing: {...ADVICE_TIMING, cooldownMs: cooldown, urgentMs: Math.min(cooldown, ADVICE_TIMING.urgentMs)}} : {}),
+        });
+        this.advicePreview = null; // TEST_MODE: a catalogue tip drawn as if it showed, for layout tests
         this.worldCamera = new WorldCamera(this.cameras.main, this.layout, {
             x: (width - cols * tileSize) / 2 - WORLD_MARGIN,
             y: (height - rows * tileSize) / 2 - WORLD_MARGIN,
@@ -226,13 +243,13 @@ export class GameScene extends Phaser.Scene {
         this.input.on('pointerup', (pointer) => this.handleGridPointerUp(pointer));
         this.input.on('pointerupoutside', (pointer) => this.handleGridPointerUp(pointer));
         this.input.on('wheel', (pointer, _over, _dx, dy) => this.handleWheel(pointer, dy));
-        this.input.keyboard.on('keydown-ESC', () => {
+        this.input.keyboard.on('keydown-ESC', (event) => {
             if (this.newspaper?.open) this.closeNewspaper();
-            else this.exitPlacementMode();
+            else if (!this.readingManual(event)) this.exitPlacementMode(); // TASK 033.1: Escape closes the book, and only the book
         });
         for (const [key, dx, dy] of [['LEFT', 1, 0], ['RIGHT', -1, 0], ['UP', 0, 1], ['DOWN', 0, -1]]) {
-            this.input.keyboard.on(`keydown-${key}`, () => {
-                if (!this.newspaper?.open) this.worldCamera.panBy(dx * KEY_PAN, dy * KEY_PAN);
+            this.input.keyboard.on(`keydown-${key}`, (event) => {
+                if (!this.newspaper?.open && !this.readingManual(event)) this.worldCamera.panBy(dx * KEY_PAN, dy * KEY_PAN);
             });
         }
 
@@ -272,6 +289,26 @@ export class GameScene extends Phaser.Scene {
             window.__qa.layout = createLayoutQa(this);
             window.__qa.economy = createEconomyQa(this);
             window.__qa.busListeners = () => Object.fromEntries(EventBus.eventNames().map((event) => [event, EventBus.listenerCount(event)]));
+            // TASK 033.3: draw one catalogue tip as if it showed (null for the real state), so
+            // layout tests can measure every card. It changes nothing: not the controller, not seen.
+            window.__qa.advice = {
+                preview: (id) => {
+                    this.advicePreview = id ?? null;
+                    this.presentAdvice();
+                },
+            };
+            // TASK 034: print the open La Voz again as another issue, from the real last
+            // settlement, so layout tests can measure every story. The game is not touched.
+            window.__qa.newspaper = {
+                preview: (issue) => {
+                    if (!this.newspaper?.open || !this.cycle?.lastSettlement) return false;
+                    this.newspaper.edition = newspaperEdition({
+                        issue, settlement: this.cycle.lastSettlement, delivered: this.logistics?.lastNight?.credits ?? 0,
+                    });
+                    this.presentNewspaper();
+                    return true;
+                },
+            };
         }
 
         this.subscribe();
@@ -311,10 +348,12 @@ export class GameScene extends Phaser.Scene {
             [Command.CLOSE_NEWSPAPER]: () => this.closeNewspaper(),
             [Command.CYCLE_DAY_SPEED]: () => this.handleCycleDaySpeed(),
             [Command.SUSPEND]: ({reason, on}) => this.suspension.set(reason, on),
+            [Command.ADVICE]: ({action}) => this.handleAdvice(action),
         };
         // END DAY's fast-forward takes no further orders: only the camera still answers.
+        // Advice is never an order (TASK 033.3), so the book's TIPS switches always answer.
         for (const event of Object.values(Command)) {
-            if (!handlers[event] || FAST_FORWARD_ALLOWED.has(event) || event === Command.SUSPEND) continue;
+            if (!handlers[event] || FAST_FORWARD_ALLOWED.has(event) || event === Command.SUSPEND || event === Command.ADVICE) continue;
             const handler = handlers[event];
             handlers[event] = (payload) => {
                 if (!this.cycle?.fastForwarding) handler(payload);
@@ -322,7 +361,7 @@ export class GameScene extends Phaser.Scene {
         }
         // La Voz is a blocking modal: while it is open, only closing it is heard.
         for (const event of Object.values(Command)) {
-            if (!handlers[event] || event === Command.CLOSE_NEWSPAPER || event === Command.SUSPEND) continue;
+            if (!handlers[event] || event === Command.CLOSE_NEWSPAPER || event === Command.SUSPEND || event === Command.ADVICE) continue;
             const handler = handlers[event];
             handlers[event] = (payload) => {
                 if (!this.newspaper?.open) handler(payload);
@@ -333,6 +372,9 @@ export class GameScene extends Phaser.Scene {
             this.gameAudio?.stop();
             this.combatFx?.destroy();
             this.combatFx = null;
+            this.presidentLayer?.destroy(); // TASK 033.2: the scene object is reused on restart
+            this.presidentLayer = null;
+            this.president = null;
             for (const [event, handler] of Object.entries(handlers)) EventBus.off(event, handler);
             this.scene.stop('hud');
         });
@@ -527,6 +569,89 @@ export class GameScene extends Phaser.Scene {
             .setVisible(false)
             .setDepth(3);
         this.segmentGraphics = this.add.graphics().setDepth(3);
+
+        // TASK 033.2: El Presidente's Day 0 cameo. Presentation only: see syncPresident.
+        this.president = new PresidentCameo();
+        this.presidentLayer = new PresidentLayer(this);
+    }
+
+    /**
+     * TASK 033.2: one presentation frame of El Presidente. He reads the phase and HQ and
+     * nothing else, and is given no time while anything holds the world (BUILD, AUDIO,
+     * the book, portrait), so he stands still with it. Nothing here touches the simulation.
+     */
+    syncPresident(delta) {
+        if (!this.president || this.president.finished) return;
+        const {cycle, grid, terrain} = this;
+        const hq = this.placement.buildings().find((b) => b.type === HQ_TYPE);
+        this.president.update(this.suspension.active ? 0 : delta, {
+            phase: cycle.deployment ? 'deployment' : cycle.shift === Shift.DUSK ? 'dusk' : 'other',
+            centre: terrain ? grid.cellCenter(terrain.center.col, terrain.center.row) : grid.cellCenter(Math.floor(grid.cols / 2), Math.floor(grid.rows / 2)),
+            hq: hq ? grid.footprintRect(hq) : null,
+        });
+        this.presidentLayer.sync(this.president.view());
+    }
+
+    // ---- TASK 033.3: Presidential Advice ---------------------------------------------
+
+    /** One presentation frame of advice. It reads the game; it never changes it. */
+    syncAdvice(delta) {
+        this.advice.update(delta, {blocked: this.adviceBlocked(), facts: () => this.adviceFacts()});
+        this.presentAdvice();
+    }
+
+    /**
+     * No tip on the menu, while anything holds the world (BUILD, AUDIO, the book, portrait),
+     * behind La Voz, during END DAY's fast-forward, or after a defeat.
+     */
+    adviceBlocked() {
+        return this.phase !== GamePhase.STARTED || !this.cycle?.started || Boolean(this.newspaper?.open)
+            || this.suspension.active || Boolean(this.cycle.fastForwarding);
+    }
+
+    /** What the tips are about, from what the scene already holds. See src/content/advice.js. */
+    adviceFacts() {
+        const {cycle, placement, terrain} = this;
+        const buildings = placement.buildings();
+        const count = (...types) => buildings.filter((b) => types.includes(b.type)).length;
+        const day = cycle.shift === Shift.DAY;
+        return {
+            shift: cycle.shift,
+            deployment: cycle.deployment,
+            activeDay: day && cycle.timed && !cycle.deployment,
+            day,
+            hqBuilt: placement.hqBuilt,
+            defences: count('autocannon', 'siegeCannon', BARRACKS_TYPE),
+            factories: count('factory'),
+            mines: count('mine'),
+            barracksWithoutFlag: buildings.filter((b) => b.type === BARRACKS_TYPE && !b.flag).length,
+            workFlag: Boolean(this.workers?.flag),
+            ap: this.economy.ap,
+            power: calculatePower(buildings).status,
+            powerWarning: this.powerWarning !== null,
+            pollution: this.pollution.value,
+            deliveries: this.logistics?.snapshot().totals.loads ?? 0,
+            protest: (this.ecologists?.blockedTiles().length ?? 0) > 0,
+            depositRevealed: Boolean(terrain?.deposits?.some(({tiles}) => tiles.some(({col, row}) => terrain.kindAt(col, row) === TerrainKind.CLEARED))),
+            minePlacing: placement.selectedType === 'mine',
+        };
+    }
+
+    /** The book's TIPS switches, and a tip's OK and BOOK. None of them is a gameplay command. */
+    handleAdvice(action) {
+        if (action === 'dismiss') this.advice.dismiss();
+        else if (action === 'more') this.advice.more(); // the HUD opens the book at the tip's page
+        else if (action === 'enable' || action === 'disable') this.advice.setEnabled(action === 'enable');
+        else if (action === 'reset') this.advice.reset();
+        this.presentAdvice();
+    }
+
+    presentAdvice() {
+        const view = this.advice.view();
+        const preview = this.advicePreview ? ADVICE.find((tip) => tip.id === this.advicePreview) : null;
+        this.present(State.ADVICE, preview
+            ? {...view, visible: true, tip: {id: preview.id, title: preview.title, text: preview.text, book: preview.book, urgent: Boolean(preview.urgent)}}
+            : view);
     }
 
     drawGridLines() {
@@ -1309,7 +1434,7 @@ export class GameScene extends Phaser.Scene {
     /** A press the HUD did not capture. A mouse acts now; a finger may yet become a gesture. */
     handleGridPointerDown(pointer) {
         this.dragCell = null; // lifting a finger sends no move, so a finished drag ends here
-        if (!this.grid || this.phase === GamePhase.DEFEATED || isOrientationBlocked() || this.newspaper?.open) return;
+        if (!this.grid || this.phase === GamePhase.DEFEATED || isOrientationBlocked() || this.newspaper?.open || this.readingManual()) return;
         // During END DAY's fast-forward a click only looks: construction is closed in
         // the domain, and here a left click no longer selects or arms anything.
         const looking = pointer.rightButtonDown() || pointer.middleButtonDown();
@@ -1656,7 +1781,7 @@ export class GameScene extends Phaser.Scene {
     }
 
     handleWheel(pointer, deltaY) {
-        if (this.newspaper?.open || !this.worldCamera.worldAt(pointer) || isOrientationBlocked()) return;
+        if (this.newspaper?.open || this.readingManual() || !this.worldCamera.worldAt(pointer) || isOrientationBlocked()) return;
         if (deltaY < 0) this.worldCamera.zoomIn(pointer);
         else if (deltaY > 0) this.worldCamera.zoomOut(pointer);
     }
@@ -1720,7 +1845,7 @@ export class GameScene extends Phaser.Scene {
     }
 
     handleGridPointerMove(pointer) {
-        if (!this.grid || isOrientationBlocked() || this.newspaper?.open) return;
+        if (!this.grid || isOrientationBlocked() || this.newspaper?.open || this.readingManual()) return;
         if (this.mousePan && !pointer.rightButtonDown() && !pointer.middleButtonDown()) this.mousePan = null; // released over the HUD
         if (this.mousePan) {
             this.worldCamera.panBy(pointer.x - this.mousePan.x, pointer.y - this.mousePan.y);
@@ -1785,6 +1910,15 @@ export class GameScene extends Phaser.Scene {
 
     // ---- Simulation --------------------------------------------------------
 
+    /**
+     * TASK 033.1: THE LITTLE YELLOW BOOK is open (the HUD holds the world for it), or this
+     * key press is the one that closed it, so it means nothing to the world. The HUD's
+     * keyboard may hear a key before or after this scene's, so both are asked.
+     */
+    readingManual(event = null) {
+        return this.suspension.has(SuspendReason.MANUAL) || event?.papiManual === true;
+    }
+
     /** Phaser's frame delta drives the fixed-step clock; Phaser's `time` is ignored. */
     update(_time, delta) {
         // Turned to portrait, or with the AUDIO panel or the BUILD drawer open (TASK 032),
@@ -1799,6 +1933,8 @@ export class GameScene extends Phaser.Scene {
             else this.clock.advance(delta, onTick);
         }
         this.syncShiftUi();
+        this.syncPresident(delta);
+        this.syncAdvice(delta);
         this.combatFx?.sync(this.clock.tick, delta, !this.suspension.active && Boolean(this.cycle?.running || this.cycle?.fastForwarding));
         this.syncAudio(delta);
     }
@@ -1812,6 +1948,7 @@ export class GameScene extends Phaser.Scene {
             phase: this.phase,
             shift: this.cycle?.shift ?? null,
             newspaperOpen: Boolean(this.newspaper?.open),
+            advice: this.advice.view(), // TASK 033.4: the tip really on screen, never a QA preview
             // The world sounds only while it runs: not behind La Voz, in a paused Day, on the menu or after defeat.
             worldActive: started && this.phase !== GamePhase.DEFEATED && !this.newspaper?.open && !this.suspension.active
                 && (this.cycle.fastForwarding || this.cycle.running),
@@ -2027,7 +2164,9 @@ export class GameScene extends Phaser.Scene {
             ecologists: this.ecologists ? this.ecologists.snapshot() : null,
             selectedProtest: this.selectedProtestId ?? null,
             combatFx: this.combatFx ? this.combatFx.view() : null,
-            audio: this.gameAudio?.manager.enabled ? this.gameAudio.manager.snapshot() : null,
+            president: this.president ? {...this.president.view(), drawn: this.presidentLayer.view()} : null, // TASK 033.2
+            advice: {...this.advice.view(), preview: this.advicePreview}, // TASK 033.3
+            audio: this.gameAudio?.manager.enabled ? {...this.gameAudio.manager.snapshot(), narration: this.gameAudio.narration()} : null,
             newspaper: this.newspaper ? {enabled: this.newsEnabled, open: this.newspaper.open, reason: this.newspaper.reason,
                 pausedByNews: this.newspaper.pausedByNews, edition: this.newspaper.edition} : null,
             loudspeakers: this.loudspeakers ? {...this.loudspeakers.snapshot(), network: this.placement.loudspeakerNetwork} : null,

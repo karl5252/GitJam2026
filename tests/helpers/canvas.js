@@ -177,16 +177,18 @@ export const body = (page) => page.locator('body');
  * @param {boolean} [opts.audio] - TASK 030: load and play sound. Off by default in tests (TEST_MODE's ?audio=off).
  * @param {boolean} [opts.news] - TASK 029: show La Voz at dawn. Off by default in tests (TEST_MODE's ?news=off), so
  *   older suites that step through a dawn and press the map keep working; a shipped game always shows it.
+ * @param {boolean} [opts.tips] - TASK 033.3: Presidential Advice. Off by default in tests (TEST_MODE's ?tips=off),
+ *   so no suite gains a card it did not ask for; a shipped game always has it, on by default.
  * @param {string|null} [opts.cycle] - 'legacy' (the default) keeps the untimed Day that
  *   older suites were written for. null plays the real active Day, Dusk and Night;
  *   evidence about the active cycle must come from tests that pass null.
  * @param {string|null} [opts.map] - suites run on the original open map unless they
  *   ask for another. null adds nothing, which is the map a real new game gets.
  */
-export async function boot(page, {path = '/', scene, waitForQA = false, mutants = true, hq = true, query = '', map = 'open', cycle = 'legacy', news = false, audio = false} = {}) {
+export async function boot(page, {path = '/', scene, waitForQA = false, mutants = true, hq = true, query = '', map = 'open', cycle = 'legacy', news = false, audio = false, tips = false} = {}) {
     const watch = watchBoot(page);
     try {
-        await page.goto(`${path}?testMode${cycle ? `&cycle=${cycle}` : ''}${map ? `&map=${map}` : ''}${mutants ? '' : '&mutants=off'}${hq ? '' : '&hq=off'}${news ? '' : '&news=off'}${audio ? '' : '&audio=off'}${query ? `&${query}` : ''}`);
+        await page.goto(`${path}?testMode${cycle ? `&cycle=${cycle}` : ''}${map ? `&map=${map}` : ''}${mutants ? '' : '&mutants=off'}${hq ? '' : '&hq=off'}${news ? '' : '&news=off'}${audio ? '' : '&audio=off'}${tips ? '' : '&tips=off'}${query ? `&${query}` : ''}`);
         if (scene) {
             await expect(body(page)).toHaveAttribute('data-scene', scene, {timeout: 10_000});
         }

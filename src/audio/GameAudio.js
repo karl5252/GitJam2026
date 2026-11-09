@@ -6,6 +6,7 @@
  * Fog of War is respected: an event on a tile the player cannot see plays
  * nothing, except the loss of one of the player's own buildings.
  */
+import {AdviceNarrator} from './adviceNarrator.js';
 
 const WALL_TYPES = new Set(['wall', 'gateVertical', 'gateHorizontal']);
 const MAX_ENGINES = 2;
@@ -58,12 +59,19 @@ export function musicState({phase, shift}) {
 
 export class GameAudio {
     #sound;
+    #narrator; // TASK 033.4: El Presidente reads the tip on screen
     #seenRockets = new Set();
     #last = null; // what the previous frame saw, for the voice moments
 
     /** @param {import('./SoundManager.js').SoundManager} sound */
     constructor(sound) {
         this.#sound = sound;
+        this.#narrator = new AdviceNarrator(sound);
+    }
+
+    /** TASK 033.4: which tips have had their line, and whose line speaks. */
+    narration() {
+        return this.#narrator.view();
     }
 
     get manager() {
@@ -127,6 +135,7 @@ export class GameAudio {
         if ((state.rockets ?? []).length === 0) this.#seenRockets.clear();
 
         this.#voices(state);
+        this.#narrator.frame(state.advice ?? null); // after the units: the President outranks them
         sound.update(deltaMs);
     }
 
@@ -162,6 +171,7 @@ export class GameAudio {
 
     /** The scene is ending. */
     stop() {
+        this.#narrator.stop();
         this.#sound.stopTransient();
         this.#seenRockets.clear();
         this.#last = null;

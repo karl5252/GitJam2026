@@ -4,7 +4,8 @@
  */
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import {edition, fitLines} from '../../src/content/newspaper.js';
+import {edition, fitLines, stories} from '../../src/content/newspaper.js';
+import {CONTEXT_COLUMNS, LEADS, NOTICE, WORLD_COLUMNS} from '../../src/content/newspaperStories.js';
 import {Economy} from '../../src/core/economy.js';
 import {DAY_TICKS, DUSK_TICKS, Shift, ShiftCycle} from '../../src/core/shiftCycle.js';
 import {SimulationClock} from '../../src/core/simulationClock.js';
@@ -21,7 +22,7 @@ test('an edition is plain frozen data: the new Day\'s issue, the completed Night
     assert.equal(e.issue, 3);
     assert.equal(e.night, 3);
     assert.match(e.dateLine, /No\. 3 · Día 3 · Reporting Night 3/);
-    assert.equal(e.figuresTitle, 'CIFRAS OFICIALES · NIGHT 3');
+    assert.equal(e.figuresTitle, 'CIFRAS OFICIALES · NIGHT\u00A03'); // a non-breaking space: the number stays with NIGHT
     assert.deepEqual(e.figures.map(({label, value}) => `${label} ${value}`), [
         'Income +360', 'Upkeep 0', 'Net +360', 'Credits 900', 'Power NORMAL', 'Pollution 32 (+12)', 'Threat 2',
     ]);
@@ -29,13 +30,106 @@ test('an edition is plain frozen data: the new Day\'s issue, the completed Night
     assert.deepEqual(edition({issue: 3, settlement: SETTLEMENT, delivered: 360}), e, 'the same input gives the same edition');
 });
 
-test('every editorial slot is placeholder text', () => {
-    const e = edition({issue: 1, settlement: SETTLEMENT});
-    for (const text of [e.lead.kicker, e.lead.headline, e.lead.subhead, e.advert.headline, e.footer, ...e.columns.map((c) => c.headline)]) {
-        assert.match(text, /TBD/, text);
+// ---- TASK 034: Presidential Decrees and the wider Republic ------------------------------
+
+const PLACEHOLDER = /TBD|Lorem|ipsum|placeholder/i;
+const allStories = () => [...LEADS, ...WORLD_COLUMNS, ...CONTEXT_COLUMNS];
+const settlementWith = ({power = 'normal', emitted = 0, threat = 1, factory = 0, mine = 0} = {}) => ({
+    ...SETTLEMENT, power: {...SETTLEMENT.power, status: power}, pollution: {...SETTLEMENT.pollution, emitted, threatLevel: threat}, counts: {factory, mine},
+});
+
+test('the pool: twenty stories with unique ids, every slot written, no placeholder left anywhere in an edition', () => {
+    const ids = allStories().map((s) => s.id);
+    assert.equal(ids.length, 20);
+    assert.equal(new Set(ids).size, ids.length);
+    for (const lead of LEADS) {
+        for (const field of ['kicker', 'headline', 'subhead', 'body', 'brief']) assert.ok(typeof lead[field] === 'string' && lead[field].length > 0, `${lead.id}.${field}`);
     }
-    for (const body of [e.lead.body, ...e.columns.map((c) => c.body)]) assert.match(body, /Lorem|ipsum|dolor|Duis|Excepteur|Ut enim/);
-    assert.equal(e.columns.length, 3);
+    for (const column of [...WORLD_COLUMNS, ...CONTEXT_COLUMNS]) assert.ok(column.headline && column.body, column.id);
+    for (let issue = 1; issue <= LEADS.length * 2; issue++) {
+        const e = edition({issue, settlement: SETTLEMENT});
+        const words = [e.lead.kicker, e.lead.headline, e.lead.subhead, e.lead.body, e.lead.brief, e.advert.headline, e.advert.body, e.footer,
+            ...e.columns.flatMap((c) => [c.headline, c.body])];
+        for (const text of words) assert.doesNotMatch(text, PLACEHOLDER, `issue ${issue}: ${text}`);
+        assert.equal(e.columns.length, 3);
+    }
+});
+
+test('every story fits its slot as the layouts cut it: nothing would end in an ellipsis', () => {
+    // NewspaperLayer's templates: desktop lead 6 x 74, phone lead 4 x 43, phone subhead 1 x 43, desktop column 4 x 30.
+    const fits = (text, chars, lines) => !fitLines(text, chars, lines).includes('…');
+    for (const lead of LEADS) {
+        assert.ok(fits(lead.body, 74, 6), `${lead.id} body`);
+        assert.ok(fits(lead.brief, 43, 4), `${lead.id} brief`);
+        assert.ok(fits(lead.subhead, 43, 1), `${lead.id} subhead`);
+        assert.ok(lead.brief.length < lead.body.length, `${lead.id}: the brief is the shorter`);
+    }
+    for (const column of [...WORLD_COLUMNS, ...CONTEXT_COLUMNS]) {
+        assert.ok(fits(column.body, 30, 4), `${column.id} body`);
+        assert.ok(column.headline.length <= 18, `${column.id} headline`); // bold 18 px Georgia: at most about 240 px of a 244 px column
+    }
+    assert.ok(fits(NOTICE.body, 30, 2), 'notice');
+});
+
+test('one lead per issue in order, round again; the artillery is dismantled before it returns; the ketchup runs once a round', () => {
+    const leads = Array.from({length: LEADS.length * 2}, (_, i) => edition({issue: i + 1, settlement: SETTLEMENT}).lead.id);
+    assert.deepEqual(leads.slice(0, LEADS.length), LEADS.map((l) => l.id), 'every lead once before any repeats');
+    assert.deepEqual(leads.slice(LEADS.length), leads.slice(0, LEADS.length));
+    assert.ok(leads.indexOf('great-disarmament') < leads.indexOf('defense-restoration'));
+    assert.equal(leads.slice(0, LEADS.length).filter((id) => id === 'banana-ketchup').length, 1);
+    assert.equal(stories({issue: 1, settlement: SETTLEMENT}).lead.id, 'maintenance-ban');
+});
+
+test('columns: three different ones, neighbours differ, and a story about the outpost runs only when it really happened', () => {
+    for (let issue = 1; issue <= 30; issue++) {
+        const ids = stories({issue, settlement: SETTLEMENT}).columns.map((c) => c.id);
+        assert.equal(new Set(ids).size, 3, `issue ${issue}`);
+        const next = stories({issue: issue + 1, settlement: SETTLEMENT}).columns.map((c) => c.id);
+        assert.notDeepEqual(ids, next, `issues ${issue} and ${issue + 1}`);
+    }
+    const calm = settlementWith();
+    for (let issue = 1; issue <= 20; issue++) {
+        assert.deepEqual(stories({issue, settlement: calm, delivered: 60}).columns.filter((c) => CONTEXT_COLUMNS.includes(c)), [], `nothing happened: ${issue}`);
+    }
+    const cases = {
+        'grid-thrift': settlementWith({power: 'low-power'}),
+        'rich-air': settlementWith({emitted: 24}),
+        'patient-trucks': settlementWith({factory: 1}),
+        'night-visitors': settlementWith({threat: 3}),
+    };
+    for (const [id, settlement] of Object.entries(cases)) {
+        assert.equal(stories({issue: 2, settlement, delivered: 0}).columns[0].id, id, `${id} on an even issue`);
+        assert.equal(stories({issue: 3, settlement, delivered: 0}).columns.some((c) => c.id === id), false, `${id}: not every issue`);
+    }
+    assert.equal(stories({issue: 2, settlement: settlementWith({factory: 1}), delivered: 30}).columns[0].id === 'patient-trucks', false, 'it did deliver');
+    assert.equal(stories({issue: 2, settlement: settlementWith(), delivered: 0}).columns.some((c) => c.id === 'patient-trucks'), false, 'nothing to deliver');
+});
+
+test('the figures stay the settlement\'s own, whatever the stories; and choosing never asks Math.random', () => {
+    const real = Math.random;
+    Math.random = () => { throw new Error('Math.random asked'); };
+    try {
+        for (let issue = 1; issue <= 12; issue++) {
+            const e = edition({issue, settlement: SETTLEMENT, delivered: 360});
+            assert.deepEqual(e.figures.map(({label, value}) => `${label} ${value}`), [
+                'Income +360', 'Upkeep 0', 'Net +360', 'Credits 900', 'Power NORMAL', 'Pollution 32 (+12)', 'Threat 2',
+            ]);
+            assert.deepEqual(edition({issue, settlement: SETTLEMENT, delivered: 360}), e, 'the same issue, the same paper');
+        }
+    } finally {
+        Math.random = real;
+    }
+});
+
+test('the decrees are news about the Republic, never orders to the player', () => {
+    for (const lead of LEADS) {
+        for (const text of [lead.headline, lead.subhead, lead.body, lead.brief]) {
+            assert.doesNotMatch(text, /\byou\b|\byour\b|player|press |build an? |must now build|objective|reward|penalt/i, `${lead.id}: ${text}`);
+        }
+    }
+    const ketchup = LEADS.find((l) => l.id === 'banana-ketchup');
+    assert.match(ketchup.body, /EL PAPI™ Banana Ketchup/);
+    assert.match(ketchup.body, /shortage of independent inspectors/);
 });
 
 test('the lead photograph is named by asset id, with its caption: the layout looks the asset up', async () => {

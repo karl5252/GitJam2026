@@ -12,6 +12,8 @@ import {BuildingControls} from './BuildingControls.js';
 import {Command, EventBus, Hint, Hud, Notice, State} from './EventBus.js';
 import {GameOverLayer} from './GameOverLayer.js';
 import {BuildButton, HudButton, TONE} from './HudButton.js';
+import {AdviceCard} from './AdviceCard.js';
+import {FieldManualLayer} from './FieldManualLayer.js';
 import {NewspaperLayer} from './NewspaperLayer.js';
 import {audioFor} from '../audio/audio.js';
 import {OfficeMenuLayer} from './OfficeMenuLayer.js';
@@ -82,6 +84,14 @@ const PHASE_COLORS = {
     [Shift.DEFEATED]: '#ef9a9a',
 };
 
+const MANUAL_TONE = 0x8a6d0a; // TASK 033.1: banana, darkened so the white `i` reads
+/** TASK 033.1: the main menu's one row of HUD buttons. START stays centred at (640, 668). */
+const MENU_DEPTH = 51; // over the office and the title (50)
+const MENU_ROW = Object.freeze({
+    manual: {x: 124, y: 668, width: 208, height: 88},
+    start: {x: 640, y: 668, width: 260, height: 88},
+    sound: {x: 1156, y: 668, width: 208, height: 88},
+});
 const DISABLED_ALPHA = 0.45;
 /**
  * A paused Day's gameplay buttons: dimmed but still readable and still pressable,
@@ -141,21 +151,57 @@ export class HUDScene extends Phaser.Scene {
         this.selection = null;
         this.economy = null;
         this.drawerOpen = false;
-        this.held = {build: false, audio: false}; // what this HUD has asked the world to wait for
+        this.held = {build: false, audio: false, manual: false}; // what this HUD has asked the world to wait for
         this.reportOpen = false;
         this.menuSound = null;
+        this.menuManual = null;
         this.hasReport = false;
         this.newsEnabled = false; // TASK 029: REPORT opens La Voz instead
+        // TASK 033.1: THE LITTLE YELLOW BOOK, from the main menu and from the rail. It exists
+        // before Start, so the menu can open it with no gameplay UI at all.
+        this.adviceState = null; // TASK 033.3: what GameScene's Presidential Advice says
+        this.manual = new FieldManualLayer(this, {
+            onChange: (open) => this.suspend('manual', open),
+            sound: (event) => audioFor(this.game).play(event),
+            tips: {
+                state: () => this.adviceState,
+                set: (on) => {
+                    audioFor(this.game).play('ui.toggle');
+                    EventBus.emit(Command.ADVICE, {action: on ? 'enable' : 'disable'});
+                },
+                reset: () => {
+                    audioFor(this.game).play('ui.click');
+                    EventBus.emit(Command.ADVICE, {action: 'reset'});
+                },
+            },
+        });
         this.createTitle();
         this.events.once('shutdown', () => {
             this.officeMenu?.destroy();
             this.officeMenu = null;
+            this.manual.close();
             for (const reason of Object.keys(this.held)) this.suspend(reason, false); // nothing stale outlives the HUD
         });
-        // Escape closes the AUDIO panel, or else the drawer. GameScene hears it too, as before.
-        this.input.keyboard?.on('keydown-ESC', () => {
-            if (this.ui?.audioPanel?.open) this.ui.audioPanel.close();
+        // Escape closes the book first and does nothing else; otherwise the AUDIO panel, or
+        // else the drawer. GameScene hears it too, as before, and leaves a key the book took
+        // alone (`papiManual`), whichever scene hears it first.
+        this.input.keyboard?.on('keydown-ESC', (event) => {
+            if (this.manual.open) {
+                if (event) event.papiManual = true;
+                this.manual.close();
+            } else if (this.ui?.audioPanel?.open) this.ui.audioPanel.close();
             else if (this.drawerOpen) this.setDrawerOpen(false);
+        });
+        // The arrow keys turn the book's pages while it is open (GameScene's camera ignores them then).
+        this.input.keyboard?.on('keydown-LEFT', (event) => {
+            if (!this.manual.open) return;
+            if (event) event.papiManual = true;
+            this.manual.prev();
+        });
+        this.input.keyboard?.on('keydown-RIGHT', (event) => {
+            if (!this.manual.open) return;
+            if (event) event.papiManual = true;
+            this.manual.next();
         });
         // Leaving a control counts as this scene capturing that move, so GameScene would
         // not see it, and a preview would wait for the next one.
@@ -184,10 +230,13 @@ export class HUDScene extends Phaser.Scene {
             [State.GAME_OVER]: (report) => {
                 this.ui?.newspaper.hide(); // Game Over takes precedence
                 this.ui?.audioPanel?.close();
+                this.manual.close();
+                if (this.ui) this.renderManualButton(false);
                 this.setDrawerOpen(false);
                 this.ui?.gameOver.show(report);
             },
             [State.NEWSPAPER]: (value) => this.onNewspaper(value),
+            [State.ADVICE]: (value) => this.onAdvice(value),
             [Notice.DISARM]: () => this.ui?.controls.disarm(),
             [Notice.WORLD_PRESSED]: () => this.onWorldPressed(),
             [Hud.SNAPSHOT]: (entries) => {
@@ -212,21 +261,76 @@ export class HUDScene extends Phaser.Scene {
             fontSize: '48px',
             color: '#f8d88b',
         }).setOrigin(0.5).setDepth(50);
-        this.startButton = this.add.rectangle(width / 2, 668, 240, 72, 0x7c2628)
-            .setStrokeStyle(3, 0xf7d88b)
-            .setInteractive({useHandCursor: true})
-            .setDepth(51);
-        this.startLabel = this.add.text(this.startButton.x, this.startButton.y, 'START', {
-            fontFamily: 'monospace',
-            fontSize: '32px',
-            color: '#ffffff',
-        }).setOrigin(0.5).setDepth(52);
-        this.startButton.on('pointerdown', () => {
-            audioFor(this.game).play('ui.click');
-            EventBus.emit(Command.START);
+        // TASK 033.1: the menu's controls are the HUD's own buttons (TASK 032's framed metal,
+        // tone fills, hover and press), one row, one height: 88 px, 44 CSS px at 740x360.
+        // START keeps its place, colour family, press and proxy.
+        this.startButton = new HudButton(this, {...MENU_ROW.start, fontSize: '32px'}, {
+            text: 'START', tone: TONE.danger, depth: MENU_DEPTH, onPress: () => {
+                audioFor(this.game).play('ui.click');
+                EventBus.emit(Command.START);
+            },
         });
-        this.startProxy = addProxy(this, this.startButton, 'start', {label: 'Start'});
-        this.menuSound = this.soundButton({x: width - 110, y: 668, width: 180, height: 88}, 51);
+        this.startProxy = addProxy(this, this.startButton.rect, 'start', {label: 'Start'});
+        this.menuSound = this.menuSoundButton(MENU_ROW.sound);
+        this.menuManual = this.menuManualButton(MENU_ROW.manual);
+    }
+
+    /** SOUND ON / OFF on the menu: soundButton's behaviour, in the HUD's button. */
+    menuSoundButton(spec) {
+        const manager = audioFor(this.game);
+        if (!manager.enabled) return null;
+        const button = new HudButton(this, {...spec, fontSize: '24px'}, {
+            tone: TONE.neutral, depth: MENU_DEPTH, onPress: () => {
+                if (!manager.toggleMute()) manager.play('ui.toggle');
+                render();
+            },
+        });
+        const proxy = addProxy(this, button.rect, 'toggle-sound', {label: 'Sound'});
+        const render = () => {
+            button.setLabel(manager.muted ? 'SOUND\nOFF' : 'SOUND\nON');
+            proxy.label(manager.muted ? 'SOUND OFF' : 'SOUND ON').set({enabled: !manager.muted});
+        };
+        render();
+        return {button, proxy};
+    }
+
+    /** TASK 033.1: THE LITTLE YELLOW BOOK on the main menu, opposite SOUND, in the rail `i`'s colour. */
+    menuManualButton(spec) {
+        const button = new HudButton(this, {...spec, fontSize: '24px'}, {
+            text: 'YELLOW\nBOOK', tone: MANUAL_TONE, depth: MENU_DEPTH, onPress: () => this.openManual(),
+        });
+        const proxy = addProxy(this, button.rect, 'open-manual', {label: 'The Little Yellow Book'});
+        return {button, proxy};
+    }
+
+    /** Open the book, on its cover unless a page is named. Nothing else stays open over the world with it. */
+    openManual(page = 0) {
+        if (this.manual.open) return;
+        audioFor(this.game).play('ui.click');
+        this.setDrawerOpen(false);
+        this.ui?.audioPanel?.close();
+        this.manual.show({touch: this.layout.touch, page});
+    }
+
+    /** TASK 033.3: the tip as GameScene's advice says; the book's TIPS switch follows it. */
+    onAdvice(value) {
+        const settingChanged = this.adviceState?.setting !== value.setting || this.adviceState?.seen.length !== value.seen.length;
+        this.adviceState = value;
+        this.ui?.advice.render(value);
+        if (settingChanged) this.manual.refresh();
+    }
+
+    /** A tip's BOOK: the tip goes, as read, and the book opens at its page. */
+    adviceMore() {
+        const heading = this.adviceState?.tip?.book ?? null;
+        EventBus.emit(Command.ADVICE, {action: 'more'});
+        this.openManual(this.manual.pageOf(heading));
+    }
+
+    /** The rail's `i`: there whenever the HUD is, by Day and Night, until Game Over. */
+    renderManualButton(visible) {
+        this.ui.manualButton.setVisible(visible);
+        this.ui.manualProxy = this.syncProxy(this.ui.manualProxy, this.ui.manualButton, visible, 'open-manual', 'The Little Yellow Book');
     }
 
     /**
@@ -264,16 +368,16 @@ export class HUDScene extends Phaser.Scene {
         this.officeMenu?.destroy();
         this.officeMenu = null;
         this.title.setVisible(false);
-        this.startLabel.setVisible(false);
-        this.startButton.setVisible(false).disableInteractive();
+        this.startButton.setVisible(false);
         this.startProxy.destroy();
         this.startProxy = null;
-        if (this.menuSound) {
-            this.menuSound.rect.destroy();
-            this.menuSound.label.destroy();
-            this.menuSound.proxy.destroy();
-            this.menuSound = null;
+        for (const item of [this.menuSound, this.menuManual]) {
+            if (!item) continue;
+            item.button.destroy();
+            item.proxy.destroy();
         }
+        this.menuSound = null;
+        this.menuManual = null;
         this.createUi();
     }
 
@@ -335,6 +439,14 @@ export class HUDScene extends Phaser.Scene {
         });
         this.createCameraControls();
         this.createAudioControls();
+        this.ui.advice = new AdviceCard(this, layout.advice, {
+            onDismiss: () => {
+                audioFor(this.game).play('ui.back');
+                EventBus.emit(Command.ADVICE, {action: 'dismiss'});
+            },
+            onMore: () => this.adviceMore(),
+        });
+        this.ui.advice.render(this.adviceState);
     }
 
     /** Left rail: BUILD, CANCEL while placing, REPORT, END DAY. A slot is kept for PAPI DIRECTIVES. */
@@ -353,6 +465,10 @@ export class HUDScene extends Phaser.Scene {
         this.ui.endDay = this.button(rail.endDay, 'END\nDAY', TONE.earth, () => EventBus.emit(Command.END_DAY));
         this.ui.endDayProxy = null;
         for (const button of [this.ui.build, this.ui.cancel, this.ui.report, this.ui.endDay]) button.setVisible(false);
+        // TASK 033.1: below the reserved PAPI DIRECTIVES slot, which stays free.
+        this.ui.manualButton = this.button(rail.manual, 'i\nBOOK', MANUAL_TONE, () => this.openManual());
+        this.ui.manualProxy = null;
+        this.renderManualButton(true);
     }
 
     /** The selection's palette: a panel with the object's name, HP and state, and its commands below. */
@@ -568,6 +684,7 @@ export class HUDScene extends Phaser.Scene {
             this.setReportOpen(this.reportOpen && !this.layout.touch);
             this.setDrawerOpen(false);
             this.ui.audioPanel?.close();
+            this.manual.close(); // La Voz is the dawn's; the book can be opened again after
             this.ui.newspaper.show(edition, {reason, touch: this.layout.touch});
         } else {
             this.ui.newspaper.hide();
@@ -748,6 +865,9 @@ export class HUDScene extends Phaser.Scene {
                 paletteVisible: ui ? ui.palette.panel.visible : false,
                 audioOpen: Boolean(ui?.audioPanel?.open),
                 newspaperOpen: Boolean(ui?.newspaper.open),
+                manualOpen: this.manual.open, // TASK 033.1
+                manualButtonVisible: ui ? ui.manualButton.visible : Boolean(this.menuManual),
+                adviceVisible: ui ? ui.advice.view().visible : false, // TASK 033.3
                 layout: this.layout.touch ? 'touch' : 'desktop',
             },
             powerView: textView(ui?.power),
@@ -783,6 +903,8 @@ export class HUDScene extends Phaser.Scene {
                 toggle: ui.toggle.visible ? {label: ui.toggle.text.text, box: ui.toggle.box()} : null,
             } : null,
             audioSettingsView: ui?.audioPanel ? ui.audioPanel.view() : null,
+            fieldManualView: this.manual.view(), // TASK 033.1, before Start too
+            adviceView: ui ? ui.advice.view() : null, // TASK 033.3: the card as drawn
         };
     }
 }

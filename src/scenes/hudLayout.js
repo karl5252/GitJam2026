@@ -5,7 +5,8 @@
  *   top bar     economy on the left, the time and phase in the middle (the wave below
  *               it at Night), the environment on the right: Pollution, Threat, Power.
  *   left rail   BUILD, CANCEL while placing, REPORT, a reserved slot for the future
- *               PAPI DIRECTIVES, and END DAY at the bottom. Nothing replaces BUILD.
+ *               PAPI DIRECTIVES, the `i` for THE LITTLE YELLOW BOOK below it, and
+ *               END DAY at the bottom. Nothing replaces BUILD.
  *   palette     beside the rail: the selected object's name, HP and state, and only
  *               the commands it accepts, stacked. Gone when nothing is selected.
  *   drawer      BUILD opens it next to the rail, over the palette and the world's
@@ -84,6 +85,7 @@ export const DESKTOP = Object.freeze({
         cancel: {x: D_RAIL.x, y: 228, width: D_RAIL.width, height: D_RAIL.height},
         report: {x: D_RAIL.x, y: 320, width: D_RAIL.width, height: D_RAIL.height},
         directives: {x: D_RAIL.x, y: 412, width: D_RAIL.width, height: D_RAIL.height}, // reserved, never shown yet
+        manual: {x: D_RAIL.x, y: 504, width: D_RAIL.width, height: D_RAIL.height}, // TASK 033.1: THE LITTLE YELLOW BOOK
         endDay: {x: D_RAIL.x, y: 664, width: D_RAIL.width, height: D_RAIL.height},
     },
     palette: {
@@ -115,6 +117,12 @@ export const DESKTOP = Object.freeze({
         panel: {x: 640, y: 360, width: 560, height: 360},
         slider: {width: 300, height: 44, knob: 30},
         fontSize: '22px',
+    },
+    // TASK 033.3: Presidential Advice, in the band under the world, clear of the rails.
+    advice: {
+        x: 112, y: 638, width: 920, height: 76, pad: 12, stripe: 10,
+        kicker: true, portrait: null, titleFont: 16, textFont: 15,
+        more: {width: 92, height: 56}, dismiss: {width: 64, height: 56},
     },
 });
 
@@ -154,6 +162,7 @@ export const TOUCH = Object.freeze({
         cancel: left(1),
         report: left(2),
         directives: left(3), // reserved, never shown yet
+        manual: left(4), // TASK 033.1: THE LITTLE YELLOW BOOK
         endDay: left(6),
     },
     palette: {
@@ -181,6 +190,15 @@ export const TOUCH = Object.freeze({
         panel: {x: 690, y: 390, width: 760, height: 620},
         slider: {width: 380, height: 88, knob: 56},
         fontSize: '28px',
+    },
+    // TASK 033.3: Presidential Advice, a ribbon along the bottom of the world, between the
+    // palette's column and the right rail. El Papi's portrait is its badge; text 24 px.
+    advice: {
+        x: T_VIEW.x + 4, y: 578, width: T_VIEW.right - T_VIEW.x - 8, height: 138, pad: 10, stripe: 10,
+        kicker: false, portrait: 1, titleFont: 26, textFont: 24,
+        // Each at least 88 px both ways (44 CSS px at 740x360), and no wider: the longest
+        // title needs 626 px at 24 px, and the words get what the buttons leave.
+        more: {width: 110, height: 96}, dismiss: {width: 92, height: 96},
     },
 });
 

@@ -73,6 +73,18 @@ export const SOUND_EVENTS = Object.freeze({
     'soldier.victory': event('voices', pool(`${V}soldier_victory_`, ['01', '02']), {voice: 'unit'}),
     'soldier.rare': event('voices', pool(`${V}soldier_rare_`, ['01', '02']), {voice: 'unit'}),
     'papi.broadcast': event('voices', pool(`${V}loudspeeker_`, ['01', '02', '03', '04', '05']), {voice: 'broadcast', volume: 0.8}),
+    // TASK 033.4: El Presidente reads his Presidential Advice, one line per tip (src/content/advice.js's
+    // `voice`). Only SoundManager.speak() plays them: never two at once, and no unit talks over him.
+    'advice.papi_hq': event('voices', [`${V}papi_hq`], {voice: 'president', maxConcurrent: 1}),
+    'advice.papi_power': event('voices', [`${V}papi_power`], {voice: 'president', maxConcurrent: 1}),
+    'advice.papi_defense': event('voices', [`${V}papi_defense`], {voice: 'president', maxConcurrent: 1}),
+    'advice.papi_ecologists': event('voices', [`${V}papi_ecologists`], {voice: 'president', maxConcurrent: 1}),
+    'advice.papi_workers': event('voices', [`${V}papi_workers`], {voice: 'president', maxConcurrent: 1}),
+    'advice.papi_logistics': event('voices', [`${V}papi_logistics`], {voice: 'president', maxConcurrent: 1}),
+    'advice.papi_ap': event('voices', [`${V}papi_ap`], {voice: 'president', maxConcurrent: 1}),
+    'advice.papi_barracks': event('voices', [`${V}papi_barracks`], {voice: 'president', maxConcurrent: 1}),
+    'advice.papi_mining': event('voices', [`${V}papi_mining`], {voice: 'president', maxConcurrent: 1}),
+    'advice.papi_pollution': event('voices', [`${V}papi_pollution`], {voice: 'president', maxConcurrent: 1}),
     // papi.final (papi_final) belongs to the Night 99 ending, not built yet: kept in audio-src/.
 });
 

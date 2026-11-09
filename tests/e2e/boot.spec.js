@@ -29,8 +29,13 @@ test('game boots into the game scene in the ready phase with a live QA surface',
         speakerRingView: null,
         newspaper: null, // TASK 029
         newspaperView: null,
+        fieldManualView: {open: false, pageCount: 16}, // TASK 033.1: the book exists on the menu too
         audio: null, // TASK 030: ?audio=off
         combatFx: null, // TASK 031: made at Start
+        president: null, // TASK 033.2: made at Start
+        // TASK 033.3: boot() adds ?tips=off, so this session shows none, whatever is saved.
+        advice: {enabled: false, setting: true, forcedOff: true, visible: false, suppressed: true, tip: null, pending: null, seen: [], preview: null},
+        adviceView: null,
         nightTint: null,
         dayTimeView: null,
         actionAlphaView: null,
@@ -40,6 +45,8 @@ test('game boots into the game scene in the ready phase with a live QA surface',
             titleVisible: true, startVisible: true, cancelVisible: false,
             endDayVisible: false, endDayEnabled: false, buildMenuVisible: false, toggleVisible: false,
             hintVisible: false, drawerOpen: false, paletteVisible: false, audioOpen: false, newspaperOpen: false, layout: 'desktop',
+            manualOpen: false, manualButtonVisible: true, // TASK 033.1
+            adviceVisible: false, // TASK 033.3
         },
         camera: {zoom: 1, x: 640, y: 360, viewport: {x: 240, y: 88, width: 800, height: 544}, fitZoom: 1, maxZoom: 3.2},
         orientation: {blocked: false},

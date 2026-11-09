@@ -10,6 +10,9 @@ export const ART = Object.freeze({
     // The figure stands in its frame as a worker's does, so it is drawn as one.
     ecologist: {path: 'units/ecologist.png', frameWidth: 45, frameHeight: 40, spacing: 5, scale: 0.5, offsetX: 3.5, originY: 0.95},
     rocketman: {path: 'units/rocketman.png', frameWidth: 45, frameHeight: 40, scale: 0.5, offsetX: 3, originY: 0.95},
+    // TASK 033.2: El Presidente's own small sheet, 4 x 4 frames as the worker's: idle 0-1,
+    // walk 4-5, salute 8-11. His figure is centred in its frame (x 7..35), so no offset.
+    elcolonel: {path: 'units/elcolonel.png', frameWidth: 45, frameHeight: 40, scale: 0.5, offsetX: 0, originY: 0.95},
     runner: {path: 'mutants/runner.png', frameWidth: 32, frameHeight: 39, scale: 0.95, offsetX: 0, originY: 0.95},
     spitter: {path: 'mutants/spitter.png', frameWidth: 32, frameHeight: 39, scale: 1, offsetX: 0, originY: 0.95},
     brute: {path: 'mutants/brute.png', frameWidth: 32, frameHeight: 39, scale: 1, offsetX: 0, originY: 0.95},

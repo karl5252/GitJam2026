@@ -34,6 +34,7 @@ export const State = Object.freeze({
     SPEED: 'speed:changed', // {speed}
     GAME_OVER: 'game:over', // {completedShifts}
     NEWSPAPER: 'newspaper:changed', // {enabled, open, reason, edition}: TASK 029
+    ADVICE: 'advice:changed', // {enabled, setting, visible, tip, seen}: TASK 033.3, Presidential Advice
 });
 
 /** Something happened that the HUD should react to, but which is not state. */
@@ -67,6 +68,7 @@ export const Command = Object.freeze({
     TOGGLE_DAY_PAUSE: 'day:togglePause', // Day only
     CYCLE_DAY_SPEED: 'day:cycleSpeed', // Day only: 1x, 2x, 4x, round again
     SUSPEND: 'world:suspend', // {reason: 'audio' | 'build', on}: TASK 032, the HUD's overlays hold the world
+    ADVICE: 'advice:command', // {action: 'dismiss' | 'more' | 'enable' | 'disable' | 'reset'}: TASK 033.3, never gameplay
 });
 
 /** Reasons only the HUD words, beside the domain's own failure codes. */
