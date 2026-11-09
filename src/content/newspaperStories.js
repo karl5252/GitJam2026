@@ -14,11 +14,13 @@
  * COLUMNS   the desktop's three short columns (a phone has none): world news, rotating,
  *           and, every other issue, at most one about something that really happened
  *           at the player's outpost last Night, chosen only when `when(facts)` holds.
- *           Facts are the settlement report's: power, pollution, threat, counts, delivered.
+ *           Facts include power, pollution, threat, counts and delivered.
+ *           Survival columns additionally need nightsSurvived from the newspaper issue.
  *
  * Fit: a lead's subhead stays within about 43 characters, its brief within four lines of
  * 43, its body within six of 74; a column's headline within 18 characters (about 240 px) and its
- * body within four lines of 30. tests/unit/newspaper.test.js checks each with fitLines,
+ * body within four lines of 30. Notice bodies fit two lines of 30.
+ * tests/unit/newspaper.test.js checks each with fitLines,
  * and tests/e2e/newspaper.spec.js measures every issue as drawn.
  */
 
@@ -122,6 +124,22 @@ export const WORLD_COLUMNS = Object.freeze([
     {id: 'new-ministry', headline: 'NEW MINISTRY OPENS', body: 'The Ministry of Ministries opened today. Its first task is to find the Ministry of Defence.'},
     {id: 'weather', headline: 'OFFICIAL WEATHER', body: 'Tomorrow will be sunny by Presidential decree. Citizens are asked not to look up.'},
     {id: 'letters', headline: 'LETTERS PAGE', body: 'Every letter this week agreed with El Presidente. The others were lost in the post.'},
+
+    {id: 'banana-patent', headline: 'BANANA PATENT', body: 'El Presidente has patented the banana. Farmers may now apply for a licence to harvest one.'},
+    {id: 'forms-shortage', headline: 'FORM SHORTAGE', body: 'Citizens must request paper forms online. Internet access is scheduled for a later plan.'},
+    {id: 'minister-honoured', headline: 'MINISTER HONOURED', body: 'A minister won an award for perfect attendance. His office has been empty for months.'},
+    {id: 'radio-success', headline: 'BROADCAST SUCCESS', body: 'National radio reports record listening figures during the previous transmission outage.'},
+    {id: 'population-grows', headline: 'POPULATION GROWS', body: 'The census grew after citizens were counted once in each queue. The Ministry approves.'},
+    {id: 'new-road', headline: 'ROAD OPENED', body: 'A new highway opened today. Its two ends remain classified for security reasons.'},
+    {id: 'power-for-all', headline: 'POWER FOR ALL', body: 'Every citizen now has a right to electricity. Delivery will follow the paperwork.'},
+    {id: 'statue-inspected', headline: 'STATUE INSPECTED', body: 'The Presidential statue passed inspection. Officials declined to remove the scaffolding.'},
+    {id: 'holiday-declared', headline: 'HOLIDAY DECLARED', body: 'Monday is now National Work Day. All public holidays must be repaid in overtime.'},
+    {id: 'free-press', headline: 'PRESS FREEDOM DAY', body: 'Newspapers are free to print whatever the Ministry of Information provides.'},
+    {id: 'archive-missing', headline: 'ARCHIVE MISSING', body: 'The National Archive was misplaced during an inventory of missing documents.'},
+    {id: 'wildlife-returns', headline: 'WILDLIFE RETURNS', body: 'Birds have returned to the cleared jungle. The Ministry suspects foreign agents.'},
+    {id: 'winter-program', headline: 'WINTER PROGRAM', body: 'The national heating target was met. Citizens are encouraged to stand near factories.'},
+    {id: 'victory-parade', headline: 'PARADE EXTENDED', body: 'The victory parade has been extended until the Ministry can identify the victory.'},
+    {id: 'fisheries-report', headline: 'SEAFOOD REPORT', body: 'Fish stocks are up on paper. The fishing fleet is still waiting for the sea.'},
 ]);
 
 /**
@@ -133,10 +151,33 @@ export const CONTEXT_COLUMNS = Object.freeze([
     {id: 'rich-air', when: (f) => f.emitted >= 20, headline: 'AIR RICHER STILL', body: 'Industry gave the air a fuller flavour last night. Citizens may breathe in moderation.'},
     {id: 'patient-trucks', when: (f) => f.producers > 0 && f.delivered === 0, headline: 'PATIENT TRUCKS', body: 'An outpost delivered no goods last night. Officials praise its sense of restraint.'},
     {id: 'night-visitors', when: (f) => f.threat >= 3, headline: 'NIGHT VISITORS UP', body: 'Outposts report record numbers of night visitors. The Ministry of Tourism is delighted.'},
+
+    // The selector must supply nightsSurvived (completed nights) in its facts.
+    // A bounded range prevents celebrating the third dawn on Night 80.
+    {id: 'three-nights', when: (f) => f.nightsSurvived >= 3 && f.nightsSurvived < 7, headline: 'THIRD DAWN NOTED', body: 'An outpost survived three nights. Officials suspect unapproved initiative.'},
+    {id: 'seven-nights', when: (f) => f.nightsSurvived >= 7 && f.nightsSurvived < 14, headline: 'WEEK OF SERVICE', body: 'An outpost endured seven nights. The Ministry claims credit for its resilience.'},
+    {id: 'fourteen-nights', when: (f) => f.nightsSurvived >= 14 && f.nightsSurvived < 30, headline: 'FORTNIGHT RECORD', body: 'An outpost lasted fourteen nights. Inspectors have been sent to check its methods.'},
+    {id: 'thirty-nights', when: (f) => f.nightsSurvived >= 30 && f.nightsSurvived < 45, headline: 'THIRTY NIGHTS', body: 'An outpost survived thirty nights. The capital demands a written explanation.'},
 ]);
 
-/** The desktop's small box: a government notice, never an advertisement. */
-export const NOTICE = Object.freeze({
-    headline: 'PUBLIC NOTICE',
-    body: 'Complaints are accepted in triplicate only.',
-});
+/** Short government notices for the desktop box. Rotate by issue number, never RNG. */
+export const NOTICES = Object.freeze([
+    {headline: 'PUBLIC NOTICE', body: 'Complaints are accepted in triplicate only.'},
+    {headline: 'PUBLIC NOTICE', body: 'Missing persons must report their absence in person.'},
+    {headline: 'PUBLIC NOTICE', body: 'Production figures for tomorrow have been approved.'},
+    {headline: 'PUBLIC NOTICE', body: 'Citizens are reminded that silence implies consent.'},
+    {headline: 'PUBLIC NOTICE', body: 'All shortages have been officially resolved.'},
+    {headline: 'PUBLIC NOTICE', body: 'Unauthorised pessimism is strictly prohibited.'},
+    {headline: 'PUBLIC NOTICE', body: 'The Ministry of Truth is not accepting corrections.'},
+    {headline: 'PUBLIC NOTICE', body: 'Celebrations remain mandatory until cancelled.'},
+    {headline: 'PUBLIC NOTICE', body: 'Applications for paper must be submitted on paper.'},
+    {headline: 'PUBLIC NOTICE', body: 'Any rumours of a queue should be reported to the queue.'},
+    {headline: 'PUBLIC NOTICE', body: 'All citizens are free to agree with the President.'},
+    {headline: 'PUBLIC NOTICE', body: 'Census complete. Report for recounting.'},
+].map((entry) => Object.freeze(entry)));
+
+// Backwards-compatible default until newspaper.js selects from NOTICES by issue.
+export const NOTICE = NOTICES[0];
+
+/** Select a notice deterministically without consuming gameplay RNG. */
+export const noticeForIssue = (issue) => NOTICES[(Math.max(1, issue) - 1) % NOTICES.length];
