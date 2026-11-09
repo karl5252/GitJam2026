@@ -29,6 +29,7 @@ test('game boots into the game scene in the ready phase with a live QA surface',
         speakerRingView: null,
         newspaper: null, // TASK 029
         newspaperView: null,
+        audio: null, // TASK 030: ?audio=off
         nightTint: null,
         dayTimeView: null,
         actionAlphaView: null,

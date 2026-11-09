@@ -49,9 +49,13 @@ export class NewspaperLayer {
     #views = null;
     #state = null; // {edition, reason, layout}
 
-    constructor(scene, onContinue) {
+    #makeSound;
+
+    /** @param {{sound?: (spec, depth) => object | null}} [options] sound draws HUD's SOUND button (TASK 030) */
+    constructor(scene, onContinue, {sound = null} = {}) {
         this.#scene = scene;
         this.#onContinue = onContinue;
+        this.#makeSound = sound;
     }
 
     get open() {
@@ -72,6 +76,11 @@ export class NewspaperLayer {
         if (!this.#views) return;
         for (const object of this.#views.objects) object.destroy();
         this.#views.proxy?.destroy();
+        if (this.#views.sound) {
+            this.#views.sound.rect.destroy();
+            this.#views.sound.label.destroy();
+            this.#views.sound.proxy.destroy();
+        }
         this.#views = null;
         if (document.body.dataset.modal === 'newspaper') delete document.body.dataset.modal;
     }
@@ -177,12 +186,15 @@ export class NewspaperLayer {
         const {width: bw, height: bh} = t.button;
         const by = page.y + page.height - bh / 2 - 16;
         rule(by - bh / 2 - 10, 2);
-        text(left, by - size.footer / 2, fitLines(e.footer, Math.floor((page.width - bw - 80) / (size.footer * 0.5)), 1), size.footer, {style: 'italic'});
+        const soundWidth = this.#makeSound ? Math.max(150, bh * 1.6) + 16 : 0; // room for SOUND (TASK 030)
+        text(left, by - size.footer / 2, fitLines(e.footer, Math.floor((page.width - bw - soundWidth - 80) / (size.footer * 0.55)), 1), size.footer, {style: 'italic'});
         const button = keep(scene.add.rectangle(right - bw / 2, by, bw, bh, BUTTON).setStrokeStyle(3, 0xf5e6c4).setInteractive({useHandCursor: true}));
         text(button.x, by - size.button / 2 - 2, 'CONTINUE', size.button, {color: '#fff8e1', style: 'bold', originX: 0.5});
         button.on('pointerdown', () => this.#onContinue());
         const proxy = addProxy(scene, button, 'close-newspaper', {label: 'Continue'});
-        return {objects, texts, proxy, button, masthead, headline, figureTexts, photo, caption};
+        // TASK 030: SOUND ON / OFF beside CONTINUE, the same height.
+        const sound = this.#makeSound?.({x: right - bw - 16 - Math.max(150, bh * 1.6) / 2, y: by, width: Math.max(150, bh * 1.6), height: bh}, DEPTH + 2) ?? null;
+        return {objects, texts, proxy, button, masthead, headline, figureTexts, photo, caption, sound};
     }
 
     /**

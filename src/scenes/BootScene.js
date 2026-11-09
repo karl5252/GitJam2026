@@ -3,6 +3,7 @@ import {preloadArt, ART, artKey} from './SpriteArt.js';
 import {preloadOfficeArt, filterOfficeArt} from './OfficeMenuArt.js';
 import {KILLDOZER} from './killdozerIcon.js';
 import {filterNewspaperArt, preloadNewspaperArt} from './newspaperArt.js';
+import {preloadEffects} from '../audio/audio.js';
 
 /**
  * Preloads the independent micro-scale PNG sprite sheets before starting the
@@ -18,6 +19,7 @@ export class BootScene extends Phaser.Scene {
         preloadOfficeArt(this);
         this.load.image(KILLDOZER.key, KILLDOZER.path); // the DESTROY icon
         preloadNewspaperArt(this); // La Voz's photographs
+        preloadEffects(this); // TASK 030: effects and voices; music follows the first gesture
     }
 
     create() {

@@ -1,5 +1,6 @@
 import {REFIT_COST} from '../core/buildingTypes.js';
 import {addProxy} from '../testShadow/TestProxy.js';
+import {audioFor} from '../audio/audio.js';
 import {KILLDOZER, killdozerPlacement} from './killdozerIcon.js';
 
 const PAUSED_ALPHA = 0.45; // as the HUD's dimmed buttons: readable, pressable, refused in the domain
@@ -251,6 +252,7 @@ export class BuildingControls {
         })
             .setOrigin(0.5).setDepth(5).setVisible(false);
         rect.on('pointerdown', onPress);
+        rect.on('pointerover', () => audioFor(this.#scene.game).play('ui.hover'));
         return {rect, text, action, label, proxy: null};
     }
 

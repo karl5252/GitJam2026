@@ -1,0 +1,89 @@
+PAPI INDUSTRIES: THE GREEN SHIFT
+TASK 030 - AUDIO EVENT MAP (draft v0.1)
+=====================================
+
+BASE PATH: /sound/ (Vite public/sound/)
+All references below are relative to this path. Use the existing OGG files.
+This is a semantic event map for SoundManager, not a requirement to rename files.
+
+UI  [SFX/UI/]                                  EVENT -> FILE
+--------------------------------------------------------------------------
+ui.hover       -> Hover Subtle Foley 001.ogg      (desktop only; cooldown)
+ui.click       -> Click Foley 002.ogg
+ui.select      -> Select Foley 001.ogg           (unit/building/menu select)
+ui.accept      -> Signals Positive Foley 001.ogg (command accepted)
+ui.deny        -> Signals Negative Foley 001.ogg (command rejected)
+ui.update      -> Signals Update Foley 001.ogg   (report or value update)
+ui.toggle      -> Misc Toggle Foley 001.ogg      (power, speakers, settings)
+ui.back        -> Misc Back Foley 001.ogg        (cancel / back)
+ui.open        -> Misc Popup Foley 001.ogg       (panel / newspaper open)
+ui.close       -> Misc Back Foley 002.ogg        (panel / newspaper close)
+ui.scroll      -> Scroll Foley Single 002.ogg    (discrete scroll; throttle)
+
+GAME SFX  [SFX/]
+--------------------------------------------------------------------------
+vehicle.engine        -> ENGINE Motor Small Loop 02.ogg
+machinery.power_up    -> MECH Servo Motor Power Up Long 02.ogg
+machinery.power_down  -> MECH Servo Motor Power Down Long 05.ogg
+weapon.machinegun     -> WEAPON GUNSHOT MachineGun Repeater 06.ogg
+weapon.machinegun_alt -> WEAPON GUNSHOT MachineGun Spray 04.ogg
+weapon.rocket         -> WEAPON GUNSHOT Rocket Launcher 02.ogg
+weapon.rocket_alt     -> WEAPON GUNSHOT Rocket Launcher 03.ogg
+combat.explosion      -> EXPLOSION Bang Blast 02.ogg
+building.destroy      -> DESTRUCTION Break Impact 02.ogg
+wall.break            -> Wall Break Stone A/B/C/D/E.ogg (random pool)
+mutant.growl          -> VOCAL EVIL Growl Grunt 01/02/03.ogg (pool)
+mutant.attack         -> VOCAL EVIL Grunt Chomp 01/02/03.ogg (pool)
+mutant.hit            -> VOCAL EVIL Impact Hit AHHH 01/02/03.ogg (pool)
+
+VOICES  [VOICES/]
+--------------------------------------------------------------------------
+worker.select        -> worker_select_01/02/03.ogg
+worker.explore       -> worker_explore_01/02/03.ogg
+worker.lumber        -> worker_lumber_01/02.ogg
+worker.mining        -> worker_mining_01/02.ogg
+worker.return        -> worker_return_01/02.ogg
+worker.complete      -> worker_complete_01.ogg
+worker.danger        -> worker_danger_01/02.ogg
+worker.rare          -> worker_rare_01/02.ogg (low probability)
+soldier.select       -> soldier_select_01/02/03.ogg
+soldier.order        -> soldier_order_01/02/03.ogg
+soldier.attack       -> soldier_attack_01/02/03.ogg (NOT per bullet)
+soldier.danger       -> soldier_danger_01/02.ogg
+soldier.retreat      -> soldier_retreat_01.ogg
+soldier.victory      -> soldier_victory_01/02.ogg
+soldier.rare         -> soldier_rare_01/02.ogg (low probability)
+papi.broadcast       -> loudspeeker_01/02/03/04/05.ogg (one global voice)
+papi.final           -> papi_final.ogg (ending only; not in normal rotation)
+
+MUSIC  [MUSIC/]  (initial routing; confirm against music.txt)
+--------------------------------------------------------------------------
+menu        -> Spanish - Como Versace Loop.ogg
+active_day  -> Spanish - Océano Loop.ogg
+night       -> Reuse a selected existing loop or silence until approved
+newspaper   -> Lower/fade current music; add paper open/close UI sound
+
+audio transitions should cross-fade where useful. Never restart a track
+just because a scene was redrawn or a report was reopened.
+
+SOUNDMANAGER RULES
+--------------------------------------------------------------------------
+- Channels: MASTER, MUSIC, SFX (includes UI), VOICES; persist volumes/mute.
+- Browser audio unlock: only start playback after the first user gesture.
+- Audio feedback follows command RESULT: rejected -> ui.deny, accepted ->
+  ui.accept. Do not play both for one result.
+- Randomize voice/sound pools without touching deterministic gameplay RNG.
+- Cooldowns/concurrency caps for hover, selection, soldier speech, mutants.
+- Loudspeakers use ONE global broadcast voice; multiple towers must not
+  overlap five speeches. Broadcast only while a tower actually operates.
+- Worker voice: speak when given an order or on a meaningful event, not
+  every tick of chopping/repair. Soldier attack lines are rare, not per shot.
+- Engine loops: attach to active trucks and clean up when stopped/destroyed.
+- Newspaper: reuse ui.open/ui.close until a dedicated paper Foley is added.
+- TASK 030: minimal mute/volume access only. Full audio settings UI -> 031.
+- Exclude ORIGINAL/, .wav/.mp3 source copies, .DS_Store, and unused assets
+  from the release package. Keep license documents outside public/.
+- Potential duplicate: worker_return_02 (1).ogg. Inspect/remove only after
+  confirming it is really a duplicate; do not auto-load it into the pool.
+- Preserve the original loudspeeker_* filenames for now (typo is harmless).
+- Licensing: verify redistribution/attribution rules for all audio packs.

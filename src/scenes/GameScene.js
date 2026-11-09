@@ -49,6 +49,8 @@ import {InfantryLayer} from './InfantryLayer.js';
 import {BuildingArtLayer} from './BuildingArtLayer.js';
 import {Command, EventBus, Hint, Hud, Notice, State} from './EventBus.js';
 import {edition as newspaperEdition} from '../content/newspaper.js';
+import {audioFor, loadMusicWhenUnlocked} from '../audio/audio.js';
+import {GameAudio} from '../audio/GameAudio.js';
 import {WorldCamera} from './WorldCamera.js';
 import {currentLayout} from './hudLayout.js';
 import {isOrientationBlocked} from './orientationGuard.js';
@@ -206,6 +208,13 @@ export class GameScene extends Phaser.Scene {
             height: rows * tileSize + 2 * WORLD_MARGIN,
         });
 
+        // TASK 030: sound follows what happened; it never changes it.
+        this.gameAudio = new GameAudio(audioFor(this.game));
+        loadMusicWhenUnlocked(this);
+        this.buildingIndex = new Map(); // id -> {type, x, y}, for where a sound happens
+        this.lastPowerStatus = null;
+        this.input.keyboard.on('keydown-M', () => this.toggleSound());
+
         this.input.mouse?.disableContextMenu();
         this.input.on('pointerdown', (pointer) => this.handleGridPointerDown(pointer));
         this.input.on('pointermove', (pointer) => this.handleGridPointerMove(pointer));
@@ -276,7 +285,10 @@ export class GameScene extends Phaser.Scene {
             [Command.RESTART]: () => this.scene.restart(),
             [Command.BUILD]: ({type}) => this.enterPlacementMode(type),
             [Command.ROAD]: () => this.enterRoadMode(),
-            [Command.CANCEL]: () => this.exitPlacementMode(),
+            [Command.CANCEL]: () => {
+                this.gameAudio?.play('ui.back');
+                this.exitPlacementMode();
+            },
             [Command.END_DAY]: () => this.handleEndDay(),
             [Command.SET_SPEED]: ({speed}) => this.handleSetSpeed(speed),
             [Command.TOGGLE_POWER]: () => this.handleSelectionAction(),
@@ -312,6 +324,7 @@ export class GameScene extends Phaser.Scene {
         }
         for (const [event, handler] of Object.entries(handlers)) EventBus.on(event, handler);
         this.events.once('shutdown', () => {
+            this.gameAudio?.stop();
             for (const [event, handler] of Object.entries(handlers)) EventBus.off(event, handler);
             this.scene.stop('hud');
         });
@@ -547,6 +560,14 @@ export class GameScene extends Phaser.Scene {
      */
     refreshPower() {
         const power = calculatePower(this.placement.buildings());
+        this.buildingIndex = new Map(this.placement.buildings().map((b) => {
+            const {x, y, width, height} = this.grid.footprintRect(b);
+            return [b.id, {type: b.type, x: x + width / 2, y: y + height / 2}];
+        }));
+        if (this.lastPowerStatus && power.status !== this.lastPowerStatus) {
+            this.gameAudio?.play(power.status === 'normal' ? 'machinery.power_up' : 'machinery.power_down');
+        }
+        this.lastPowerStatus = power.status;
         this.present(State.POWER, {generation: power.generation, demand: power.demand, status: power.status});
         for (const {id, enabled, powered} of power.buildings) {
             const view = this.buildingViews.get(id);
@@ -806,6 +827,7 @@ export class GameScene extends Phaser.Scene {
 
     handleEndDay() {
         if (!this.cycle.canEndDay) return; // disabled, and must not disturb placement
+        this.gameAudio?.play('ui.accept');
         this.exitPlacementMode();
         this.exitFlagMode();
         this.cycle.endDay();
@@ -813,6 +835,7 @@ export class GameScene extends Phaser.Scene {
     }
 
     handleSetSpeed(speed) {
+        if (speed !== this.clock.speed) this.gameAudio?.play('ui.toggle');
         this.clock.setSpeed(speed);
         this.present(State.SPEED, {speed: this.clock.speed});
     }
@@ -820,6 +843,7 @@ export class GameScene extends Phaser.Scene {
     /** Day only: the player can stop the clock to plan, and start it again. */
     handleToggleDayPause() {
         if (!this.cycle?.canPause) return;
+        this.gameAudio?.play('ui.toggle');
         if (this.clock.paused) this.clock.resume();
         else this.clock.pause();
         this.syncShiftUi();
@@ -889,8 +913,11 @@ export class GameScene extends Phaser.Scene {
     handleDisperse() {
         const groupId = this.selectedProtestId;
         if (!groupId || !this.workers) return;
-        const result = this.workers.disperseOrder(groupId) ? this.workers.cancelDisperse(groupId) : this.workers.orderDisperse(groupId);
+        const cancelling = this.workers.disperseOrder(groupId) !== null;
+        const result = cancelling ? this.workers.cancelDisperse(groupId) : this.workers.orderDisperse(groupId);
         this.showHint(result.ok ? null : result.reason);
+        this.gameAudio?.result(result.ok, {accepted: cancelling ? 'ui.back' : 'ui.accept'});
+        if (result.ok && !cancelling) this.gameAudio?.play('worker.explore');
         this.presentSelection();
     }
 
@@ -914,6 +941,7 @@ export class GameScene extends Phaser.Scene {
         EventBus.emit(Notice.DISARM);
         const result = this.workers.repairOrder(building.id) ? this.workers.stopRepair(building.id) : this.workers.orderRepair(building.id);
         this.showHint(result.ok ? null : result.reason);
+        this.gameAudio?.result(result.ok);
         this.presentSelection();
     }
 
@@ -925,11 +953,13 @@ export class GameScene extends Phaser.Scene {
         if (building.type === HQ_TYPE && this.hasLoudspeakers()) { // the HQ's place holds SPEAKERS ON / OFF
             const network = this.placement.setLoudspeakerNetwork(!this.placement.loudspeakerNetwork);
             if (!network.ok) this.showHint(network.reason);
+            this.gameAudio?.result(network.ok, {accepted: 'ui.toggle'});
             this.refreshPower();
             return;
         }
         const result = this.placement.setEnabled(building.id, !building.enabled);
         if (!result.ok) this.showHint(result.reason); // a paused Day changes nothing
+        this.gameAudio?.result(result.ok, {accepted: 'ui.toggle'});
         this.refreshPower();
     }
 
@@ -966,6 +996,7 @@ export class GameScene extends Phaser.Scene {
         this.newspaper.pausedByNews = !this.cycle.running; // held at dawn: closing must start the Day
         this.newspaper.open = true;
         this.newspaper.reason = 'dawn';
+        this.gameAudio?.play('ui.open');
         this.presentNewspaper();
     }
 
@@ -978,6 +1009,7 @@ export class GameScene extends Phaser.Scene {
         if (this.newspaper.pausedByNews) this.clock.pause();
         this.newspaper.open = true;
         this.newspaper.reason = reason;
+        this.gameAudio?.play('ui.open');
         this.presentNewspaper();
         this.syncShiftUi();
     }
@@ -987,6 +1019,7 @@ export class GameScene extends Phaser.Scene {
         if (!this.newspaper?.open) return;
         this.newspaper.open = false;
         this.newspaper.reason = null;
+        if (resume) this.gameAudio?.play('ui.close');
         if (resume && this.newspaper.pausedByNews) this.cycle.resume();
         this.newspaper.pausedByNews = false;
         this.presentNewspaper();
@@ -1004,10 +1037,13 @@ export class GameScene extends Phaser.Scene {
         if (!building) return;
         EventBus.emit(Notice.DISARM);
         let result;
-        if (building.type !== HQ_TYPE) result = this.placement.clearFlag(building.id);
-        else if (this.workers.sent) result = this.workers.recall();
-        else result = this.workers.dispatch(); // the squad is home and the flag is down: SEND WORKERS, free
+        let voice;
+        if (building.type !== HQ_TYPE) [result, voice] = [this.placement.clearFlag(building.id), 'soldier.retreat'];
+        else if (this.workers.sent) [result, voice] = [this.workers.recall(), 'worker.return'];
+        else [result, voice] = [this.workers.dispatch(), 'worker.explore']; // the squad is home and the flag is down: SEND WORKERS, free
         if (!result.ok) this.showHint(result.reason);
+        this.gameAudio?.result(result.ok);
+        if (result.ok) this.gameAudio?.play(voice);
         this.presentSelection();
     }
 
@@ -1018,6 +1054,7 @@ export class GameScene extends Phaser.Scene {
         const result = this.placement.refit(building.id);
         this.lastResult = result;
         this.showHint(result.ok ? null : result.reason === GAME_PAUSED ? GAME_PAUSED : Hint.REFIT_REFUSED);
+        this.gameAudio?.result(result.ok);
         this.updateHud();
         this.renderedPostsKey = null; // the roof mark shows the role
         this.buildingArt?.sync(this.placement.buildings(), this.cycle.shift); // swap Barracks art on refit
@@ -1028,6 +1065,7 @@ export class GameScene extends Phaser.Scene {
         const {building} = this.selection();
         if (!building) return;
         const result = this.placement.demolish(building.id);
+        this.gameAudio?.result(result.ok);
         if (result.ok) this.handleBuildingsDestroyed([building.id]);
         else this.showHint(result.reason);
     }
@@ -1037,7 +1075,11 @@ export class GameScene extends Phaser.Scene {
     enterPlacementMode(typeId) {
         this.exitRoadMode();
         this.exitFlagMode();
-        if (!this.placement.select(typeId)) return;
+        if (!this.placement.select(typeId)) {
+            this.gameAudio?.play('ui.deny');
+            return;
+        }
+        this.gameAudio?.play('ui.select');
         this.showHint(null);
 
         // Selection (cell or building) is disabled while placing; it resumes after cancel.
@@ -1111,9 +1153,12 @@ export class GameScene extends Phaser.Scene {
     }
 
     applyFlagCell(cell) {
-        const result = this.flagsWorkers() ? this.workers.setFlag(cell) : this.placement.setFlag(this.flagBarracksId, cell);
+        const workersFlag = this.flagsWorkers();
+        const result = workersFlag ? this.workers.setFlag(cell) : this.placement.setFlag(this.flagBarracksId, cell);
         this.lastResult = result;
+        this.gameAudio?.result(result.ok);
         if (result.ok) {
+            this.gameAudio?.play(workersFlag ? 'worker.explore' : 'soldier.order');
             this.exitFlagMode();
             return;
         }
@@ -1139,6 +1184,7 @@ export class GameScene extends Phaser.Scene {
         const result = removing ? this.placement.removeRoad(cell) : this.placement.placeRoad(cell);
         this.lastResult = result;
         this.showHint(result.ok ? null : result.reason);
+        this.gameAudio?.result(result.ok);
         if (result.ok) this.refreshRoads();
         this.updateRoadPreview(cell);
     }
@@ -1631,6 +1677,8 @@ export class GameScene extends Phaser.Scene {
         const {building, ...result} = this.placement.placeAt(cell);
         this.lastResult = result;
         this.showHint(result.ok ? null : result.reason);
+        this.gameAudio?.result(result.ok);
+        if (building?.type === 'mine') this.gameAudio?.play('worker.mining');
         if (!result.ok) return;
         this.addBuildingView(building);
         this.refreshRoads();
@@ -1694,6 +1742,7 @@ export class GameScene extends Phaser.Scene {
         const protest = cell && !this.selectedBuildingId && this.ecologists && (!this.fog || this.fog.isVisible(cell.col, cell.row))
             ? this.ecologists.protestAt(cell) : null;
         this.selectedProtestId = protest;
+        this.selectionSound(protest);
         if (protest) {
             const {site} = this.ecologists.protest(protest);
             const rect = this.grid.footprintRect({col: site.col, row: site.row, width: 1, height: 1});
@@ -1710,6 +1759,15 @@ export class GameScene extends Phaser.Scene {
         this.presentSelection();
     }
 
+    /** Selecting something says so; HQ's workers and a Barracks' soldiers answer. */
+    selectionSound(protest) {
+        const building = this.selectedBuildingId ? this.placement.buildings().find((b) => b.id === this.selectedBuildingId) : null;
+        if (!building && !protest) return;
+        this.gameAudio?.play('ui.select');
+        if (building?.type === HQ_TYPE && this.workers) this.gameAudio?.play('worker.select');
+        if (building?.type === BARRACKS_TYPE) this.gameAudio?.play('soldier.select');
+    }
+
     // ---- Simulation --------------------------------------------------------
 
     /** Phaser's frame delta drives the fixed-step clock; Phaser's `time` is ignored. */
@@ -1724,6 +1782,52 @@ export class GameScene extends Phaser.Scene {
             else this.clock.advance(delta, onTick);
         }
         this.syncShiftUi();
+        this.syncAudio(delta);
+    }
+
+    /** Each frame: music, ducking, engines, the PA, rocket launches and voice moments. */
+    syncAudio(delta) {
+        if (!this.gameAudio?.manager.enabled) return;
+        const started = Boolean(this.cycle?.started);
+        const buildings = started ? this.placement.buildings() : [];
+        this.gameAudio.frame({
+            phase: this.phase,
+            shift: this.cycle?.shift ?? null,
+            newspaperOpen: Boolean(this.newspaper?.open),
+            // The world sounds only while it runs: not behind La Voz, in a paused Day, on the menu or after defeat.
+            worldActive: started && this.phase !== GamePhase.DEFEATED && !this.newspaper?.open
+                && (this.cycle.fastForwarding || this.cycle.running),
+            camera: this.cameras.main.worldView,
+            isSeen: this.seenBy() ?? (() => true),
+            trucks: started ? this.logistics?.snapshot().trucks ?? [] : [],
+            towers: started ? (this.loudspeakers?.snapshot().towers ?? []).map((t) => ({...t, ...this.grid.cellCenter(t.col, t.row)})) : [],
+            rockets: started ? (this.infantry?.rockets() ?? []).map(({id, fromX, fromY}) => ({id, x: fromX, y: fromY})) : [],
+            workers: started ? this.workers?.workers() ?? [] : [],
+            repairOrders: started && this.cycle.timed && this.workers ? this.workers.repairs().orders : [],
+            infantryTotals: started ? this.infantry?.snapshot().totals ?? null : null,
+            isWhole: (id) => {
+                const building = buildings.find((b) => b.id === id);
+                return Boolean(building) && building.hp >= getBuildingType(building.type).maxHp;
+            },
+        }, delta);
+    }
+
+    /** Where sounds happen, for one tick's results. */
+    audioView() {
+        return {
+            positionOf: (id) => this.buildingIndex.get(id) ?? null,
+            typeOf: (id) => this.buildingIndex.get(id)?.type ?? null,
+            mutantAt: (id) => this.mutants.snapshot().find((m) => m.id === id) ?? null,
+            isSeen: this.seenBy() ?? (() => true),
+            camera: this.cameras.main.worldView,
+        };
+    }
+
+    /** M, and the SOUND buttons: mute or unmute everything, and say so. */
+    toggleSound() {
+        const manager = this.gameAudio?.manager;
+        if (!manager?.enabled) return;
+        if (!manager.toggleMute()) manager.play('ui.toggle');
     }
 
     /**
@@ -1757,6 +1861,7 @@ export class GameScene extends Phaser.Scene {
         const work = this.workers?.step();
         if (work?.cancelled.length) this.showHint(work.cancelled.at(-1).reason); // e.g. a repair that ran out of Credits
         const effects = this.mutants?.step();
+        if (this.gameAudio?.manager.enabled) this.gameAudio.tick({siege, defense, squads, effects}, this.audioView());
         if (effects?.impacts) this.mutantLayer.recordImpacts(effects.impacts, this.clock.tick);
         if (effects?.destroyed.length) this.handleBuildingsDestroyed(effects.destroyed);
         if (this.ecologists?.step().protestsStarted) this.showHint(Hint.PROTEST); // after mutants, before trucks
@@ -1883,6 +1988,7 @@ export class GameScene extends Phaser.Scene {
             workerViews: this.workerLayer ? this.workerLayer.views() : null,
             ecologists: this.ecologists ? this.ecologists.snapshot() : null,
             selectedProtest: this.selectedProtestId ?? null,
+            audio: this.gameAudio?.manager.enabled ? this.gameAudio.manager.snapshot() : null,
             newspaper: this.newspaper ? {enabled: this.newsEnabled, open: this.newspaper.open, reason: this.newspaper.reason,
                 pausedByNews: this.newspaper.pausedByNews, edition: this.newspaper.edition} : null,
             loudspeakers: this.loudspeakers ? {...this.loudspeakers.snapshot(), network: this.placement.loudspeakerNetwork} : null,

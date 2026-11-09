@@ -16,8 +16,13 @@
 
 import {TEST_MODE} from '../testMode.js';
 
+// Outside TEST_MODE a proxy is this: every method a real proxy has, doing nothing.
+// label() was missing, so any control that relabels its proxy threw in a normal
+// session (found in TASK 030: the menu's SOUND button stopped the HUD, and all audio).
 const NOOP = Object.freeze({
     node: null, set() {
+        return NOOP;
+    }, label() {
         return NOOP;
     }, show() {
         return NOOP;

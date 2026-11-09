@@ -11,6 +11,7 @@ import {BuildingControls} from './BuildingControls.js';
 import {Command, EventBus, Hint, Hud, Notice, State} from './EventBus.js';
 import {GameOverLayer} from './GameOverLayer.js';
 import {NewspaperLayer} from './NewspaperLayer.js';
+import {audioFor} from '../audio/audio.js';
 import {OfficeMenuLayer} from './OfficeMenuLayer.js';
 import {SpeedControls} from './SpeedControls.js';
 import {currentLayout} from './hudLayout.js';
@@ -118,6 +119,7 @@ export class HUDScene extends Phaser.Scene {
         this.selection = null;
         this.drawerOpen = false;
         this.reportOpen = false;
+        this.menuSound = null;
         this.hasReport = false;
         this.newsEnabled = false; // TASK 029: REPORT and the desktop panel open La Voz instead
         this.toggleNarrow = false;
@@ -183,8 +185,36 @@ export class HUDScene extends Phaser.Scene {
             fontSize: '32px',
             color: '#ffffff',
         }).setOrigin(0.5).setDepth(52);
-        this.startButton.on('pointerdown', () => EventBus.emit(Command.START));
+        this.startButton.on('pointerdown', () => {
+            audioFor(this.game).play('ui.click');
+            EventBus.emit(Command.START);
+        });
         this.startProxy = addProxy(this, this.startButton, 'start', {label: 'Start'});
+        this.menuSound = this.soundButton({x: width - 110, y: 668, width: 180, height: 88}, 51);
+    }
+
+    /**
+     * TASK 030's minimum control: SOUND ON / OFF (M on desktop), on the menu and in La
+     * Voz, the two screens every player sees. Not a HUD element; TASK 031 brings settings.
+     */
+    soundButton({x, y, width, height}, depth) {
+        const manager = audioFor(this.game);
+        if (!manager.enabled) return null;
+        const rect = this.add.rectangle(x, y, width, height, 0x263238).setStrokeStyle(3, 0xf7d88b)
+            .setInteractive({useHandCursor: true}).setDepth(depth);
+        const label = this.add.text(x, y, '', {fontFamily: 'monospace', fontSize: '24px', color: '#ffffff', align: 'center'})
+            .setOrigin(0.5).setDepth(depth + 1);
+        const proxy = addProxy(this, rect, 'toggle-sound', {label: 'Sound'});
+        const render = () => {
+            label.setText(manager.muted ? 'SOUND\nOFF' : 'SOUND\nON');
+            proxy.label(manager.muted ? 'SOUND OFF' : 'SOUND ON').set({enabled: !manager.muted});
+        };
+        rect.on('pointerdown', () => {
+            if (!manager.toggleMute()) manager.play('ui.toggle');
+            render();
+        });
+        render();
+        return {rect, label, proxy, render};
     }
 
     update(_time, delta) {
@@ -200,6 +230,12 @@ export class HUDScene extends Phaser.Scene {
         this.startButton.setVisible(false).disableInteractive();
         this.startProxy.destroy();
         this.startProxy = null;
+        if (this.menuSound) {
+            this.menuSound.rect.destroy();
+            this.menuSound.label.destroy();
+            this.menuSound.proxy.destroy();
+            this.menuSound = null;
+        }
         this.createUi();
     }
 
@@ -249,7 +285,9 @@ export class HUDScene extends Phaser.Scene {
         this.showButton(this.ui.dayPause, false);
         this.showButton(this.ui.daySpeed, false);
         this.ui.gameOver = new GameOverLayer(this, () => EventBus.emit(Command.RESTART));
-        this.ui.newspaper = new NewspaperLayer(this, () => EventBus.emit(Command.CLOSE_NEWSPAPER));
+        this.ui.newspaper = new NewspaperLayer(this, () => EventBus.emit(Command.CLOSE_NEWSPAPER), {
+            sound: (spec, depth) => this.soundButton(spec, depth),
+        });
         this.ui.readProxy = null;
         this.ui.settlement.on('pointerdown', () => {
             if (this.newsEnabled && !this.layout.touch) EventBus.emit(Command.OPEN_NEWSPAPER);
@@ -283,13 +321,17 @@ export class HUDScene extends Phaser.Scene {
             align: 'center',
         }).setOrigin(0.5).setDepth(LABEL_DEPTH);
         rect.on('pointerdown', onPress);
+        rect.on('pointerover', () => audioFor(this.game).play('ui.hover'));
         return {rect, text: label};
     }
 
     createCameraControls() {
         const {camera} = this.layout;
         const add = (spec, text, command, action, name) => {
-            const button = this.button(spec, text, 0x37474f, () => EventBus.emit(command));
+            const button = this.button(spec, text, 0x37474f, () => {
+                audioFor(this.game).play('ui.click');
+                EventBus.emit(command);
+            });
             button.text.setStyle({fontSize: '22px'});
             addProxy(this, button.rect, action, {label: name});
             return button;
