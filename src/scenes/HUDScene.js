@@ -33,6 +33,7 @@ const PLACEMENT_HINTS = {
     [RoadFailure.EXIT_REQUIRED]: 'A Barracks exit depends on this road',
     [BARRACKS_LIMIT]: `No more than ${MAX_BARRACKS} Barracks`,
     [Hint.MINE_DOCK]: 'Mine dock (bottom side) needs a connected road',
+    [Hint.PROTEST]: 'ECOLOGISTAS! Protesters are blocking a delivery road',
     [MineFailure.NO_DEPOSIT]: 'A Mine needs all four tiles on one ore deposit',
     [MineFailure.DEPOSIT_TAKEN]: 'This deposit already has a Mine',
     [FlagFailure.OCCUPIED]: 'Flags go on open ground or roads',

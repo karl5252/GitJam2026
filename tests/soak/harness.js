@@ -10,6 +10,7 @@
  * normal Day/Night construction rules or the economy, and must never be used
  * to validate them.
  */
+import {Ecologists} from '../../src/core/ecologists.js';
 import {createHash} from 'node:crypto';
 import {Autocannons} from '../../src/core/autocannons.js';
 import {BuildingPlacement} from '../../src/core/buildingPlacement.js';
@@ -63,10 +64,11 @@ const gridFor = ({cols, rows, tileSize}, terrain) => ({
  *   rng - replaces the seeded RNG, so a test can choose spawn positions
  *   map, terrain - a map from core/worldMap.js and its terrain, as GameScene uses
  *   them. Without one, the world is the original 24x16 battlefield.
+ *   ecologists - TASK 027 protesters, stepped where GameScene steps them. Off by default.
  *   active - the real ACTIVE cycle GameScene plays: a timed Day, Dusk, then Night.
  *   Off by default, which keeps the untimed Day every older test was written for.
  */
-export function createWorld({seed = 731, schedule = null, resources = STARTING_RESOURCES, openConstruction = false, requireHq = false, roads: useRoads = false, pollution: startingPollution = 0, firstNight = 1, rng: fixedRng = null, spitterSlots = [], bruteSlots = [], absorbedSlots = [], spitters = true, brutes = true, map = null, terrain = null, active = false} = {}) {
+export function createWorld({seed = 731, schedule = null, resources = STARTING_RESOURCES, openConstruction = false, requireHq = false, roads: useRoads = false, pollution: startingPollution = 0, firstNight = 1, rng: fixedRng = null, spitterSlots = [], bruteSlots = [], absorbedSlots = [], spitters = true, brutes = true, map = null, terrain = null, active = false, ecologists: useEcologists = false} = {}) {
     const clock = new SimulationClock();
     const economy = new Economy(resources);
     const pollution = new Pollution(startingPollution);
@@ -113,6 +115,8 @@ export function createWorld({seed = 731, schedule = null, resources = STARTING_R
     mutants.setInfantry(infantry);
     const workers = roads ? new Workers({cycle, placement, grid, gates, economy, roads, pollution}) : null;
     mutants.setWorkers(workers);
+    const ecologists = roads && useEcologists ? new Ecologists({cycle, placement, grid, roads, pollution, mutants, seed}) : null;
+    if (ecologists) logistics.setBlockers(() => ecologists.blockedTiles());
     cycle.begin();
 
     const soldierKills = new Set(); // this tick's: a turret that had one locked has not stepped since
@@ -133,8 +137,9 @@ export function createWorld({seed = 731, schedule = null, resources = STARTING_R
         soldierKills.clear();
         for (const {killed, mutantId} of infantryShots) if (killed) soldierKills.add(mutantId);
         const effects = mutants.step();
+        const protests = ecologists?.step() ?? null;
         const deliveries = logistics?.step().deliveries ?? 0;
-        return {siege, defense, infantryShots, effects, deliveries};
+        return {siege, defense, infantryShots, effects, deliveries, protests};
     };
 
     /** A legal command: the real placement path, with its real validation. */
@@ -145,7 +150,7 @@ export function createWorld({seed = 731, schedule = null, resources = STARTING_R
         return result;
     };
 
-    return {clock, economy, pollution, grid, rng, placement, roads, logistics, gates, cycle, mutants, autocannons, siegeCannons, infantry, workers, soldierKills, tick, place};
+    return {clock, economy, pollution, grid, rng, placement, roads, logistics, gates, cycle, mutants, autocannons, siegeCannons, infantry, workers, ecologists, soldierKills, tick, place};
 }
 
 /** The state compared between runs and between Node and Chromium. */

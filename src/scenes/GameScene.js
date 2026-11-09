@@ -20,6 +20,7 @@ import {nightPlan, waveProgress} from '../core/waves.js';
 import {Autocannons} from '../core/autocannons.js';
 import {DEFAULT_MAP, TILE_SIZE, WORLD_MAPS, createTerrain} from '../core/worldMap.js';
 import {WORKER, Workers, repairPrice} from '../core/workers.js';
+import {ECOLOGIST, Ecologists} from '../core/ecologists.js';
 import {FogOfWar, buildingVision, fortificationTiles, startingKnown, unitVision} from '../core/vision.js';
 import {SIEGE, SIEGE_CANNON_TYPE, SiegeCannons} from '../core/siegeCannons.js';
 import {TEST_MODE} from '../testMode.js';
@@ -38,6 +39,7 @@ import {SiegeLayer} from './SiegeLayer.js';
 import {RoadLayer} from './RoadLayer.js';
 import {FogLayer} from './FogLayer.js';
 import {WorkerLayer} from './WorkerLayer.js';
+import {EcologistLayer} from './EcologistLayer.js';
 import {TerrainLayer} from './TerrainLayer.js';
 import {TruckLayer} from './TruckLayer.js';
 import {GateLayer} from './GateLayer.js';
@@ -153,6 +155,8 @@ export class GameScene extends Phaser.Scene {
         this.infantryLayer = null;
         this.workers = null;
         this.workerLayer = null;
+        this.ecologists = null;
+        this.ecologistLayer = null;
         this.renderedWorkFlagKey = null; // last revision, flag and selection the work flag was drawn for
         this.flagBarracksId = null; // the Barracks or HQ being given a flag, in flag mode
         this.powerWarning = null; // {type, col, row}: a purchase waiting for its second press
@@ -437,6 +441,13 @@ export class GameScene extends Phaser.Scene {
         }) : null;
         this.mutants.setWorkers(this.workers);
         this.workerLayer = this.workers ? new WorkerLayer(this, this.grid) : null;
+        // TASK 027: protesters, only on a map with terrain and roads. Their own random stream.
+        this.ecologists = this.roads && this.terrain ? new Ecologists({
+            cycle: this.cycle, placement: this.placement, grid: this.grid, roads: this.roads, pollution: this.pollution,
+            mutants: this.mutants, seed: this.rng.snapshot().seed,
+        }) : null;
+        if (this.ecologists) this.logistics.setBlockers(() => this.ecologists.blockedTiles());
+        this.ecologistLayer = this.ecologists ? new EcologistLayer(this, this.grid) : null;
 
         // Terrain paints its own tiles, and only where there is open ground to build on.
         if (this.terrain) {
@@ -681,6 +692,9 @@ export class GameScene extends Phaser.Scene {
         });
         if (this.infantry) this.syncInfantry();
         if (this.workers) this.syncWorkers();
+        if (this.ecologists) {
+            this.ecologistLayer.sync(this.ecologists.snapshot(), {tick: this.clock.tick, corpseTicks: ECOLOGIST.corpseTicks, isSeen: this.seenBy()});
+        }
     }
 
     /** Jungle the workers cleared since the last frame, repainted once however many trees fell. */
@@ -1597,6 +1611,7 @@ export class GameScene extends Phaser.Scene {
         const effects = this.mutants?.step();
         if (effects?.impacts) this.mutantLayer.recordImpacts(effects.impacts, this.clock.tick);
         if (effects?.destroyed.length) this.handleBuildingsDestroyed(effects.destroyed);
+        if (this.ecologists?.step().protestsStarted) this.showHint(Hint.PROTEST); // after mutants, before trucks
         if (this.logistics?.step().deliveries) this.updateHud();
         this.updateUnitVision();
     }
@@ -1718,6 +1733,8 @@ export class GameScene extends Phaser.Scene {
             workers: this.workers ? this.workers.snapshot() : null,
             nightTint: this.nightTint ? this.nightTint.view() : null,
             workerViews: this.workerLayer ? this.workerLayer.views() : null,
+            ecologists: this.ecologists ? this.ecologists.snapshot() : null,
+            ecologistViews: this.ecologistLayer ? this.ecologistLayer.views() : null,
             flagMode: this.flagBarracksId,
             roadMode: this.roadMode,
             ringPreviewView: this.roadLayer ? this.roadLayer.ringPreviewView() : null,

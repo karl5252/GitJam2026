@@ -104,6 +104,7 @@ export class Logistics {
     #factories = new Map(); // Factory id -> {progress, stored, noRoute}
     #trucks = new Map(); // Factory id -> truck
     #types = new Map(); // producer id -> its type, so a Mine earns as a Mine; ids are never reused
+    #blockers = null; // () => Set of "col,row" road tiles a protest is blocking (core/ecologists.js)
     #inNight = false;
     #tallyDay = null; // ACTIVE: the Day whose cycle `#night` counts
     #roadsRevision = -1;
@@ -130,6 +131,16 @@ export class Logistics {
             if (cycle.shift === Shift.DAY && ROAD_ACCESS_TYPES.includes(type)) this.#sync(placement.buildings());
         });
         placement.addGuard?.((question) => this.#guard(question));
+    }
+
+    /**
+     * Tiles trucks must not enter right now. A truck at a tile centre waits while
+     * the next tile is blocked, keeping its route and cargo, and drives on by
+     * itself once it is clear. One already on the tile drives off it.
+     * @param {(() => Set<string>) | null} blockers
+     */
+    setBlockers(blockers) {
+        this.#blockers = blockers;
     }
 
     /** The completed Night's {loads, credits, cargoLost}, or null before the first. */
@@ -159,7 +170,8 @@ export class Logistics {
         const powered = new Set(calculatePower(buildings).buildings.filter((b) => b.powered).map((b) => b.id));
         for (const {id, type} of factories) this.#produce(this.#factories.get(id), powered.has(id), outputOf(type));
         let deliveries = 0;
-        for (const truck of [...this.#trucks.values()]) deliveries += this.#advance(truck);
+        const blocked = this.#blockers?.() ?? null;
+        for (const truck of [...this.#trucks.values()]) deliveries += this.#advance(truck, blocked);
         const route = this.#dockRouter(buildings);
         for (const factory of factories) this.#dispatch(factory, route);
         return deliveries ? {deliveries} : NO_EFFECTS;
@@ -377,7 +389,7 @@ export class Logistics {
     }
 
     /** One tick of one truck. @returns {number} loads delivered */
-    #advance(truck) {
+    #advance(truck, blocked) {
         if (truck.state === TruckState.RESPAWNING) {
             if (--truck.respawn === 0) {
                 truck.hp = LOGISTICS.truckHp;
@@ -385,7 +397,7 @@ export class Logistics {
             }
             return 0;
         }
-        if (truck.state === TruckState.IDLE || this.#heldAtGate(truck)) return 0;
+        if (truck.state === TruckState.IDLE || this.#heldAtGate(truck) || this.#heldByProtest(truck, blocked)) return 0;
 
         const length = (truck.route.length - 1) * this.#grid.tileSize;
         truck.travelled = Math.min(length, truck.travelled + LOGISTICS.truckSpeed);
@@ -409,6 +421,14 @@ export class Logistics {
         const next = truck.route[truck.travelled / tileSize + 1];
         const id = next ? this.#gates.idAt(next) : null;
         return id !== null && !this.#gates.isOpen(id);
+    }
+
+    /** Only at a tile centre, like a gate: never part-way along an edge. */
+    #heldByProtest(truck, blocked) {
+        const {tileSize} = this.#grid;
+        if (!blocked || blocked.size === 0 || truck.travelled % tileSize !== 0) return false;
+        const next = truck.route[truck.travelled / tileSize + 1];
+        return Boolean(next) && blocked.has(`${next.col},${next.row}`);
     }
 
     #place(truck) {

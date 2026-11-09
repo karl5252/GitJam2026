@@ -6,6 +6,9 @@
 export const ART = Object.freeze({
     worker: {path: 'units/worker.png', frameWidth: 45, frameHeight: 40, scale: 0.5, offsetX: 3.5, originY: 0.95},
     rifleman: {path: 'units/rifleman.png', frameWidth: 45, frameHeight: 40, scale: 0.5, offsetX: 0.5, originY: 0.95},
+    // 4 x 4 frames with 5 px between them: idle 0-1, walk 4-5, protest 8-11, hit and down 12-13.
+    // The figure stands in its frame as a worker's does, so it is drawn as one.
+    ecologist: {path: 'units/ecologist.png', frameWidth: 45, frameHeight: 40, spacing: 5, scale: 0.5, offsetX: 3.5, originY: 0.95},
     rocketman: {path: 'units/rocketman.png', frameWidth: 45, frameHeight: 40, scale: 0.5, offsetX: 3, originY: 0.95},
     runner: {path: 'mutants/runner.png', frameWidth: 32, frameHeight: 39, scale: 0.95, offsetX: 0, originY: 0.95},
     spitter: {path: 'mutants/spitter.png', frameWidth: 32, frameHeight: 39, scale: 1, offsetX: 0, originY: 0.95},

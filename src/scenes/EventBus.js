@@ -69,4 +69,5 @@ export const Hint = Object.freeze({
     POWER_WARNING: 'power-warning',
     REFIT_REFUSED: 'refit-refused',
     MINE_DOCK: 'mine-dock',
+    PROTEST: 'protest',
 });
