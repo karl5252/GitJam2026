@@ -73,6 +73,7 @@ export class Ecologists {
     #roads;
     #pollution;
     #mutants;
+    #loudspeakers = null;
     #rng;
     #ecologists = [];
     #groups = [];
@@ -83,7 +84,7 @@ export class Ecologists {
     #map = null;
     #revision = null;
     #fields = new Map(); // goal key -> walk field
-    #totals = {groups: 0, arrived: 0, protests: 0, escaped: 0, killed: 0, dispersed: 0};
+    #totals = {groups: 0, arrived: 0, protests: 0, escaped: 0, killed: 0, dispersed: 0, repelled: 0};
 
     /**
      * @param {{cycle, placement, grid, roads, pollution, mutants?, seed: number}} deps
@@ -98,6 +99,15 @@ export class Ecologists {
         this.#mutants = mutants;
         this.#rng = new SeededRandom(mixSeed((seed ^ ECOLOGIST.salt) >>> 0));
         placement.addGuard?.((question) => this.#guard(question));
+    }
+
+    /** TASK 028: operating towers' coverage, which protesters avoid and are driven from by Day. */
+    setLoudspeakers(loudspeakers) {
+        this.#loudspeakers = loudspeakers;
+    }
+
+    #covered(cell) {
+        return this.#loudspeakers?.covers(cell) ?? false;
     }
 
     /** Is there anything to do here at all? A map with terrain, in the ACTIVE cycle. */
@@ -116,8 +126,12 @@ export class Ecologists {
         if (!this.#enabled || shift === Shift.DEFEATED) return effects;
         if (shift === Shift.DAY && this.#cycle.deployment) return effects; // Day 0 never ticks anyway
         this.#refreshNavigation();
-        if (shift === Shift.DAY) this.#arrive(effects);
-        else this.#panic();
+        if (shift === Shift.DAY) {
+            this.#arrive(effects);
+            this.#repel();
+        } else {
+            this.#panic();
+        }
         this.#releaseCorpses();
         for (const ecologist of this.#ecologists) {
             if (ecologist.state === EcologistState.DEAD) continue;
@@ -270,7 +284,7 @@ export class Ecologists {
         }
         if (candidates.length === 0) return null;
         const field = this.#field(exit);
-        const reachable = candidates.filter((c) => field[c.row * this.#grid.cols + c.col] !== UNREACHABLE);
+        const reachable = candidates.filter((c) => field[c.row * this.#grid.cols + c.col] !== UNREACHABLE && !this.#covered(c));
         if (reachable.length > 0) return reachable[this.#rng.nextInt(0, reachable.length - 1)];
         return this.#nearestReachable(field, candidates);
     }
@@ -282,7 +296,7 @@ export class Ecologists {
         for (let row = 0; row < rows; row++) {
             for (let col = 0; col < cols; col++) {
                 const cost = field[row * cols + col];
-                if (cost === UNREACHABLE || this.#roads.has({col, row})) continue;
+                if (cost === UNREACHABLE || this.#roads.has({col, row}) || this.#covered({col, row})) continue;
                 const distance = Math.min(...targets.map((t) => Math.max(Math.abs(t.col - col), Math.abs(t.row - row))));
                 if (!best || distance < best.distance || (distance === best.distance && cost < best.cost)) best = {col, row, distance, cost};
             }
@@ -299,6 +313,18 @@ export class Ecologists {
         group.members.push(ecologist.id);
         this.#ecologists.push(ecologist);
         this.#totals.arrived++;
+    }
+
+    /** By Day, a protest within an operating Loudspeaker's reach breaks up and runs, as if dispersed. */
+    #repel() {
+        if (!this.#loudspeakers) return;
+        for (const group of this.#groups) {
+            if (!this.#atSite(group) || !this.#covered(group.site)) continue;
+            group.state = EcologistState.FLEEING;
+            group.pending = 0;
+            for (const e of this.#members(group)) e.state = EcologistState.FLEEING;
+            this.#totals.repelled++;
+        }
     }
 
     // ---- Dusk, Night -----------------------------------------------------------

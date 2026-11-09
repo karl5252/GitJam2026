@@ -34,7 +34,8 @@ const CAMERA = {width: 92, height: 84};
 const text = (x, y, fontSize, originX = 0, extra = {}) => ({x, y, fontSize, originX, ...extra});
 
 /** Slots run left to right, top to bottom. Six rows end at y 565, clear of END DAY at y 578. */
-const DESKTOP_MENU = ['hq', 'outpost', 'factory', 'powerPlant', 'autocannon', 'road', 'wall', 'barracks', 'gateVertical', 'gateHorizontal', 'siegeCannon', 'mine'];
+// TASK 028, provisional: a seventh row for the Loudspeaker, with END DAY moved into the bottom band.
+const DESKTOP_MENU = ['hq', 'outpost', 'factory', 'powerPlant', 'autocannon', 'road', 'wall', 'barracks', 'gateVertical', 'gateHorizontal', 'siegeCannon', 'mine', 'loudspeaker'];
 
 export const DESKTOP = Object.freeze({
     touch: false,
@@ -50,7 +51,7 @@ export const DESKTOP = Object.freeze({
         settlement: text(1040, 190, '20px', 0, {lineSpacing: 4}),
     },
     menu: Object.fromEntries(DESKTOP_MENU.map((id, slot) => [id, {...menuSlot(slot), ...CELL}])),
-    endDay: {x: 128, y: 620, ...WIDE},
+    endDay: {x: 360, y: 676, ...WIDE}, // the bottom band, left of the camera buttons, clear of the menu's seventh row
     cancel: {x: 1152, y: 560, ...WIDE},
     toggle: {x: 1152, y: 560, ...WIDE},
     narrowToggle: {x: 1098, y: 560, ...ACTION, height: 84},
@@ -91,10 +92,12 @@ const DRAWER = [
     ['ECONOMY', ['hq', 'factory', 'powerPlant', 'mine']], // four fit a row
     ['DEFENCE', ['autocannon', 'siegeCannon', 'barracks', 'wall']],
     ['INFRASTRUCTURE', ['road', 'gateVertical', 'gateHorizontal', 'outpost']],
+    ['PROPAGANDA', ['loudspeaker']],
 ];
-const DRAWER_CELL = {width: 228, height: 128};
+// TASK 028, provisional: four rows in the drawer. 104 logical px is 52 CSS px at 740x360.
+const DRAWER_CELL = {width: 228, height: 104};
 const DRAWER_LEFT = 180;
-const DRAWER_STEP = {x: 240, y: 176};
+const DRAWER_STEP = {x: 240, y: 140};
 const DRAWER_TOP = 180;
 
 export const TOUCH = Object.freeze({
@@ -113,7 +116,7 @@ export const TOUCH = Object.freeze({
     drawer: {
         panel: {x: (112 + VIEW_RIGHT) / 2, y: 372, width: VIEW_RIGHT - 112, height: 600}, // within the viewport
         open: left(0),
-        labels: DRAWER.map(([label], row) => ({label, x: DRAWER_LEFT - 40, y: DRAWER_TOP - 94 + row * DRAWER_STEP.y})),
+        labels: DRAWER.map(([label], row) => ({label, x: DRAWER_LEFT - 40, y: DRAWER_TOP - 82 + row * DRAWER_STEP.y})), // in the gap above each row
     },
     menu: Object.fromEntries(DRAWER.flatMap(([, ids], row) => ids.map((id, column) => [id, {
         x: DRAWER_LEFT + 74 + column * DRAWER_STEP.x, y: DRAWER_TOP + row * DRAWER_STEP.y, ...DRAWER_CELL,

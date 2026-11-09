@@ -222,7 +222,7 @@ test('a Brute spawns with its own stats, the same target rules, and a record of 
     assert.deepEqual({...brute(w)}, {
         id: 'mutant-1', x: 656, y: 104, hp: 600, targetId: plant, obstacleId: null, attackTimer: 120, kind: 'brute',
     });
-    assert.deepEqual(TARGET_BIAS, {hq: 256, powerPlant: 256, factory: 128, autocannon: 64, siegeCannon: 64, barracks: 64, outpost: 0, mine: 64});
+    assert.deepEqual(TARGET_BIAS, {hq: 256, powerPlant: 256, factory: 128, autocannon: 64, siegeCannon: 64, barracks: 64, outpost: 0, mine: 64, loudspeaker: 0});
 });
 
 test('an ordinary record keeps its keys in their order, which is what keeps its digest', () => {

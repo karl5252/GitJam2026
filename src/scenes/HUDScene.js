@@ -88,6 +88,7 @@ const MENU_LABELS = {
     gateVertical: (type) => `Gate |\n${cost(type)}`,
     gateHorizontal: (type) => `Gate —\n${cost(type)}`,
     siegeCannon: (type) => `Siege 2x2\n${cost(type)}\nheavy · ${type.power.demand}P`,
+    loudspeaker: (type) => `Loudspeaker\n${cost(type)}`,
 };
 const menuLabel = (id) => {
     const type = getBuildingType(id);
@@ -491,11 +492,17 @@ export class HUDScene extends Phaser.Scene {
         const {building, canFlag, workers, sent, canDemolish, confirmDemolish, refitTo, switchable, paused = false, repair = null, disperse = null} = selection;
         this.ui.controls.update(building, {canFlag, workers, sent, canDemolish, confirmDemolish, refitTo, paused, repair, disperse});
         const narrow = this.layout.touch || building?.type === BARRACKS_TYPE;
-        if (switchable) this.layoutToggle(narrow);
-        this.showButton(this.ui.toggle, switchable);
+        const speakers = selection.speakers ?? null; // TASK 028: HQ's one switch for every Loudspeaker
+        if (switchable || speakers) this.layoutToggle(narrow);
+        this.showButton(this.ui.toggle, switchable || Boolean(speakers));
+        if (!speakers) {
+            this.ui.speakersProxy?.destroy();
+            this.ui.speakersProxy = null;
+        }
         if (!switchable) {
             this.ui.toggleProxy?.destroy();
             this.ui.toggleProxy = null;
+            if (speakers) this.renderSpeakers(speakers, paused);
             return;
         }
         const label = building.enabled ? 'Switch OFF' : 'Switch ON';
@@ -505,6 +512,16 @@ export class HUDScene extends Phaser.Scene {
         this.ui.toggle.text.setAlpha(alpha);
         this.ui.toggleProxy ??= addProxy(this, this.ui.toggle.rect, 'toggle-power', {label: 'Toggle power'});
         this.ui.toggleProxy.set({target: building.id, enabled: building.enabled, paused});
+    }
+
+    /** HQ selected with a tower standing: the power switch's place holds SPEAKERS ON / OFF. */
+    renderSpeakers({on}, paused) {
+        this.ui.toggle.text.setText(on ? 'SPEAKERS\nON' : 'SPEAKERS\nOFF');
+        const alpha = paused ? PAUSED_ALPHA : 1;
+        this.ui.toggle.rect.setAlpha(alpha);
+        this.ui.toggle.text.setAlpha(alpha);
+        this.ui.speakersProxy ??= addProxy(this, this.ui.toggle.rect, 'loudspeakers', {label: 'Loudspeakers'});
+        this.ui.speakersProxy.label(on ? 'SPEAKERS ON' : 'SPEAKERS OFF').set({enabled: on, paused});
     }
 
     /** A Barracks shares the row with RESET FLAG. A proxy keeps the size it was made with, so it goes too. */
@@ -517,6 +534,8 @@ export class HUDScene extends Phaser.Scene {
         text.setPosition(x, y);
         this.ui.toggleProxy?.destroy();
         this.ui.toggleProxy = null;
+        this.ui.speakersProxy?.destroy();
+        this.ui.speakersProxy = null;
     }
 
     // ---- QA ----------------------------------------------------------------

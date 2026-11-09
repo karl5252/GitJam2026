@@ -101,7 +101,7 @@ const statsOf = ({kind}) => (kind === BRUTE.kind ? BRUTE : MUTANT);
 const ABSORBED = 'absorbed';
 
 /** Px subtracted from a building's distance: higher is more attractive. */
-export const TARGET_BIAS = Object.freeze({hq: 256, powerPlant: 256, factory: 128, autocannon: 64, siegeCannon: 64, barracks: 64, outpost: 0, mine: 64});
+export const TARGET_BIAS = Object.freeze({hq: 256, powerPlant: 256, factory: 128, autocannon: 64, siegeCannon: 64, barracks: 64, outpost: 0, mine: 64, loudspeaker: 0});
 
 /**
  * A working Mine is noisy. Switched off or unpowered it is as quiet as a cannon
@@ -110,11 +110,19 @@ export const TARGET_BIAS = Object.freeze({hq: 256, powerPlant: 256, factory: 128
  */
 export const MINE_BIAS = Object.freeze({idle: 64, active: 192});
 
-/** A building's bias right now. `powered` holds the ids power.js reports powered. */
-export function targetBias(building, powered = null) {
+/**
+ * A building's bias right now. `powered` holds the ids power.js reports powered;
+ * `loud` the Loudspeakers that are operating or remembered from this Night's Day
+ * (core/loudspeakers.js).
+ */
+export function targetBias(building, powered = null, loud = null) {
     if (building.type === 'mine') return powered?.has(building.id) ? MINE_BIAS.active : MINE_BIAS.idle;
+    if (building.type === 'loudspeaker') return loud?.has(building.id) ? LOUDSPEAKER_BIAS.loud : LOUDSPEAKER_BIAS.silent;
     return TARGET_BIAS[building.type];
 }
+
+/** TASK 028: a loud tower outbids HQ and a working Mine; a silent one is as quiet as an Outpost. */
+export const LOUDSPEAKER_BIAS = Object.freeze({loud: 384, silent: 0});
 
 /** Px from a walking mutant to a soldier it will turn towards. */
 export const LURE_RANGE = 64;
@@ -157,12 +165,12 @@ const squaredDistance = (a, b) => (a.x - b.x) ** 2 + (a.y - b.y) ** 2;
  * @param {Set<string>|null} powered ids of powered buildings; only a Mine's bias reads it
  * @returns {string|null} building id, or null when there are no buildings
  */
-export function selectTarget(point, buildings, grid, powered = null) {
+export function selectTarget(point, buildings, grid, powered = null, loud = null) {
     let best = null;
     for (const building of buildings) {
         if (isFortification(building)) continue;
         if (!Object.hasOwn(TARGET_BIAS, building.type)) throw new TypeError(`No target bias for building type: ${building.type}`);
-        const bias = targetBias(building, powered);
+        const bias = targetBias(building, powered, loud);
         const score = distanceToFootprint(point, grid.footprintRect(building)) - bias;
         if (!best || score < best.score || (score === best.score && bias > best.bias)) {
             best = {id: building.id, score, bias};
@@ -282,6 +290,7 @@ export class Mutants {
     #spawns;
     #spawnBounds;
     #powered; // this tick's powered ids, or null with no Mine; see #poweredNow
+    #loudspeakers = null;
     #bounds;
     #mutants = [];
     #nextId = 1;
@@ -331,6 +340,15 @@ export class Mutants {
     /** Soldiers shoot mutants and mutants hit soldiers, so one of the two is connected later. */
     setInfantry(infantry) {
         this.#infantry = infantry;
+    }
+
+    /** Loudspeakers are created after mutants; their noise is read when a target is chosen. */
+    setLoudspeakers(loudspeakers) {
+        this.#loudspeakers = loudspeakers;
+    }
+
+    #loudNow() {
+        return this.#loudspeakers ? this.#loudspeakers.loudIds() : null;
     }
 
     /** Workers carry no weapon, but to a mutant they are one more soldier to reach and hit. */
@@ -451,7 +469,7 @@ export class Mutants {
     #act(mutant, buildings, byId, effects, trucks, soldiers) {
         if (mutant.obstacleId && !byId.has(mutant.obstacleId)) mutant.obstacleId = null;
         if (!byId.has(mutant.targetId)) {
-            mutant.targetId = selectTarget(mutant, buildings, this.#grid, this.#poweredNow(buildings));
+            mutant.targetId = selectTarget(mutant, buildings, this.#grid, this.#poweredNow(buildings), this.#loudNow());
             this.#endDetour(mutant);
         }
 
@@ -809,7 +827,7 @@ export class Mutants {
                 x,
                 y,
                 hp,
-                targetId: selectTarget({x, y}, buildings, this.#grid, this.#poweredNow(buildings)),
+                targetId: selectTarget({x, y}, buildings, this.#grid, this.#poweredNow(buildings), this.#loudNow()),
                 obstacleId: null,
                 attackTimer,
                 ...extra,

@@ -31,6 +31,7 @@ export const HQ_TYPE = 'hq';
 export const WALL_TYPE = 'wall';
 export const BARRACKS_TYPE = 'barracks';
 export const MINE_TYPE = 'mine';
+export const LOUDSPEAKER_TYPE = 'loudspeaker';
 
 /** A Barracks is rifles unless it has been refitted, and only then does its record say so. */
 export const BarracksRole = Object.freeze({RIFLE: 'rifle', ROCKET: 'rocket'});
@@ -152,6 +153,18 @@ export const BUILDING_TYPES = Object.freeze({
         power: Object.freeze({supply: 0, demand: 30}),
         pollutionPerNight: 10,
         maxHp: 250,
+    }),
+    // TASK 028. Every tower follows one HQ switch (BuildingPlacement.setLoudspeakerNetwork),
+    // so its own switch is refused. See core/loudspeakers.js.
+    loudspeaker: Object.freeze({
+        id: LOUDSPEAKER_TYPE, name: 'Loudspeaker', width: 1, height: 1,
+        cost: Object.freeze({credits: 250, ap: 1}),
+        operations: NO_OPERATIONS,
+        power: Object.freeze({supply: 0, demand: 15}),
+        pollutionPerNight: 0,
+        maxHp: 100,
+        switchable: false,
+        network: 'loudspeaker',
     }),
 });
 

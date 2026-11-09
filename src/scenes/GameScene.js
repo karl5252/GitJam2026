@@ -21,6 +21,8 @@ import {Autocannons} from '../core/autocannons.js';
 import {DEFAULT_MAP, TILE_SIZE, WORLD_MAPS, createTerrain} from '../core/worldMap.js';
 import {WORKER, Workers, repairPrice} from '../core/workers.js';
 import {ECOLOGIST, Ecologists} from '../core/ecologists.js';
+import {LOUDSPEAKER, Loudspeakers} from '../core/loudspeakers.js';
+import {LOUDSPEAKER_TYPE} from '../core/buildingTypes.js';
 import {FogOfWar, buildingVision, fortificationTiles, startingKnown, unitVision} from '../core/vision.js';
 import {SIEGE, SIEGE_CANNON_TYPE, SiegeCannons} from '../core/siegeCannons.js';
 import {TEST_MODE} from '../testMode.js';
@@ -157,6 +159,9 @@ export class GameScene extends Phaser.Scene {
         this.workers = null;
         this.workerLayer = null;
         this.ecologists = null;
+        this.loudspeakers = null;
+        this.speakerRing = null;
+        this.speakerRingKey = null;
         this.ecologistLayer = null;
         this.renderedWorkFlagKey = null; // last revision, flag and selection the work flag was drawn for
         this.flagBarracksId = null; // the Barracks or HQ being given a flag, in flag mode
@@ -450,6 +455,11 @@ export class GameScene extends Phaser.Scene {
         }) : null;
         if (this.ecologists) this.logistics.setBlockers(() => this.ecologists.blockedTiles());
         if (this.ecologists) this.workers.setEcologists(this.ecologists); // DISPERSE
+        // TASK 028: towers' coverage and noise, stepped first in each tick.
+        this.loudspeakers = new Loudspeakers({cycle: this.cycle, placement: this.placement});
+        this.mutants.setLoudspeakers(this.loudspeakers);
+        this.ecologists?.setLoudspeakers(this.loudspeakers);
+        this.speakerRing = this.add.graphics().setDepth(2.2).setVisible(false);
         this.ecologistLayer = this.ecologists ? new EcologistLayer(this, this.grid) : null;
 
         // Terrain paints its own tiles, and only where there is open ground to build on.
@@ -593,6 +603,7 @@ export class GameScene extends Phaser.Scene {
             if (id === HQ_TYPE) return this.hqRequired;
             if (fortification || id === BARRACKS_TYPE || id === SIEGE_CANNON_TYPE) return this.roads !== null;
             if (id === 'mine') return this.roads !== null && (this.terrain?.deposits?.length ?? 0) > 0; // only where ore exists
+            if (id === LOUDSPEAKER_TYPE) return this.ecologists !== null; // only where protesters come
             return true;
         });
         return Object.fromEntries(offered.map(({id}) => [id, this.buildState(id)]));
@@ -695,6 +706,7 @@ export class GameScene extends Phaser.Scene {
         });
         if (this.infantry) this.syncInfantry();
         if (this.workers) this.syncWorkers();
+        this.syncSpeakerRing();
         if (this.ecologists) {
             this.ecologistLayer.sync(this.ecologists.snapshot(), {tick: this.clock.tick, corpseTicks: ECOLOGIST.corpseTicks, isSeen: this.seenBy()});
         }
@@ -828,6 +840,7 @@ export class GameScene extends Phaser.Scene {
             paused: this.cycle.pausedDay,
             repair: this.repairChoice(building, type),
             disperse: building ? null : this.disperseChoice(),
+            speakers: isHq && this.hasLoudspeakers() ? {on: this.placement.loudspeakerNetwork} : null,
         });
     }
 
@@ -885,9 +898,34 @@ export class GameScene extends Phaser.Scene {
         const {building} = this.selection();
         if (!building) return;
         EventBus.emit(Notice.DISARM);
+        if (building.type === HQ_TYPE && this.hasLoudspeakers()) { // the HQ's place holds SPEAKERS ON / OFF
+            const network = this.placement.setLoudspeakerNetwork(!this.placement.loudspeakerNetwork);
+            if (!network.ok) this.showHint(network.reason);
+            this.refreshPower();
+            return;
+        }
         const result = this.placement.setEnabled(building.id, !building.enabled);
         if (!result.ok) this.showHint(result.reason); // a paused Day changes nothing
         this.refreshPower();
+    }
+
+    hasLoudspeakers() {
+        return this.placement.buildings().some(({type}) => type === LOUDSPEAKER_TYPE);
+    }
+
+    /** A selected tower shows its reach: a faint ring of LOUDSPEAKER.radius tiles round its centre. */
+    syncSpeakerRing() {
+        if (!this.speakerRing) return;
+        const {building} = this.selection();
+        const show = building?.type === LOUDSPEAKER_TYPE;
+        this.speakerRing.setVisible(show);
+        if (!show) return;
+        const {x, y} = this.grid.cellCenter(building.col, building.row);
+        const key = `${building.id}:${this.loudspeakers.isOperating(building.id)}`;
+        if (key === this.speakerRingKey) return;
+        this.speakerRingKey = key;
+        const radius = (LOUDSPEAKER.radius + 0.5) * this.grid.tileSize;
+        this.speakerRing.clear().lineStyle(2, 0xfff176, this.loudspeakers.isOperating(building.id) ? 0.7 : 0.3).strokeCircle(x, y, radius);
     }
 
     /** The squad walks home. The flag's drawing follows the revision, like any flag change. */
@@ -1631,6 +1669,7 @@ export class GameScene extends Phaser.Scene {
     stepSimulation(tick) {
         this.simulationSteps++;
         this.cycle?.onTick(tick);
+        this.loudspeakers?.step();
         const siege = this.siegeCannons?.step();
         if (siege?.fired.length) this.siegeLayer.recordFired(siege.fired, this.placement.buildings(), this.clock.tick);
         if (siege?.impacts.length) this.siegeLayer.recordImpacts(siege.impacts, this.clock.tick);
@@ -1774,6 +1813,8 @@ export class GameScene extends Phaser.Scene {
             workerViews: this.workerLayer ? this.workerLayer.views() : null,
             ecologists: this.ecologists ? this.ecologists.snapshot() : null,
             selectedProtest: this.selectedProtestId ?? null,
+            loudspeakers: this.loudspeakers ? {...this.loudspeakers.snapshot(), network: this.placement.loudspeakerNetwork} : null,
+            speakerRingView: this.speakerRing ? {visible: this.speakerRing.visible} : null,
             ecologistViews: this.ecologistLayer ? this.ecologistLayer.views() : null,
             flagMode: this.flagBarracksId,
             roadMode: this.roadMode,

@@ -1,8 +1,16 @@
 import {addArt, placeArt, buildingFrame, doorwayAt} from './SpriteArt.js';
+import {gateDepth} from './GateLayer.js';
 import {wallAppearance} from './WallTiles.js';
 
-const ART_BUILDINGS = new Set(['hq', 'barracks', 'factory', 'powerPlant', 'mine', 'wall']);
-const ART_DEPTH = 1.1; // above the low-contrast footprint, below FogOfWar (2.5)
+const ART_BUILDINGS = new Set(['hq', 'barracks', 'factory', 'powerPlant', 'mine', 'outpost', 'loudspeaker', 'wall']);
+/**
+ * Building art sorts by the row its footprint ends on, on the same scale as gates
+ * (1.5 + row x 0.001): whatever stands further south draws in front, tower,
+ * building or gate alike, so a tall tower's overhang goes behind nothing nearer
+ * the viewer. All of it stays over the footprints (1) and under trucks, the
+ * selection highlight (2), the night tint (2.4) and the fog (2.5).
+ */
+export const artDepth = ({row, height}) => gateDepth(row + height - 1);
 const DISABLED_ALPHA = 0.35;
 
 /**
@@ -25,7 +33,7 @@ export class BuildingArtLayer {
     add(building, shift = 'day') {
         this.remove(building.id);
         if (!ART_BUILDINGS.has(building.type)) return false;
-        const sprite = addArt(this.#scene, building.type, ART_DEPTH);
+        const sprite = addArt(this.#scene, building.type, artDepth(building));
         if (!sprite) return false;
         const {x, y, width, height} = this.#grid.footprintRect(building);
         // Images are bottom anchored; independent source aspect ratios are retained.
@@ -44,7 +52,7 @@ export class BuildingArtLayer {
     views() {
         return [...this.#sprites.entries()].map(([id, sprite]) => ({
             id, kind: sprite.texture.key.replace('papi-art-', ''), x: sprite.x, y: sprite.y,
-            width: sprite.displayWidth, height: sprite.displayHeight,
+            width: sprite.displayWidth, height: sprite.displayHeight, depth: sprite.depth, originY: sprite.originY,
             doorway: doorwayAt(sprite.texture.key.replace('papi-art-', ''), sprite),
         }));
     }

@@ -11,6 +11,7 @@
  * to validate them.
  */
 import {Ecologists} from '../../src/core/ecologists.js';
+import {Loudspeakers} from '../../src/core/loudspeakers.js';
 import {createHash} from 'node:crypto';
 import {Autocannons} from '../../src/core/autocannons.js';
 import {BuildingPlacement} from '../../src/core/buildingPlacement.js';
@@ -118,6 +119,9 @@ export function createWorld({seed = 731, schedule = null, resources = STARTING_R
     const ecologists = roads && useEcologists ? new Ecologists({cycle, placement, grid, roads, pollution, mutants, seed}) : null;
     if (ecologists) logistics.setBlockers(() => ecologists.blockedTiles());
     if (ecologists) workers.setEcologists(ecologists);
+    const loudspeakers = new Loudspeakers({cycle, placement});
+    mutants.setLoudspeakers(loudspeakers);
+    ecologists?.setLoudspeakers(loudspeakers);
     cycle.begin();
 
     const soldierKills = new Set(); // this tick's: a turret that had one locked has not stepped since
@@ -125,6 +129,7 @@ export function createWorld({seed = 731, schedule = null, resources = STARTING_R
     /** Same order as GameScene.stepSimulation. */
     const tick = (t) => {
         cycle.onTick(t);
+        loudspeakers.step();
         const siege = siegeCannons.step();
         const defense = autocannons.step();
         const wanted = logistics?.gateDemands();
@@ -151,7 +156,7 @@ export function createWorld({seed = 731, schedule = null, resources = STARTING_R
         return result;
     };
 
-    return {clock, economy, pollution, grid, rng, placement, roads, logistics, gates, cycle, mutants, autocannons, siegeCannons, infantry, workers, ecologists, soldierKills, tick, place};
+    return {clock, economy, pollution, grid, rng, placement, roads, logistics, gates, cycle, mutants, autocannons, siegeCannons, infantry, workers, ecologists, loudspeakers, soldierKills, tick, place};
 }
 
 /** The state compared between runs and between Node and Chromium. */

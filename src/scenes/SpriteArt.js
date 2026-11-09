@@ -33,6 +33,11 @@ export const ART = Object.freeze({
     // spoil heap 12 px south: presentation only.
     mine: {path: 'buildings/mine.png', frameWidth: 32, frameHeight: 32, scale: 2, offsetX: 19, offsetY: 14, originY: 1,
         doorway: {x: 14.5, sill: 26}},
+    // Tall 1x1 towers: 32 px wide, standing on the bottom edge of their tile and
+    // rising 32 and 40 px into the tile above (offsetY 2 undoes the 2 px lift the
+    // building layer gives larger art). The footprint stays one tile.
+    outpost: {path: 'buildings/outpost.png', frameWidth: 32, frameHeight: 64, scale: 1, offsetX: 0, offsetY: 2, originY: 1},
+    loudspeaker: {path: 'buildings/loudspeaker.png', frameWidth: 32, frameHeight: 72, scale: 1, offsetX: 0, offsetY: 2, originY: 1},
     wall: {path: 'buildings/walls.png', frameWidth: 32, frameHeight: 32, scale: 1, offsetX: 0, originY: 0.5},
     // One sheet per orientation, 8 frames closed to open, each in a 32x48 cell with
     // 5 px of transparent spacing (291 px wide). The art stands on the cell's bottom

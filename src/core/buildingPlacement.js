@@ -1,4 +1,4 @@
-import {BARRACKS_TYPE, BarracksRole, HQ_TYPE, MINE_TYPE, REFIT_COST, ROAD_COST, getBuildingType} from './buildingTypes.js';
+import {BARRACKS_TYPE, BarracksRole, HQ_TYPE, LOUDSPEAKER_TYPE, MINE_TYPE, REFIT_COST, ROAD_COST, getBuildingType} from './buildingTypes.js';
 import {ROAD_ACCESS_TYPES, RoadFailure, barracksExit, shippingDock} from './roads.js';
 import {isFree, resolvePost, walkMap} from './walkField.js';
 
@@ -79,6 +79,7 @@ export class BuildingPlacement {
     #grid;
     #buildings = [];
     #nextId = 1;
+    #loudspeakerNetwork = true;
 
     #economy;
     #isConstructionAllowed;
@@ -111,6 +112,24 @@ export class BuildingPlacement {
     }
 
     /** True once an HQ has been built this run, even if it was later destroyed. */
+    /** TASK 028: the one HQ switch every Loudspeaker follows. ON by default. */
+    get loudspeakerNetwork() {
+        return this.#loudspeakerNetwork;
+    }
+
+    /**
+     * Switch every Loudspeaker at once, Day or Night, for nothing. New towers take
+     * the switch as it stands. Refused only in a paused Day, like any switch.
+     * @returns {{ok: true, on: boolean} | {ok: false, reason: string}}
+     */
+    setLoudspeakerNetwork(on) {
+        if (typeof on !== 'boolean') return {ok: false, reason: INVALID_STATE};
+        if (this.#isPaused()) return {ok: false, reason: GAME_PAUSED};
+        this.#loudspeakerNetwork = on;
+        for (const building of this.#buildings) if (building.type === LOUDSPEAKER_TYPE) building.enabled = on;
+        return {ok: true, on};
+    }
+
     get hqBuilt() {
         return this.#hqBuilt;
     }
@@ -213,7 +232,7 @@ export class BuildingPlacement {
         }
 
         this.#nextId++;
-        const building = {id, type: type.id, ...footprint, enabled: true, hp: type.maxHp};
+        const building = {id, type: type.id, ...footprint, enabled: type.network ? this.#loudspeakerNetwork : true, hp: type.maxHp};
         if (type.id === BARRACKS_TYPE) building.flag = null;
         this.#buildings.push(building);
         this.#revision++;
