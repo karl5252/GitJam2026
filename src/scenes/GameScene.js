@@ -56,6 +56,7 @@ import {bodyCentreAbove, planEffects} from './combatFx.js';
 import {WorldCamera} from './WorldCamera.js';
 import {currentLayout} from './hudLayout.js';
 import {isOrientationBlocked} from './orientationGuard.js';
+import {SuspendReason, Suspension} from './suspension.js';
 
 /**
  * END DAY runs the rest of the Day through stepSimulation, this many ticks a frame
@@ -204,6 +205,7 @@ export class GameScene extends Phaser.Scene {
         const {width, height} = this.scale;
         const {cols, rows, tileSize} = this.map;
         this.layout = currentLayout();
+        this.suspension = new Suspension(); // TASK 032: a new scene holds no stale reason
         this.worldCamera = new WorldCamera(this.cameras.main, this.layout, {
             x: (width - cols * tileSize) / 2 - WORLD_MARGIN,
             y: (height - rows * tileSize) / 2 - WORLD_MARGIN,
@@ -308,10 +310,11 @@ export class GameScene extends Phaser.Scene {
             [Command.OPEN_NEWSPAPER]: () => this.openNewspaper('report'),
             [Command.CLOSE_NEWSPAPER]: () => this.closeNewspaper(),
             [Command.CYCLE_DAY_SPEED]: () => this.handleCycleDaySpeed(),
+            [Command.SUSPEND]: ({reason, on}) => this.suspension.set(reason, on),
         };
         // END DAY's fast-forward takes no further orders: only the camera still answers.
         for (const event of Object.values(Command)) {
-            if (!handlers[event] || FAST_FORWARD_ALLOWED.has(event)) continue;
+            if (!handlers[event] || FAST_FORWARD_ALLOWED.has(event) || event === Command.SUSPEND) continue;
             const handler = handlers[event];
             handlers[event] = (payload) => {
                 if (!this.cycle?.fastForwarding) handler(payload);
@@ -319,7 +322,7 @@ export class GameScene extends Phaser.Scene {
         }
         // La Voz is a blocking modal: while it is open, only closing it is heard.
         for (const event of Object.values(Command)) {
-            if (!handlers[event] || event === Command.CLOSE_NEWSPAPER) continue;
+            if (!handlers[event] || event === Command.CLOSE_NEWSPAPER || event === Command.SUSPEND) continue;
             const handler = handlers[event];
             handlers[event] = (payload) => {
                 if (!this.newspaper?.open) handler(payload);
@@ -574,6 +577,7 @@ export class GameScene extends Phaser.Scene {
             this.gameAudio?.play(power.status === 'normal' ? 'machinery.power_up' : 'machinery.power_down');
         }
         this.lastPowerStatus = power.status;
+        this.poweredIds = new Set(power.buildings.filter((b) => b.powered).map((b) => b.id)); // TASK 032: the palette's header
         this.present(State.POWER, {generation: power.generation, demand: power.demand, status: power.status});
         for (const {id, enabled, powered} of power.buildings) {
             const view = this.buildingViews.get(id);
@@ -882,7 +886,11 @@ export class GameScene extends Phaser.Scene {
         const isBarracks = type?.id === BARRACKS_TYPE;
         const isHq = type?.id === HQ_TYPE && this.workers !== null;
         this.present(State.SELECTION, {
-            building: building ? {id: building.id, type: building.type, enabled: building.enabled, flag: isHq ? this.workers.flag : building.flag ?? null} : null,
+            building: building ? {
+                id: building.id, type: building.type, enabled: building.enabled, flag: isHq ? this.workers.flag : building.flag ?? null,
+                // TASK 032, presentation only: what the palette's header says about it.
+                hp: building.hp, maxHp: type.maxHp, powered: this.poweredIds?.has(building.id) ?? false, role: building.role ?? null,
+            } : null,
             canFlag: isBarracks || isHq,
             workers: isHq,
             sent: isHq && this.workers.sent,
@@ -1779,9 +1787,11 @@ export class GameScene extends Phaser.Scene {
 
     /** Phaser's frame delta drives the fixed-step clock; Phaser's `time` is ignored. */
     update(_time, delta) {
-        // Turned to portrait, frames simply stop reaching the clock: its speed and
-        // pause state are not touched, so the run comes back exactly as it was.
-        if (!isOrientationBlocked()) {
+        // Turned to portrait, or with the AUDIO panel or the BUILD drawer open (TASK 032),
+        // frames simply stop reaching the clock: its speed and pause state are not
+        // touched, so the run comes back exactly as it was, no tick skipped or made up.
+        this.suspension.set(SuspendReason.ORIENTATION, isOrientationBlocked());
+        if (!this.suspension.active) {
             const onTick = (tick) => this.stepSimulation(tick);
             // END DAY: the rest of the Day in bounded batches, every tick through the
             // normal path. It stops at Dusk, which then plays in real time.
@@ -1789,7 +1799,7 @@ export class GameScene extends Phaser.Scene {
             else this.clock.advance(delta, onTick);
         }
         this.syncShiftUi();
-        this.combatFx?.sync(this.clock.tick, delta, Boolean(this.cycle?.running || this.cycle?.fastForwarding));
+        this.combatFx?.sync(this.clock.tick, delta, !this.suspension.active && Boolean(this.cycle?.running || this.cycle?.fastForwarding));
         this.syncAudio(delta);
     }
 
@@ -1803,7 +1813,7 @@ export class GameScene extends Phaser.Scene {
             shift: this.cycle?.shift ?? null,
             newspaperOpen: Boolean(this.newspaper?.open),
             // The world sounds only while it runs: not behind La Voz, in a paused Day, on the menu or after defeat.
-            worldActive: started && this.phase !== GamePhase.DEFEATED && !this.newspaper?.open
+            worldActive: started && this.phase !== GamePhase.DEFEATED && !this.newspaper?.open && !this.suspension.active
                 && (this.cycle.fastForwarding || this.cycle.running),
             camera: this.cameras.main.worldView,
             isSeen: this.seenBy() ?? (() => true),
@@ -1934,6 +1944,7 @@ export class GameScene extends Phaser.Scene {
             ui: {...hud.ui, endDayEnabled: this.cycle ? this.cycle.canEndDay : false},
             camera: this.worldCamera.snapshot(),
             orientation: {blocked: isOrientationBlocked()},
+            suspension: {active: this.suspension.active, reasons: this.suspension.reasons()}, // TASK 032
             // Domain power state, derived on demand from the building records.
             power: this.placement ? calculatePower(this.placement.buildings()) : null,
             selectedBuilding: this.selectedBuildingId,

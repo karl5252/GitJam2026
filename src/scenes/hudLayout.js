@@ -1,141 +1,187 @@
 /**
  * Where everything goes. Pure data, in logical pixels of the 1280x720 canvas, which
- * is what HUD coordinates always are. Two arrangements, chosen once per HUD:
+ * is what HUD coordinates always are. TASK 032 gives desktop and touch one structure:
  *
- *   DESKTOP  the bands round the grid, with every button always showing. Cells are
- *            82 logical pixels, 44 CSS pixels at 844x390.
- *   TOUCH    a phone in landscape: a thin top bar and two columns of controls, with
- *            a build drawer instead of a permanent menu. Controls are at least 90
- *            logical pixels, which is 45 CSS pixels at 740x360, the smallest
- *            viewport this targets.
+ *   top bar     economy on the left, the time and phase in the middle (the wave below
+ *               it at Night), the environment on the right: Pollution, Threat, Power.
+ *   left rail   BUILD, CANCEL while placing, REPORT, a reserved slot for the future
+ *               PAPI DIRECTIVES, and END DAY at the bottom. Nothing replaces BUILD.
+ *   palette     beside the rail: the selected object's name, HP and state, and only
+ *               the commands it accepts, stacked. Gone when nothing is selected.
+ *   drawer      BUILD opens it next to the rail, over the palette and the world's
+ *               edge, by category. It closes on a choice.
+ *   right rail  the camera (ZOOM+, FIT, ZOOM-), then the Night speeds or the Day's
+ *               PAUSE and speed, and AUDIO at the bottom.
+ *
+ * DESKTOP keeps every band it had, so the world's viewport, and with it the fitted
+ * camera, is exactly as before. TOUCH is a phone in landscape: controls at least 88
+ * logical pixels, 44 CSS pixels at 684x400 and 740x360, the smallest it targets.
  *
  * `viewport` is the screen rectangle the world is drawn in. The HUD never sits over
- * it, except for the drawer and the hint, which are both temporary. At the fitted
- * zoom the map is limited by height, so the columns take only spare width.
+ * it, except for the drawer, the hint and the audio panel, which are all temporary.
  */
-
-const MENU_COLUMNS = [66, 190];
-const MENU_TOP = 104;
-const MENU_STEP = 84;
-const menuSlot = (slot) => ({x: MENU_COLUMNS[slot % 2], y: MENU_TOP + Math.floor(slot / 2) * MENU_STEP});
-
-const WIDE = {width: 192, height: 84};
-const CELL = {width: 120, height: 82};
-const ACTION = {width: 116, height: 84};
-const ICON = {width: 48, height: 48}; // compact square icon buttons
-/** Two icon buttons side by side in one action slot: REPAIR on the left, DESTROY on the right. */
-const pairIn = ({x, y, width}, icon = ICON) => ({
-    repair: {x: x - width / 2 + icon.width / 2 + 2, y, ...icon},
-    demolish: {x: x + width / 2 - icon.width / 2 - 2, y, ...icon},
-});
-const SPEED = {width: 82, height: 84};
-const CAMERA = {width: 92, height: 84};
 
 const text = (x, y, fontSize, originX = 0, extra = {}) => ({x, y, fontSize, originX, ...extra});
 
-/** Slots run left to right, top to bottom. Six rows end at y 565, clear of END DAY at y 578. */
-// TASK 028, provisional: a seventh row for the Loudspeaker, with END DAY moved into the bottom band.
-const DESKTOP_MENU = ['hq', 'outpost', 'factory', 'powerPlant', 'autocannon', 'road', 'wall', 'barracks', 'gateVertical', 'gateHorizontal', 'siegeCannon', 'mine', 'loudspeaker'];
+/** Buildings by what they are for, on both layouts. Four fit a row. */
+export const DRAWER_ROWS = Object.freeze([
+    ['ECONOMY', ['hq', 'factory', 'powerPlant', 'mine']],
+    ['DEFENCE', ['autocannon', 'siegeCannon', 'barracks', 'wall']],
+    ['INFRASTRUCTURE', ['road', 'gateVertical', 'gateHorizontal', 'outpost']],
+    ['PROPAGANDA', ['loudspeaker']],
+]);
+
+/**
+ * The drawer's grid, for any number of columns that fit: fewer columns when there is
+ * less room, and a row that does not fit wraps onto the next line under its heading.
+ */
+function drawerGrid({left, top, scale, gap, headingHeight, columns}) {
+    const size = 32 * scale;
+    const menu = {};
+    const labels = [];
+    let y = top;
+    for (const [label, ids] of DRAWER_ROWS) {
+        labels.push({label, x: left + gap, y});
+        y += headingHeight;
+        ids.forEach((id, i) => {
+            const column = i % columns;
+            const line = Math.floor(i / columns);
+            menu[id] = {x: left + gap + size / 2 + column * (size + gap), y: y + size / 2 + line * (size + gap), width: size, height: size};
+        });
+        y += Math.ceil(ids.length / columns) * (size + gap);
+    }
+    return {menu, labels, bottom: y, right: left + gap + columns * (size + gap)};
+}
+
+// ---- Desktop --------------------------------------------------------------------
+
+const D_RAIL = {x: 52, width: 92, height: 84};
+const D_PALETTE = {x: 172, width: 120, height: 56, top: 186, step: 64};
+const D_RIGHT = {x: 1160, columns: [1084, 1160, 1236]};
+const D_DRAWER = drawerGrid({left: 106, top: 98, scale: 3, gap: 12, headingHeight: 22, columns: 4});
 
 export const DESKTOP = Object.freeze({
     touch: false,
     viewport: {x: 240, y: 88, width: 800, height: 544},
     dayZoom: null,
+    bands: [
+        {x: 0, y: 0, width: 1280, height: 88}, // the top bar
+        {x: 0, y: 88, width: 104, height: 632}, // the left rail
+        {x: 1040, y: 88, width: 240, height: 632}, // the right rail
+        {x: 104, y: 632, width: 936, height: 88}, // under the world
+    ],
     text: {
-        shift: text(640, 30, '24px', 0.5),
-        resources: text(640, 70, '28px', 0.5),
-        wave: text(16, 20, '20px'),
-        pollution: text(1040, 16, '22px', 0, {lineSpacing: 4}),
-        power: text(1040, 112, '20px', 0, {lineSpacing: 4}),
+        resources: text(20, 28, '26px'),
+        shift: text(640, 26, '22px', 0.5),
+        wave: text(640, 62, '20px', 0.5),
+        pollution: text(928, 12, '20px', 0, {lineSpacing: 4}),
+        power: text(1100, 12, '20px', 0, {lineSpacing: 4}),
         hint: text(640, 94, '16px', 0.5),
-        settlement: text(1040, 190, '20px', 0, {lineSpacing: 4}),
+        settlement: text(1050, 278, '18px', 0, {lineSpacing: 4}),
     },
-    menu: Object.fromEntries(DESKTOP_MENU.map((id, slot) => [id, {...menuSlot(slot), ...CELL}])),
-    endDay: {x: 360, y: 676, ...WIDE}, // the bottom band, left of the camera buttons, clear of the menu's seventh row
-    cancel: {x: 1152, y: 560, ...WIDE},
-    toggle: {x: 1152, y: 560, ...WIDE},
-    narrowToggle: {x: 1098, y: 560, ...ACTION, height: 84},
-    actions: {
-        flag: {x: 1098, y: 470, ...ACTION},
-        ...pairIn({x: 1218, y: 470, ...ACTION}), // the old Demolish slot holds both
-        disperse: {x: 1218, y: 470, ...ACTION, fontSize: '16px', wrap: 110}, // a selected protest: nothing else is shown
-        reset: {x: 1218, y: 560, ...ACTION},
-        refit: {x: 1152, y: 650, ...WIDE},
+    rail: {
+        build: {x: D_RAIL.x, y: 136, width: D_RAIL.width, height: D_RAIL.height},
+        cancel: {x: D_RAIL.x, y: 228, width: D_RAIL.width, height: D_RAIL.height},
+        report: {x: D_RAIL.x, y: 320, width: D_RAIL.width, height: D_RAIL.height},
+        directives: {x: D_RAIL.x, y: 412, width: D_RAIL.width, height: D_RAIL.height}, // reserved, never shown yet
+        endDay: {x: D_RAIL.x, y: 664, width: D_RAIL.width, height: D_RAIL.height},
     },
-    speed: [1072, 1154, 1236].map((x) => ({x, y: 650, ...SPEED})),
-    // Day: the bottom band right of the camera buttons, clear of Refit and END DAY.
-    dayTime: {pause: {x: 836, y: 676, ...SPEED}, speed: {x: 922, y: 676, ...SPEED}},
+    palette: {
+        panel: {x: 106, y: 90, width: 132, height: 540},
+        header: text(112, 96, '14px', 0, {lineSpacing: 2, wrap: 122}),
+        slot: (i) => ({x: D_PALETTE.x, y: D_PALETTE.top + i * D_PALETTE.step, width: D_PALETTE.width, height: D_PALETTE.height}),
+        pair: true, // REPAIR and DESTROY share a slot
+        icon: {width: 56, height: 56},
+        fontSize: '15px',
+    },
+    drawer: {
+        panel: {x: 106, y: 90, width: D_DRAWER.right - 106, height: D_DRAWER.bottom - 90 + 4},
+        labels: D_DRAWER.labels,
+        scale: 3,
+        costFont: '12px',
+        labelFont: '12px',
+        headingFont: '15px',
+    },
+    menu: D_DRAWER.menu,
     camera: {
-        zoomOut: {x: 540, y: 676, ...CAMERA},
-        fit: {x: 640, y: 676, ...CAMERA},
-        zoomIn: {x: 740, y: 676, ...CAMERA},
+        zoomOut: {x: D_RIGHT.columns[0], y: 136, width: 72, height: 76},
+        fit: {x: D_RIGHT.columns[1], y: 136, width: 72, height: 76},
+        zoomIn: {x: D_RIGHT.columns[2], y: 136, width: 72, height: 76},
+    },
+    speed: D_RIGHT.columns.map((x) => ({x, y: 226, width: 72, height: 76})),
+    dayTime: {pause: {x: 1104, y: 226, width: 120, height: 76}, speed: {x: 1222, y: 226, width: 92, height: 76}},
+    audio: {
+        open: {x: D_RIGHT.x, y: 664, width: 200, height: 84},
+        panel: {x: 640, y: 360, width: 560, height: 360},
+        slider: {width: 300, height: 44, knob: 30},
+        fontSize: '22px',
     },
 });
 
-const TOUCH_SIZE = {width: 108, height: 90};
-const LEFT = 56;
-const RIGHT = 1224;
-const ROWS = [107, 201, 295, 389, 483, 577, 671];
-const left = (row) => ({x: LEFT, y: ROWS[row], ...TOUCH_SIZE});
-// REPAIR and DESTROY on touch: two 90 px squares (45 CSS px at 740x360, the smallest
-// target), so their row of the right column reaches further left than the others,
-// and the world's viewport ends before it. The fit is limited by height on both maps,
-// so the world loses no zoom.
-const TOUCH_ICON = {width: 90, height: 90};
-const PAIR_ROW = {x: 1278 - 94, y: ROWS[4], width: 188}; // x 1090..1278, flush with the column's right edge
-const VIEW_RIGHT = PAIR_ROW.x - PAIR_ROW.width / 2 - 2;
-const right = (row) => ({x: RIGHT, y: ROWS[row], ...TOUCH_SIZE});
-const LABEL = {fontSize: '16px', wrap: 100};
+// ---- Touch ----------------------------------------------------------------------
 
-/** Buildings by what they are for. Nothing here needs more than one press from the drawer. */
-const DRAWER = [
-    ['ECONOMY', ['hq', 'factory', 'powerPlant', 'mine']], // four fit a row
-    ['DEFENCE', ['autocannon', 'siegeCannon', 'barracks', 'wall']],
-    ['INFRASTRUCTURE', ['road', 'gateVertical', 'gateHorizontal', 'outpost']],
-    ['PROPAGANDA', ['loudspeaker']],
-];
-// TASK 028, provisional: four rows in the drawer. 104 logical px is 52 CSS px at 740x360.
-const DRAWER_CELL = {width: 228, height: 104};
-const DRAWER_LEFT = 180;
-const DRAWER_STEP = {x: 240, y: 140};
-const DRAWER_TOP = 180;
+const ROWS = [109, 203, 297, 391, 485, 579, 673];
+const T_SIZE = {width: 92, height: 88};
+const T_LEFT = 50;
+const T_RIGHT = 1229;
+const left = (row) => ({x: T_LEFT, y: ROWS[row], ...T_SIZE});
+const right = (row) => ({x: T_RIGHT, y: ROWS[row], ...T_SIZE});
+const T_PALETTE = {x: 152, top: 168, step: 94};
+const T_VIEW = {x: 204, right: 1176};
+const T_DRAWER = drawerGrid({left: 102, top: 68, scale: 4, gap: 12, headingHeight: 24, columns: 4});
 
 export const TOUCH = Object.freeze({
     touch: true,
-    viewport: {x: 112, y: 62, width: VIEW_RIGHT - 112, height: 658},
+    viewport: {x: T_VIEW.x, y: 62, width: T_VIEW.right - T_VIEW.x, height: 658},
     dayZoom: 2,
+    bands: [
+        {x: 0, y: 0, width: 1280, height: 62},
+        {x: 0, y: 62, width: 102, height: 658}, // the left rail
+        {x: 102, y: 62, width: 102, height: 658}, // the palette's column
+        {x: T_VIEW.right, y: 62, width: 1280 - T_VIEW.right, height: 658}, // the right rail
+    ],
     text: {
-        shift: text(8, 6, '22px'),
-        resources: text(8, 34, '22px'),
-        wave: text(330, 36, '20px'), // beside Credits: the shift line needs the row above at Night
-        pollution: text(790, 6, '20px', 0, {lineSpacing: 2}),
-        power: text(990, 6, '20px', 0, {lineSpacing: 2}),
-        hint: text(640, 86, '24px', 0.5, {backgroundColor: '#263238', padding: {x: 10, y: 4}}),
-        settlement: text(120, 104, '22px', 0, {lineSpacing: 4}),
+        resources: text(8, 18, '20px'),
+        shift: text(620, 16, '20px', 0.5),
+        wave: text(620, 44, '18px', 0.5),
+        pollution: text(880, 6, '18px', 0, {lineSpacing: 2}),
+        power: text(1070, 6, '18px', 0, {lineSpacing: 2}),
+        hint: text((T_VIEW.x + T_VIEW.right) / 2, 86, '24px', 0.5, {backgroundColor: '#263238', padding: {x: 10, y: 4}}),
+        settlement: text(212, 72, '22px', 0, {lineSpacing: 4}),
+    },
+    rail: {
+        build: left(0),
+        cancel: left(1),
+        report: left(2),
+        directives: left(3), // reserved, never shown yet
+        endDay: left(6),
+    },
+    palette: {
+        panel: {x: 102, y: 62, width: 102, height: 658},
+        header: text(106, 66, '15px', 0, {lineSpacing: 2, wrap: 96}),
+        slot: (i) => ({x: T_PALETTE.x, y: T_PALETTE.top + i * T_PALETTE.step, ...T_SIZE}),
+        pair: false, // stacked: two 88 px squares do not fit side by side
+        icon: {width: 88, height: 88},
+        fontSize: '16px',
     },
     drawer: {
-        panel: {x: (112 + VIEW_RIGHT) / 2, y: 372, width: VIEW_RIGHT - 112, height: 600}, // within the viewport
-        open: left(0),
-        labels: DRAWER.map(([label], row) => ({label, x: DRAWER_LEFT - 40, y: DRAWER_TOP - 82 + row * DRAWER_STEP.y})), // in the gap above each row
+        panel: {x: 102, y: 64, width: T_DRAWER.right - 102, height: 652},
+        labels: T_DRAWER.labels,
+        scale: 4,
+        costFont: '16px',
+        labelFont: '16px',
+        headingFont: '20px',
     },
-    menu: Object.fromEntries(DRAWER.flatMap(([, ids], row) => ids.map((id, column) => [id, {
-        x: DRAWER_LEFT + 74 + column * DRAWER_STEP.x, y: DRAWER_TOP + row * DRAWER_STEP.y, ...DRAWER_CELL,
-    }]))),
-    cancel: left(1),
-    report: left(2),
-    actions: {
-        flag: {...left(3), ...LABEL},
-        reset: {...left(4), ...LABEL},
-        refit: {...right(3), ...LABEL},
-        ...pairIn(PAIR_ROW, TOUCH_ICON), // the old Demolish slot, widened to the left
-        disperse: {...PAIR_ROW, height: TOUCH_ICON.height, ...LABEL}, // the same row, for a selected protest
-    },
-    toggle: left(5),
-    narrowToggle: left(5),
-    endDay: left(6),
-    speed: [3, 4, 5].map(right),
-    dayTime: {pause: right(5), speed: right(6)}, // by Day, right(3) and right(4) hold Refit and Demolish
+    menu: T_DRAWER.menu,
     camera: {zoomIn: right(0), fit: right(1), zoomOut: right(2)},
+    speed: [3, 4, 5].map(right),
+    dayTime: {pause: right(3), speed: right(4)},
+    audio: {
+        open: right(6),
+        panel: {x: 690, y: 390, width: 760, height: 620},
+        slider: {width: 380, height: 88, knob: 56},
+        fontSize: '28px',
+    },
 });
 
 /** A phone in either orientation. A touch laptop has room for the desktop layout. */

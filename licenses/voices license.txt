@@ -1,0 +1,9 @@
+### VOICES — ElevenLabs
+
+- **Source:** ElevenLabs
+- **License:** Paid subscription, commercial usage
+- **Subscription tier:** Paid plan, exact name to be verified
+- **Usage:** Voice lines and propaganda broadcasts in PAPI Industries
+- **Documentation:** https://elevenlabs.io/terms-of-use-eu
+- **Restriction:** Do not distribute the voice recordings as a standalone voice or sound asset pack.
+- **Note:** Confirm that the recordings were generated during the paid subscription period.

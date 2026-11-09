@@ -59,7 +59,7 @@ test.describe('workers: desktop', () => {
         await place(page, state, 'powerPlant', {col: col + 4, row: row - 2});
         await place(page, state, 'barracks', {col: col + 5, row: row + 2});
         await select(page, state, {col: col + 5, row: row + 2}, (await sample(page)).buildings.find((b) => b.type === 'barracks').id);
-        expect((await sample(page)).buildingControlsView).toMatchObject({flagLabel: 'Set\nflag', resetVisible: false});
+        expect((await sample(page)).buildingControlsView).toMatchObject({flagLabel: 'SET\nFLAG', resetVisible: false});
     });
 
     test('a flag in unexplored jungle is allowed, costs nothing and reveals nothing', async ({page}) => {

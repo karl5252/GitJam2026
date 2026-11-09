@@ -3,11 +3,11 @@
  * Phaser. Presentation only.
  */
 
-/** The Killdozer demolition icon: a 48x48 PNG whose vehicle covers x 3..44, y 5..38. */
+/** The Killdozer demolition icon: a 48x48 PNG whose vehicle covers x 1..47, y 3..42 (re-measured for TASK 032: the art was updated). */
 export const KILLDOZER = Object.freeze({
     key: 'papi-ui-killdozer',
     path: 'assets/sprites/ui/killdozer.png',
-    visible: Object.freeze({x: 3, y: 5, width: 42, height: 34}),
+    visible: Object.freeze({x: 1, y: 3, width: 47, height: 40}),
     fit: 40, // the icon's visible bounds inside a 48 px button
 });
 

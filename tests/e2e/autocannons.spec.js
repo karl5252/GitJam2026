@@ -1,5 +1,5 @@
 import {test, expect} from '@playwright/test';
-import {boot, body, byAction, clickAction, clickWorld, tapAction, tapWorld, showBuildMenu} from '../helpers/canvas.js';
+import {boot, body, byAction, clickAction, clickWorld, tapAction, tapWorld, showBuildMenu, closeBuildMenu} from '../helpers/canvas.js';
 import {sample} from '../helpers/qa.js';
 import {STARTING_RESOURCES} from '../../src/core/economy.js';
 
@@ -94,6 +94,18 @@ function autocannonSuite({pressWorld, pressAction}) {
         await expect.poll(async () => (await sample(page)).selectedBuilding).toBe(expectedId);
     }
 
+    /**
+     * What the switch really does: the record, power, the building's dimming and the
+     * palette's state line. (The graybox barrel is hidden whenever turret art is loaded,
+     * so its alpha says nothing about the switch.)
+     */
+    function expectSwitched(s, id, enabled) {
+        expect(s.buildings.find((b) => b.id === id).enabled).toBe(enabled);
+        expect(s.power.buildings.find((b) => b.id === id)).toMatchObject({enabled, powered: enabled});
+        expect(s.buildingViews.find((v) => v.id === id).alpha).toBeCloseTo(enabled ? 1 : 0.35);
+        expect(s.paletteView.header.split('\n').at(-1)).toBe(enabled ? 'ON' : 'OFF');
+    }
+
     async function toggle(page, expectedEnabled) {
         await pressAction(page, 'toggle-power');
         await expect(byAction(page, 'toggle-power')).toHaveAttribute('data-enabled', String(expectedEnabled));
@@ -112,7 +124,7 @@ function autocannonSuite({pressWorld, pressAction}) {
         const overlaps = (p, q) => p.x < q.x + q.width && q.x < p.x + p.width && p.y < q.y + q.height && q.y < p.y + p.height;
         expect(overlaps(cancel, endDay)).toBe(false);
         expect(overlaps(cancel, lastBuild)).toBe(false);
-        if (await byAction(page, 'open-build').count()) await tapAction(page, 'open-build'); // close it again
+        await closeBuildMenu(page); // close it again
 
         await pressWorld(page, cellCenter(state.grid, CANNON.col, CANNON.row), state);
         await expect.poll(async () => (await sample(page)).buildings.length).toBe(1);
@@ -209,7 +221,7 @@ function autocannonSuite({pressWorld, pressAction}) {
         let s = await sample(page);
         expect(s.mutants[0].hp).toBe(30);
         expect(s.autocannons[0]).toEqual({id: cannonId, cooldown: 30, targetId: null}); // paused, lock cleared
-        expect(s.barrelViews[0].alpha).toBeCloseTo(0.35);
+        expectSwitched(s, cannonId, false);
 
         await toggle(page, true);
         await qaSim(page, 'stepTicks', 29);
@@ -217,7 +229,7 @@ function autocannonSuite({pressWorld, pressAction}) {
         await qaSim(page, 'stepTicks', 1);
         s = await sample(page);
         expect(s.mutants[0].hp).toBe(20);
-        expect(s.barrelViews[0].alpha).toBe(1);
+        expectSwitched(s, cannonId, true);
     });
 
     test('losing the Plant silences a surviving Autocannon', async ({page}) => {

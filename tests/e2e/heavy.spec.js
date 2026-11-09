@@ -98,11 +98,11 @@ function suite(input) {
         await select(page, state, BARRACKS, id);
         await page.evaluate(() => window.__qa.economy.setCredits(1000));
         const before = (await sample(page)).resources;
-        expect((await sample(page)).buildingControlsView).toMatchObject({refitVisible: true, refitLabel: 'Refit: ROCKET\n200c · 1 AP', refitArmed: null});
+        expect((await sample(page)).buildingControlsView).toMatchObject({refitVisible: true, refitLabel: 'REFIT\nROCKET\n200c 1AP', refitArmed: null});
 
         await pressAction(page, 'refit');
         await expect.poll(async () => (await sample(page)).buildingControlsView.refitArmed).toBe(id);
-        expect((await sample(page)).buildingControlsView.refitLabel).toBe('CONFIRM\n200c · 1 AP');
+        expect((await sample(page)).buildingControlsView.refitLabel).toBe('CONFIRM\n200c 1AP');
         expect((await sample(page)).resources).toEqual(before);
 
         await pressAction(page, 'toggle-power'); // any other action disarms it
@@ -121,7 +121,7 @@ function suite(input) {
         await expect.poll(async () => (await sample(page)).buildings.find((b) => b.id === id).role).toBe('rocket');
         const after = await sample(page);
         expect(after.resources).toEqual({credits: before.credits - 200, ap: before.ap - 1});
-        expect(after.buildingControlsView).toMatchObject({refitLabel: 'Refit: RIFLE\n200c · 1 AP', refitArmed: null});
+        expect(after.buildingControlsView).toMatchObject({refitLabel: 'REFIT\nRIFLE\n200c 1AP', refitArmed: null});
         await expect.poll(async () => (await sample(page)).infantryViews.roofs[id]).toBe('1R');
     });
 

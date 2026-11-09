@@ -66,6 +66,7 @@ export const Command = Object.freeze({
     FIT: 'camera:fit',
     TOGGLE_DAY_PAUSE: 'day:togglePause', // Day only
     CYCLE_DAY_SPEED: 'day:cycleSpeed', // Day only: 1x, 2x, 4x, round again
+    SUSPEND: 'world:suspend', // {reason: 'audio' | 'build', on}: TASK 032, the HUD's overlays hold the world
 });
 
 /** Reasons only the HUD words, beside the domain's own failure codes. */

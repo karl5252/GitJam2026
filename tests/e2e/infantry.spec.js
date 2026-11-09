@@ -41,14 +41,14 @@ function suite(input) {
     test('RESET FLAG shows only with a flag, and works by Day and by Night', async ({page}) => {
         const {state, id} = await base(page);
         await select(page, state, BARRACKS, id);
-        expect((await sample(page)).buildingControlsView).toMatchObject({flagLabel: 'Set\nflag', resetVisible: false});
+        expect((await sample(page)).buildingControlsView).toMatchObject({flagLabel: 'SET\nFLAG', resetVisible: false});
         await expect(byAction(page, 'reset-flag')).toHaveCount(0);
 
         await setFlag(page, state, {col: 20, row: 12});
         await expect.poll(async () => (await sample(page)).buildingControlsView.resetVisible).toBe(true);
         await pressAction(page, 'reset-flag');
         await expect.poll(async () => (await sample(page)).buildings.find((b) => b.id === id).flag).toBeNull();
-        expect((await sample(page)).buildingControlsView).toMatchObject({flagLabel: 'Set\nflag', resetVisible: false});
+        expect((await sample(page)).buildingControlsView).toMatchObject({flagLabel: 'SET\nFLAG', resetVisible: false});
         expect((await sample(page)).resources).toEqual({credits: 350, ap: 3});
 
         await setFlag(page, state, {col: 8, row: 3});
@@ -68,19 +68,19 @@ function suite(input) {
         expect(home.infantry.totals.deployed).toBe(4);
     });
 
-    test('the power toggle still works beside RESET FLAG, and goes back to full width for other buildings', async ({page}) => {
+    test('the power toggle still works beside RESET FLAG, and keeps its palette slot for other buildings', async ({page}) => {
         const {state, id} = await base(page);
         await select(page, state, BARRACKS, id);
         await setFlag(page, state, {col: 20, row: 12});
         await expect(byAction(page, 'reset-flag')).toHaveCount(1);
         await pressAction(page, 'toggle-power');
         await expect.poll(async () => (await sample(page)).buildings.find((b) => b.id === id).enabled).toBe(false);
-        const narrow = await byAction(page, 'toggle-power').boundingBox();
+        const first = await byAction(page, 'toggle-power').boundingBox();
 
         const plant = (await sample(page)).buildings.find((b) => b.type === 'powerPlant').id;
         await select(page, state, PLANT, plant);
         const wide = await byAction(page, 'toggle-power').boundingBox();
-        if ((await sample(page)).ui.layout === 'desktop') expect(wide.width).toBeGreaterThan(narrow.width); // touch keeps its own column
+        expect(wide).toEqual(first); // TASK 032: the switch is always the palette's first slot
         await expect(byAction(page, 'reset-flag')).toHaveCount(0);
         await pressAction(page, 'toggle-power');
         await expect.poll(async () => (await sample(page)).buildings.find((b) => b.id === plant).enabled).toBe(false);
@@ -128,8 +128,8 @@ function suite(input) {
         const {state, id} = await base(page);
         await select(page, state, BARRACKS, id);
         expect((await sample(page)).buildingControlsView).toMatchObject({
-            flagVisible: true, flagLabel: 'Set\nflag', resetVisible: false, resetLabel: 'RESET\nFLAG', demolishVisible: true, demolishLabel: 'Demolish', demolishArmed: null,
-            refitVisible: true, refitLabel: 'Refit: ROCKET\n200c · 1 AP', refitArmed: null,
+            flagVisible: true, flagLabel: 'SET\nFLAG', resetVisible: false, resetLabel: 'RESET\nFLAG', demolishVisible: true, demolishLabel: 'Demolish', demolishArmed: null,
+            refitVisible: true, refitLabel: 'REFIT\nROCKET\n200c 1AP', refitArmed: null,
             repairVisible: false, paused: false, // full HP: no REPAIR; the view also reports button geometry
         });
         await expect(byAction(page, 'set-flag')).toHaveAttribute('data-target', id);
@@ -143,7 +143,7 @@ function suite(input) {
         const s = await sample(page);
         expect(s.selectedBuilding).toBe(id);
         expect(s.buildings.find((b) => b.id === id).flag).toEqual({col: 20, row: 13});
-        expect(s.buildingControlsView.flagLabel).toBe('Move\nflag');
+        expect(s.buildingControlsView.flagLabel).toBe('MOVE\nFLAG');
         expect(s.resources).toEqual({credits: 350, ap: 3});
         expect(s.infantryViews.flags).toEqual([{id, number: 1, flag: {col: 20, row: 13}, blocked: false, selected: true, visible: true}]);
     });
@@ -247,7 +247,6 @@ test.describe('infantry: mobile landscape', () => {
         await flow.place(page, state, 'barracks', BARRACKS);
         const id = (await sample(page)).buildings.at(-1).id;
         await flow.select(page, state, BARRACKS, id);
-        await showBuildMenu(page);
 
         const check = async (actions) => {
             const boxes = await Promise.all(actions.map((action) => byAction(page, action).boundingBox()));
@@ -259,15 +258,21 @@ test.describe('infantry: mobile landscape', () => {
                 }
             });
         };
-        await check(['set-flag', 'demolish', 'toggle-power', 'end-day', 'build-barracks', 'build-road', 'build-wall', 'build-gateVertical', 'build-gateHorizontal']);
+        // TASK 032: the palette and the drawer never share the screen, so each is measured with the rails.
+        const DRAWER = ['open-build', 'end-day', 'build-barracks', 'build-road', 'build-wall', 'build-gateVertical', 'build-gateHorizontal'];
+        await check(['set-flag', 'demolish', 'toggle-power', 'open-build', 'end-day']);
+        await showBuildMenu(page);
+        expect((await sample(page)).ui.paletteVisible).toBe(false);
+        await check(DRAWER);
 
         await tapAction(page, 'open-build'); // close the drawer to reach the map
         await tapAction(page, 'set-flag');
         await expect.poll(async () => (await sample(page)).flagMode).toBe(id);
         await tapWorld(page, cellCenter(state.grid, {col: 20, row: 12}), state);
         await expect.poll(async () => (await sample(page)).flagMode).toBeNull();
+        await check(['set-flag', 'reset-flag', 'demolish', 'toggle-power', 'open-build', 'end-day']);
         await showBuildMenu(page);
-        await check(['set-flag', 'reset-flag', 'demolish', 'toggle-power', 'end-day', 'build-barracks', 'build-road', 'build-wall', 'build-gateVertical', 'build-gateHorizontal']);
+        await check(DRAWER);
         await tapAction(page, 'open-build');
 
         await flow.nightTo(page, 10);

@@ -1,5 +1,5 @@
 import {test, expect} from '@playwright/test';
-import {byAction, clickAction, clickWorld, showBuildMenu, tapAction, tapWorld} from '../helpers/canvas.js';
+import {byAction, clickAction, clickWorld, showBuildMenu, closeBuildMenu, tapAction, tapWorld} from '../helpers/canvas.js';
 import {cellCenter, hqFlow, qaSim, stepExactly} from '../helpers/hq.js';
 import {sample} from '../helpers/qa.js';
 
@@ -35,9 +35,11 @@ test.describe('loudspeakers: desktop', () => {
         const site = {col: center.col - 3, row: center.row};
         const dock = {col: center.col - 4, row: center.row};
 
-        // The seventh menu row and END DAY, moved to the bottom band, never overlap.
+        // TASK 032: the Loudspeaker is in the drawer's PROPAGANDA row, clear of END DAY on the rail.
+        await showBuildMenu(page);
         const [speakerButton, endDay] = await Promise.all(['build-loudspeaker', 'end-day'].map((a) => byAction(page, a).boundingBox()));
         expect(overlap(speakerButton, endDay)).toBe(false);
+        await closeBuildMenu(page);
         expect(s.menuLabels.loudspeaker).toBe('Loudspeaker\n250c · 1 AP');
 
         await flow.buildHq(page, s, center);

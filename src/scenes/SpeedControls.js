@@ -1,14 +1,11 @@
 import {SIMULATION_SPEEDS} from '../core/simulationClock.js';
 import {addProxy} from '../testShadow/TestProxy.js';
-
-const FILL = 0x37474f;
-const STROKE = 0x90a4ae;
-const SELECTED_STROKE = 0xffeb3b;
+import {HudButton} from './HudButton.js';
 
 /**
- * Night speed buttons. Presentation only: the clock owns the selected speed, and a
- * press is only a request. Nothing used during Day sits where they do on desktop,
- * so a late press at dawn can never land on END DAY.
+ * Night speed buttons, on the right rail. Presentation only: the clock owns the
+ * selected speed, and a press is only a request. Nothing used during Day sits where
+ * they do, so a late press at dawn can never land on END DAY.
  */
 export class SpeedControls {
     #scene;
@@ -23,28 +20,21 @@ export class SpeedControls {
     constructor(scene, onSpeed, positions) {
         this.#scene = scene;
         this.#buttons = SIMULATION_SPEEDS.map((speed, i) => {
-            const {x, y, width, height} = positions[i];
-            const rect = scene.add.rectangle(x, y, width, height, FILL).setDepth(4).setVisible(false);
-            const text = scene.add.text(x, y, `${speed}×`, {fontFamily: 'monospace', fontSize: '24px', color: '#ffffff'})
-                .setOrigin(0.5).setDepth(5).setVisible(false);
-            rect.on('pointerdown', () => onSpeed(speed));
-            return {speed, rect, text, proxy: null};
+            const button = new HudButton(scene, {...positions[i], fontSize: '24px'}, {text: `${speed}×`, onPress: () => onSpeed(speed)});
+            button.setVisible(false);
+            return {speed, button, proxy: null};
         });
     }
 
     setVisible(visible) {
-        for (const button of this.#buttons) {
-            const {speed, rect, text} = button;
-            if (visible === rect.visible) continue;
-            rect.setVisible(visible);
-            text.setVisible(visible);
-            if (visible) {
-                rect.setInteractive({useHandCursor: true});
-                button.proxy = addProxy(this.#scene, rect, `speed-${speed}`, {label: `Speed ${speed}x`});
-            } else {
-                rect.disableInteractive();
-                button.proxy.destroy();
-                button.proxy = null;
+        for (const entry of this.#buttons) {
+            const {speed, button} = entry;
+            if (visible === button.visible) continue;
+            button.setVisible(visible);
+            if (visible) entry.proxy = addProxy(this.#scene, button.rect, `speed-${speed}`, {label: `Speed ${speed}x`});
+            else {
+                entry.proxy?.destroy();
+                entry.proxy = null;
             }
         }
         if (visible) this.#refresh();
@@ -58,16 +48,16 @@ export class SpeedControls {
     /** The rendered buttons, for QA. */
     view() {
         return {
-            visible: this.#buttons[0].rect.visible,
-            selected: this.#buttons.find(({rect}) => rect.strokeColor === SELECTED_STROKE)?.speed ?? null,
-            labels: this.#buttons.map(({text}) => text.text),
+            visible: this.#buttons[0].button.visible,
+            selected: this.#buttons.find(({button}) => button.selected)?.speed ?? null,
+            labels: this.#buttons.map(({button}) => button.text.text),
         };
     }
 
     #refresh() {
-        for (const {speed, rect, proxy} of this.#buttons) {
+        for (const {speed, button, proxy} of this.#buttons) {
             const selected = speed === this.#speed;
-            rect.setStrokeStyle(3, selected ? SELECTED_STROKE : STROKE);
+            button.setSelected(selected);
             proxy?.set({selected});
         }
     }

@@ -29,7 +29,14 @@ export async function clickCanvasElement(locator, page) {
 /** Select a proxy by its stable action id (see addProxy's `action` param). */
 export const byAction = (page, action) => page.locator(`[data-action="${action}"]`);
 
-export const clickAction = (page, action) => clickCanvasElement(byAction(page, action), page);
+/** TASK 032: the build menu is a drawer on desktop too, so a player opens it with BUILD first. */
+export async function clickAction(page, action) {
+    const locator = byAction(page, action);
+    if (action.startsWith('build-') && await locator.count() > 0 && !(await locator.isVisible())) await clickAction(page, 'open-build');
+    return clickCanvasElement(locator, page);
+}
+
+const touchLayout = (page) => page.evaluate(() => window.__qa.getState().ui.layout === 'touch');
 
 /** Touch-tap a canvas element via its DOM proxy (requires hasTouch). Same passthrough idea as clickCanvasElement. */
 export async function tapAction(page, action) {
@@ -47,8 +54,17 @@ export async function showBuildMenu(page) {
     const open = byAction(page, 'open-build');
     if (await open.count() === 0) return;
     if (await page.evaluate(() => window.__qa.getState().ui.drawerOpen)) return;
-    await tapAction(page, 'open-build');
+    if (await touchLayout(page)) await tapAction(page, 'open-build');
+    else await clickAction(page, 'open-build');
     await expect.poll(() => page.evaluate(() => window.__qa.getState().ui.drawerOpen)).toBe(true);
+}
+
+/** Close the drawer again with BUILD, as a player would, if it is open. */
+export async function closeBuildMenu(page) {
+    if (!await page.evaluate(() => window.__qa.getState().ui.drawerOpen)) return;
+    if (await touchLayout(page)) await tapAction(page, 'open-build');
+    else await clickAction(page, 'open-build');
+    await expect.poll(() => page.evaluate(() => window.__qa.getState().ui.drawerOpen)).toBe(false);
 }
 
 /**

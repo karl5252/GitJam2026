@@ -1,20 +1,23 @@
 import Phaser from 'phaser';
 import {BARRACKS_LIMIT, FlagFailure, MAX_BARRACKS, MineFailure} from '../core/buildingPlacement.js';
-import {BARRACKS_TYPE, BUILDING_TYPES, REFIT_COST, ROAD_COST, getBuildingType} from '../core/buildingTypes.js';
+import {BUILDING_TYPES, REFIT_COST, ROAD_COST, getBuildingType} from '../core/buildingTypes.js';
 import {PlacementFailure} from '../core/grid.js';
 import {PowerStatus} from '../core/power.js';
 import {RoadFailure} from '../core/roads.js';
 import {WorkFlagFailure} from '../core/workers.js';
 import {Shift} from '../core/shiftCycle.js';
 import {addProxy} from '../testShadow/TestProxy.js';
+import {AudioSettingsPanel} from './AudioSettingsPanel.js';
 import {BuildingControls} from './BuildingControls.js';
 import {Command, EventBus, Hint, Hud, Notice, State} from './EventBus.js';
 import {GameOverLayer} from './GameOverLayer.js';
+import {BuildButton, HudButton, TONE} from './HudButton.js';
 import {NewspaperLayer} from './NewspaperLayer.js';
 import {audioFor} from '../audio/audio.js';
 import {OfficeMenuLayer} from './OfficeMenuLayer.js';
 import {SpeedControls} from './SpeedControls.js';
-import {currentLayout} from './hudLayout.js';
+import {DRAWER_ROWS, currentLayout} from './hudLayout.js';
+import {costText, shortfall} from './uiArt.js';
 
 const PLACEMENT_HINTS = {
     [Hint.POWER_WARNING]: 'LOW POWER: this stops every powered building. Press again to build',
@@ -64,9 +67,21 @@ const POWER_STATUS_LABELS = {
     [PowerStatus.LOW_POWER]: 'LOW POWER',
     [PowerStatus.BLACKOUT]: 'BLACKOUT',
 };
+const POWER_STATUS_COLORS = {
+    [PowerStatus.NORMAL]: '#c8e6c9',
+    [PowerStatus.LOW_POWER]: '#ffcc80',
+    [PowerStatus.BLACKOUT]: '#ef9a9a',
+};
 
-const IDLE_STROKE = 0x90a4ae;
-const SELECTED_STROKE = 0xffeb3b;
+/** The phase line's colour: Day 0 is not a Day, and Dusk and Night read at a glance. */
+const PHASE_COLORS = {
+    deployment: '#ffd54f',
+    [Shift.DAY]: '#c8e6c9',
+    [Shift.DUSK]: '#ffb74d',
+    [Shift.NIGHT]: '#90caf9',
+    [Shift.DEFEATED]: '#ef9a9a',
+};
+
 const DISABLED_ALPHA = 0.45;
 /**
  * A paused Day's gameplay buttons: dimmed but still readable and still pressable,
@@ -75,14 +90,19 @@ const DISABLED_ALPHA = 0.45;
  */
 export const PAUSED_ALPHA = DISABLED_ALPHA;
 const BAND_COLOR = 0x263238;
+const BAND_EDGE = 0x455a64;
+const PALETTE_COLOR = 0x1c262b;
 const DRAWER_COLOR = 0x1c262b;
 const BUTTON_DEPTH = 4;
 const LABEL_DEPTH = 5;
+const PALETTE_DEPTH = 5.5;
 const DRAWER_DEPTH = 8; // the drawer lifts its own buttons above it
+const TOOLTIP_DEPTH = 12;
 
 const signed = (n) => (n > 0 ? `+${n}` : `${n}`);
 const cost = ({cost: {credits, ap}}) => (ap ? `${credits}c · ${ap} AP` : `${credits}c`);
 
+/** The full name and price: the build button's tooltip, and what QA reads as its label. */
 const MENU_LABELS = {
     road: () => `Road\n${ROAD_COST.credits}c`,
     barracks: (type) => `Barracks 3x3\n${cost(type)}`,
@@ -97,10 +117,12 @@ const menuLabel = (id) => {
     if (MENU_LABELS[id]) return MENU_LABELS[id](type);
     return `${type.name} ${type.width}x${type.height}\n${type.cost.credits}c · ${type.cost.ap} AP`;
 };
+const priceOf = (id) => (id === 'road' ? {credits: ROAD_COST.credits, ap: ROAD_COST.ap ?? 0} : getBuildingType(id).cost);
 
 /**
- * Everything drawn in screen coordinates: resources, the shift, the build menu, the
- * selection's actions, speed and camera controls, hints and Game Over.
+ * Everything drawn in screen coordinates: the top status bar, the left command rail,
+ * the construction drawer, the selection's palette, the right rail's camera, speed
+ * and audio controls, hints, La Voz and Game Over. See hudLayout.js for where.
  *
  * It runs above GameScene, with its own camera, so the world camera cannot move it,
  * and a press on any interactive object here is captured before GameScene sees it.
@@ -117,16 +139,23 @@ export class HUDScene extends Phaser.Scene {
         this.ui = null; // everything that exists after Start
         this.menu = null;
         this.selection = null;
+        this.economy = null;
         this.drawerOpen = false;
+        this.held = {build: false, audio: false}; // what this HUD has asked the world to wait for
         this.reportOpen = false;
         this.menuSound = null;
         this.hasReport = false;
-        this.newsEnabled = false; // TASK 029: REPORT and the desktop panel open La Voz instead
-        this.toggleNarrow = false;
+        this.newsEnabled = false; // TASK 029: REPORT opens La Voz instead
         this.createTitle();
         this.events.once('shutdown', () => {
             this.officeMenu?.destroy();
             this.officeMenu = null;
+            for (const reason of Object.keys(this.held)) this.suspend(reason, false); // nothing stale outlives the HUD
+        });
+        // Escape closes the AUDIO panel, or else the drawer. GameScene hears it too, as before.
+        this.input.keyboard?.on('keydown-ESC', () => {
+            if (this.ui?.audioPanel?.open) this.ui.audioPanel.close();
+            else if (this.drawerOpen) this.setDrawerOpen(false);
         });
         // Leaving a control counts as this scene capturing that move, so GameScene would
         // not see it, and a preview would wait for the next one.
@@ -135,9 +164,14 @@ export class HUDScene extends Phaser.Scene {
         const handlers = {
             [State.PHASE]: (value) => this.onPhase(value),
             [State.SHIFT]: (value) => this.onShift(value),
-            [State.ECONOMY]: ({credits, ap}) => this.ui?.resources.setText(`Credits: ${credits}   AP: ${ap}`),
+            [State.ECONOMY]: (economy) => {
+                this.economy = economy;
+                this.ui?.resources.setText(`Credits: ${economy.credits}   AP: ${economy.ap}`);
+                this.renderMenu(); // what can be afforded changed
+            },
             [State.POLLUTION]: ({value, threat}) => this.ui?.pollution.setText(`Pollution ${value}\nThreat Level ${threat}`),
-            [State.POWER]: ({generation, demand, status}) => this.ui?.power.setText(`Power ${generation} / ${demand}\n${POWER_STATUS_LABELS[status]}`),
+            [State.POWER]: ({generation, demand, status}) => this.ui?.power.setText(`Power ${generation} / ${demand}\n${POWER_STATUS_LABELS[status]}`)
+                .setColor(POWER_STATUS_COLORS[status] ?? '#ffffff'),
             [State.SETTLEMENT]: (value) => this.onSettlement(value),
             [State.WAVE]: (value) => this.onWave(value),
             [State.MENU]: (value) => this.onMenu(value),
@@ -149,6 +183,8 @@ export class HUDScene extends Phaser.Scene {
             [State.SPEED]: ({speed}) => this.ui?.speed.setSpeed(speed),
             [State.GAME_OVER]: (report) => {
                 this.ui?.newspaper.hide(); // Game Over takes precedence
+                this.ui?.audioPanel?.close();
+                this.setDrawerOpen(false);
                 this.ui?.gameOver.show(report);
             },
             [State.NEWSPAPER]: (value) => this.onNewspaper(value),
@@ -195,7 +231,8 @@ export class HUDScene extends Phaser.Scene {
 
     /**
      * TASK 030's minimum control: SOUND ON / OFF (M on desktop), on the menu and in La
-     * Voz, the two screens every player sees. Not a HUD element; TASK 031 brings settings.
+     * Voz, the two screens every player sees. In play, AUDIO on the right rail opens
+     * the full settings (TASK 032).
      */
     soundButton({x, y, width, height}, depth) {
         const manager = audioFor(this.game);
@@ -219,6 +256,7 @@ export class HUDScene extends Phaser.Scene {
 
     update(_time, delta) {
         this.officeMenu?.update(delta);
+        this.ui?.audioPanel?.render(); // follows the M key
     }
 
     onPhase({phase}) {
@@ -243,32 +281,35 @@ export class HUDScene extends Phaser.Scene {
 
     createUi() {
         const {layout} = this;
-        const label = ({x, y, fontSize, originX, ...style}, color = '#ffffff') => this.add.text(x, y, '', {
-            fontFamily: 'monospace', fontSize, color, ...style,
+        const label = ({x, y, fontSize, originX, wrap, ...style}, color = '#ffffff') => this.add.text(x, y, '', {
+            fontFamily: 'monospace', fontSize, color, ...(wrap ? {wordWrap: {width: wrap}} : {}), ...style,
         }).setOrigin(originX, originX === 0.5 ? 0.5 : 0);
         const {text} = layout;
-        if (layout.touch) {
-            this.add.rectangle(0, 0, this.scale.width, layout.viewport.y, BAND_COLOR).setOrigin(0, 0);
-            this.add.rectangle(0, 0, layout.viewport.x, this.scale.height, BAND_COLOR).setOrigin(0, 0);
-            this.add.rectangle(layout.viewport.x + layout.viewport.width, 0, 200, this.scale.height, BAND_COLOR).setOrigin(0, 0);
+        for (const {x, y, width, height} of layout.bands) {
+            this.add.rectangle(x, y, width, height, BAND_COLOR).setOrigin(0, 0);
         }
+        // The top bar's lower edge, so the status bar reads as one strip.
+        this.add.rectangle(0, layout.bands[0].height - 2, this.scale.width, 2, BAND_EDGE).setOrigin(0, 0);
         this.ui = {
-            shift: label(text.shift, '#c8e6c9'),
-            resources: label(text.resources),
-            wave: label(text.wave).setVisible(false),
-            pollution: label(text.pollution),
+            shift: label(text.shift, PHASE_COLORS[Shift.DAY]).setFontStyle('bold'),
+            resources: label(text.resources).setFontStyle('bold'),
+            wave: label(text.wave, '#ef9a9a').setVisible(false),
+            pollution: label(text.pollution, '#dce775'),
             power: label(text.power),
             hint: label(text.hint, '#ffcc80').setVisible(false).setDepth(LABEL_DEPTH),
             settlement: label({...text.settlement, backgroundColor: '#263238', padding: {x: 8, y: 6}}).setVisible(false).setDepth(LABEL_DEPTH),
         };
+        this.ui.tooltip = this.add.text(0, 0, '', {
+            fontFamily: 'monospace', fontSize: '16px', color: '#ffffff', backgroundColor: '#101820', padding: {x: 6, y: 4},
+        }).setOrigin(0, 0.5).setDepth(TOOLTIP_DEPTH).setVisible(false);
+        this.createPalette();
+        this.createRail();
         this.createBuildMenu();
-        this.ui.cancel = this.button(layout.cancel, 'Cancel', 0x8e2b2b, () => EventBus.emit(Command.CANCEL));
-        this.ui.cancelProxy = null;
-        this.setCancelVisible(false);
-        this.ui.endDay = this.button(layout.endDay, layout.touch ? 'END\nDAY' : 'END DAY', 0x6d4c41, () => EventBus.emit(Command.END_DAY));
-        this.ui.endDayProxy = null;
-        this.ui.toggle = this.button(layout.toggle, '', 0x37474f, () => EventBus.emit(Command.TOGGLE_POWER));
+        this.ui.toggle = this.button({...layout.palette.slot(0), fontSize: layout.palette.fontSize}, '', TONE.neutral,
+            () => EventBus.emit(Command.TOGGLE_POWER), PALETTE_DEPTH + 0.5);
         this.ui.toggleProxy = null;
+        this.ui.speakersProxy = null;
+        this.ui.toggle.setVisible(false);
         this.ui.controls = new BuildingControls(this, {
             onFlag: () => EventBus.emit(Command.MOVE_FLAG),
             onResetFlag: () => EventBus.emit(Command.RESET_FLAG),
@@ -276,63 +317,82 @@ export class HUDScene extends Phaser.Scene {
             onRefit: () => EventBus.emit(Command.REFIT),
             onRepair: () => EventBus.emit(Command.REPAIR),
             onDisperse: () => EventBus.emit(Command.DISPERSE),
-        }, layout.actions);
+        }, layout.palette);
         this.ui.speed = new SpeedControls(this, (speed) => EventBus.emit(Command.SET_SPEED, {speed}), layout.speed);
-        this.ui.dayPause = this.button(layout.dayTime.pause, 'PAUSE', 0x37474f, () => EventBus.emit(Command.TOGGLE_DAY_PAUSE));
-        this.ui.daySpeed = this.button(layout.dayTime.speed, '1×', 0x37474f, () => EventBus.emit(Command.CYCLE_DAY_SPEED));
+        this.ui.dayPause = this.button(layout.dayTime.pause, 'PAUSE', TONE.neutral, () => EventBus.emit(Command.TOGGLE_DAY_PAUSE));
+        this.ui.daySpeed = this.button(layout.dayTime.speed, '1×', TONE.neutral, () => EventBus.emit(Command.CYCLE_DAY_SPEED));
         this.ui.dayPauseProxy = null;
         this.ui.daySpeedProxy = null;
-        this.showButton(this.ui.dayPause, false);
-        this.showButton(this.ui.daySpeed, false);
+        this.ui.dayPause.setVisible(false);
+        this.ui.daySpeed.setVisible(false);
         this.ui.gameOver = new GameOverLayer(this, () => EventBus.emit(Command.RESTART));
         this.ui.newspaper = new NewspaperLayer(this, () => EventBus.emit(Command.CLOSE_NEWSPAPER), {
             sound: (spec, depth) => this.soundButton(spec, depth),
         });
-        this.ui.readProxy = null;
+        // The desktop figures stay clickable: the panel opens La Voz too (REPORT is the button for it).
         this.ui.settlement.on('pointerdown', () => {
             if (this.newsEnabled && !this.layout.touch) EventBus.emit(Command.OPEN_NEWSPAPER);
         });
         this.createCameraControls();
+        this.createAudioControls();
+    }
+
+    /** Left rail: BUILD, CANCEL while placing, REPORT, END DAY. A slot is kept for PAPI DIRECTIVES. */
+    createRail() {
+        const {rail} = this.layout;
+        this.ui.build = this.button(rail.build, 'BUILD', TONE.go, () => this.setDrawerOpen(!this.drawerOpen));
+        this.ui.buildProxy = null;
+        this.ui.cancel = this.button(rail.cancel, 'CANCEL', TONE.stop, () => EventBus.emit(Command.CANCEL));
+        this.ui.cancelProxy = null;
+        this.ui.report = this.button(rail.report, 'REPORT', TONE.neutral, () => {
+            if (this.newsEnabled) EventBus.emit(Command.OPEN_NEWSPAPER); // TASK 029: the newspaper replaces the box
+            else this.setReportOpen(!this.reportOpen);
+        });
+        this.ui.report.text.setStyle({fontSize: '17px'});
+        this.ui.reportProxy = null;
+        this.ui.endDay = this.button(rail.endDay, 'END\nDAY', TONE.earth, () => EventBus.emit(Command.END_DAY));
+        this.ui.endDayProxy = null;
+        for (const button of [this.ui.build, this.ui.cancel, this.ui.report, this.ui.endDay]) button.setVisible(false);
+    }
+
+    /** The selection's palette: a panel with the object's name, HP and state, and its commands below. */
+    createPalette() {
+        const {panel, header} = this.layout.palette;
+        this.ui.palette = {
+            panel: this.add.rectangle(panel.x, panel.y, panel.width, panel.height, PALETTE_COLOR, 0.94).setOrigin(0, 0)
+                .setStrokeStyle(2, BAND_EDGE).setDepth(PALETTE_DEPTH).setVisible(false),
+            header: this.add.text(header.x, header.y, '', {
+                fontFamily: 'monospace', fontSize: header.fontSize, color: '#f8d88b', lineSpacing: header.lineSpacing,
+                wordWrap: {width: header.wrap},
+            }).setDepth(PALETTE_DEPTH + 0.1).setVisible(false),
+        };
     }
 
     /** By Day: pause or run the clock, and step through 1x, 2x and 4x. Night keeps its own buttons. */
     renderDayTime() {
         const {visible = false, paused = false, speed = 1} = this.menu?.dayTime ?? {};
         const {dayPause, daySpeed} = this.ui;
-        this.showButton(dayPause, visible);
-        this.showButton(daySpeed, visible);
-        dayPause.text.setText(paused ? 'PLAY' : 'PAUSE');
-        daySpeed.text.setText(`${speed}×`);
+        dayPause.setVisible(visible);
+        daySpeed.setVisible(visible);
+        dayPause.setLabel(paused ? 'PLAY' : 'PAUSE').setTone(paused ? TONE.go : TONE.neutral).setSelected(paused);
+        daySpeed.setLabel(`${speed}×`);
         this.ui.dayPauseProxy = this.syncProxy(this.ui.dayPauseProxy, dayPause, visible, 'day-pause', 'Pause Day');
         this.ui.daySpeedProxy = this.syncProxy(this.ui.daySpeedProxy, daySpeed, visible, 'day-speed', 'Day speed');
         this.ui.dayPauseProxy?.set({paused});
         this.ui.daySpeedProxy?.set({speed});
     }
 
-    button({x, y, width, height}, text, fill, onPress) {
-        const rect = this.add.rectangle(x, y, width, height, fill)
-            .setStrokeStyle(3, IDLE_STROKE)
-            .setInteractive({useHandCursor: true})
-            .setDepth(BUTTON_DEPTH);
-        const label = this.add.text(x, y, text, {
-            fontFamily: 'monospace',
-            fontSize: '20px',
-            color: '#ffffff',
-            align: 'center',
-        }).setOrigin(0.5).setDepth(LABEL_DEPTH);
-        rect.on('pointerdown', onPress);
-        rect.on('pointerover', () => audioFor(this.game).play('ui.hover'));
-        return {rect, text: label};
+    button(spec, text, tone, onPress, depth = BUTTON_DEPTH) {
+        return new HudButton(this, {fontSize: '20px', ...spec}, {text, tone, onPress, depth});
     }
 
     createCameraControls() {
         const {camera} = this.layout;
         const add = (spec, text, command, action, name) => {
-            const button = this.button(spec, text, 0x37474f, () => {
+            const button = this.button({...spec, fontSize: '20px'}, text, TONE.neutral, () => {
                 audioFor(this.game).play('ui.click');
                 EventBus.emit(command);
             });
-            button.text.setStyle({fontSize: '22px'});
             addProxy(this, button.rect, action, {label: name});
             return button;
         };
@@ -343,56 +403,97 @@ export class HUDScene extends Phaser.Scene {
         };
     }
 
-    createBuildMenu() {
-        const {layout} = this;
-        this.ui.buttons = {};
-        this.ui.proxies = {};
-        if (layout.touch) this.createDrawer();
-        for (const [id, spec] of Object.entries(layout.menu)) {
-            const button = this.button(spec, menuLabel(id), 0x37474f, () => this.pressMenu(id));
-            button.text.setStyle({fontSize: layout.touch ? '22px' : '17px', wordWrap: {width: spec.width - 6}});
-            if (layout.touch) {
-                button.rect.setDepth(DRAWER_DEPTH + 1);
-                button.text.setDepth(DRAWER_DEPTH + 2);
-            }
-            this.ui.buttons[id] = button;
-        }
+    /** AUDIO on the right rail opens the settings panel, when there is sound at all. */
+    createAudioControls() {
+        const manager = audioFor(this.game);
+        this.ui.audioPanel = null;
+        this.ui.audio = null;
+        if (!manager.enabled) return;
+        const {audio} = this.layout;
+        this.ui.audioPanel = new AudioSettingsPanel(this, manager, audio, {onChange: (open) => this.suspend('audio', open)});
+        this.ui.audio = this.button({...audio.open, fontSize: '20px'}, 'AUDIO', TONE.neutral, () => {
+            manager.play('ui.click');
+            this.setDrawerOpen(false);
+            this.ui.audioPanel.toggle();
+        });
+        addProxy(this, this.ui.audio.rect, 'audio-settings', {label: 'Audio settings'});
     }
 
-    createDrawer() {
-        const {drawer} = this.layout;
-        const panel = this.add.rectangle(drawer.panel.x, drawer.panel.y, drawer.panel.width, drawer.panel.height, DRAWER_COLOR, 0.96)
-            .setStrokeStyle(3, IDLE_STROKE)
+    createBuildMenu() {
+        const {layout} = this;
+        const {drawer} = layout;
+        this.ui.buttons = {};
+        this.ui.proxies = {};
+        this.menuText = {};
+        const panel = this.add.rectangle(drawer.panel.x, drawer.panel.y, drawer.panel.width, drawer.panel.height, DRAWER_COLOR, 0.97)
+            .setOrigin(0, 0)
+            .setStrokeStyle(3, 0x90a4ae)
             .setDepth(DRAWER_DEPTH)
             .setInteractive()
             .setVisible(false);
         panel.on('pointerdown', () => this.setDrawerOpen(false));
-        const headings = drawer.labels.map(({label, x, y}) => this.add.text(x, y, label, {fontFamily: 'monospace', fontSize: '22px', color: '#c8e6c9'})
-            .setDepth(DRAWER_DEPTH + 1)
-            .setVisible(false));
-        const open = this.button(drawer.open, 'BUILD', 0x2e7d32, () => this.setDrawerOpen(!this.drawerOpen));
-        const report = this.button(this.layout.report, 'REPORT', 0x37474f, () => {
-            if (this.newsEnabled) EventBus.emit(Command.OPEN_NEWSPAPER); // TASK 029: the newspaper replaces the box
-            else this.setReportOpen(!this.reportOpen);
-        });
-        report.rect.setVisible(false).disableInteractive();
-        report.text.setVisible(false).setStyle({fontSize: '18px'});
-        this.ui.drawer = {panel, headings, open, openProxy: null, report, reportProxy: null};
+        const headings = drawer.labels.map(({label, x, y}) => this.add.text(x, y, label, {
+            fontFamily: 'monospace', fontSize: drawer.headingFont, fontStyle: 'bold', color: '#c8e6c9',
+        }).setDepth(DRAWER_DEPTH + 1).setVisible(false));
+        this.ui.drawer = {panel, headings};
+        for (const [id, spec] of Object.entries(layout.menu)) {
+            this.menuText[id] = menuLabel(id);
+            const button = new BuildButton(this, id, spec, {
+                scale: drawer.scale, depth: DRAWER_DEPTH + 1, costFont: drawer.costFont, labelFont: drawer.labelFont,
+                onPress: () => this.pressMenu(id),
+                onHover: (hovered) => this.showTooltip(hovered ? button : null),
+            });
+            button.setVisible(false);
+            this.ui.buttons[id] = button;
+        }
     }
 
-    /** The drawer closes on any choice, so a press never lands on the world by surprise. */
+    /** Desktop hover: the full name and price beside the build button, kept on screen. */
+    showTooltip(button) {
+        const {tooltip} = this.ui;
+        if (!button || this.layout.touch || !button.visible) {
+            tooltip.setVisible(false);
+            return;
+        }
+        const {x, y, width} = button.view().box;
+        tooltip.setText(this.menuText[button.id]);
+        const right = x + width / 2 + 6;
+        const fits = right + tooltip.width <= this.scale.width;
+        tooltip.setOrigin(fits ? 0 : 1, 0.5).setPosition(fits ? right : x - width / 2 - 6, y).setVisible(true);
+    }
+
+    /**
+     * The choice is made, then the drawer closes and lets the world go, and placement
+     * begins. The press was the HUD's, so it never lands on the world as well.
+     */
     pressMenu(id) {
-        this.setDrawerOpen(false);
         EventBus.emit(id === 'road' ? Command.ROAD : Command.BUILD, {type: id});
+        this.setDrawerOpen(false);
+    }
+
+    /**
+     * TASK 032: an open drawer or AUDIO panel holds the world, each as its own reason,
+     * only on a change, so nothing is ever toggled blindly.
+     */
+    suspend(reason, on) {
+        if (this.held[reason] === on) return;
+        this.held[reason] = on;
+        EventBus.emit(Command.SUSPEND, {reason, on});
     }
 
     setDrawerOpen(open) {
         this.drawerOpen = open;
+        if (this.ui) this.suspend('build', open);
         if (this.ui?.drawer) {
             this.ui.drawer.panel.setVisible(open);
-            for (const heading of this.ui.drawer.headings) heading.setVisible(open);
+            // A category with nothing to offer on this map (no deposits, no protesters) shows no heading.
+            const offered = (id) => (id === 'road' ? this.menu?.road != null : Object.hasOwn(this.menu?.states ?? {}, id));
+            this.ui.drawer.headings.forEach((heading, i) => heading.setVisible(open && DRAWER_ROWS[i][1].some(offered)));
+            if (!open) this.ui.tooltip.setVisible(false);
+            if (open) this.ui.audioPanel?.close();
         }
         this.renderMenu();
+        this.renderPalette();
     }
 
     setReportOpen(open) {
@@ -400,9 +501,11 @@ export class HUDScene extends Phaser.Scene {
         this.ui.settlement.setVisible(open && this.hasReport);
     }
 
+    /** A press on the world closes the drawer, and on touch the settlement box. */
     onWorldPressed() {
-        if (!this.ui || !this.layout.touch) return;
-        this.setReportOpen(false);
+        if (!this.ui) return;
+        if (this.drawerOpen) this.setDrawerOpen(false);
+        if (this.layout.touch) this.setReportOpen(false);
     }
 
     // ---- State -------------------------------------------------------------
@@ -415,6 +518,7 @@ export class HUDScene extends Phaser.Scene {
     onShift({day, shift, seconds, paused, timed = false, fastForward = false, deployment = false}) {
         if (!this.ui) return;
         const pause = paused ? ' (paused)' : '';
+        this.ui.shift.setColor(paused ? '#fff59d' : PHASE_COLORS[deployment && shift === Shift.DAY ? 'deployment' : shift] ?? '#ffffff');
         if (!timed) {
             let text = `Day ${day} · Day Shift`;
             if (shift === Shift.DEFEATED) text = `Day ${day} · Headquarters destroyed`;
@@ -452,24 +556,27 @@ export class HUDScene extends Phaser.Scene {
         ].join('\n'));
         this.hasReport = true;
         if (!(this.newsEnabled && this.layout.touch)) this.setReportOpen(true); // on touch the newspaper replaces the box
+        this.renderRail();
         this.syncReadLaVoz();
     }
 
-    /** TASK 029: La Voz opens at dawn, and again through REPORT or READ LA VOZ. */
+    /** TASK 029: La Voz opens at dawn, and again through REPORT. */
     onNewspaper({enabled, open = false, reason = null, edition = null}) {
         this.newsEnabled = enabled;
         if (!this.ui) return;
         if (open && edition) {
             this.setReportOpen(this.reportOpen && !this.layout.touch);
             this.setDrawerOpen(false);
+            this.ui.audioPanel?.close();
             this.ui.newspaper.show(edition, {reason, touch: this.layout.touch});
         } else {
             this.ui.newspaper.hide();
         }
+        this.renderRail();
         this.syncReadLaVoz();
     }
 
-    /** Desktop: the settlement panel itself is the way in, by Day, while La Voz is closed. */
+    /** Desktop: the settlement panel itself still opens La Voz, by Day, while La Voz is closed. */
     syncReadLaVoz() {
         if (!this.ui) return;
         const panel = this.ui.settlement;
@@ -477,38 +584,37 @@ export class HUDScene extends Phaser.Scene {
             && Boolean(this.menu?.visible) && !this.ui.newspaper.open;
         if (active) panel.setInteractive({useHandCursor: true});
         else panel.disableInteractive();
-        this.ui.readProxy = this.syncProxy(this.ui.readProxy, {rect: panel}, active, 'show-report', 'READ LA VOZ');
     }
 
     onMenu(menu) {
         this.menu = menu;
         if (!this.ui) return;
-        if (!menu.visible) this.drawerOpen = false;
-        this.setDrawerOpen(this.drawerOpen);
-        this.setCancelVisible(menu.cancel);
-        this.renderEndDay();
+        this.setDrawerOpen(this.drawerOpen && menu.visible); // no drawer when construction is closed
         this.ui.speed.setVisible(menu.speed);
+        this.renderRail();
         this.renderDayTime();
-        this.renderDrawerButtons();
         this.syncReadLaVoz();
     }
 
-    renderDrawerButtons() {
-        const {drawer} = this.ui;
-        if (!drawer) return;
-        const {visible} = this.menu;
-        this.showButton(drawer.open, visible);
-        drawer.openProxy = this.syncProxy(drawer.openProxy, drawer.open, visible, 'open-build', 'Build');
-        const report = visible && this.hasReport;
-        this.showButton(drawer.report, report);
-        drawer.reportProxy = this.syncProxy(drawer.reportProxy, drawer.report, report, 'show-report', 'Report');
+    /** The rail's buttons follow the phase: BUILD and REPORT by Day, CANCEL while placing. */
+    renderRail() {
+        if (!this.ui || !this.menu) return;
+        const {visible, cancel} = this.menu;
+        const {build, report} = this.ui;
+        build.setVisible(visible).setSelected(this.drawerOpen);
+        this.ui.buildProxy = this.syncProxy(this.ui.buildProxy, build, visible, 'open-build', 'Build');
+        this.ui.buildProxy?.set({open: this.drawerOpen});
+        this.setCancelVisible(cancel);
+        this.renderEndDay();
+        const showReport = visible && this.hasReport;
+        report.setVisible(showReport).setLabel(this.newsEnabled ? 'LA VOZ' : 'REPORT');
+        const reportLabel = this.newsEnabled && !this.layout.touch ? 'READ LA VOZ' : 'Report';
+        this.ui.reportProxy = this.syncProxy(this.ui.reportProxy, report, showReport, 'show-report', reportLabel);
+        this.ui.reportProxy?.label(reportLabel);
     }
 
-    showButton({rect, text}, visible) {
-        rect.setVisible(visible);
-        text.setVisible(visible);
-        if (visible) rect.setInteractive({useHandCursor: true});
-        else rect.disableInteractive();
+    showButton(button, visible) {
+        button.setVisible(visible);
     }
 
     syncProxy(proxy, button, visible, action, label) {
@@ -523,103 +629,104 @@ export class HUDScene extends Phaser.Scene {
     renderMenu() {
         if (!this.ui || !this.menu) return;
         const {visible, states, selected, road, paused = false} = this.menu;
-        const shown = visible && (!this.layout.touch || this.drawerOpen);
+        const shown = visible && this.drawerOpen;
+        this.ui.build?.setSelected(this.drawerOpen && visible);
+        this.ui.buildProxy?.set({open: this.drawerOpen});
         for (const [id, button] of Object.entries(this.ui.buttons)) {
             const isRoad = id === 'road';
-            if (!isRoad && !Object.hasOwn(states, id)) {
-                this.showButton(button, false);
+            if ((!isRoad && !Object.hasOwn(states, id)) || (isRoad && road === null)) {
+                button.setVisible(false);
                 continue;
             }
-            if (isRoad && road === null) {
-                this.showButton(button, false);
-                continue;
-            }
-            this.showButton(button, shown);
+            button.setVisible(shown);
             const state = isRoad ? road.state : states[id];
             const isSelected = selected === id;
-            const alpha = state === 'available' && !paused ? 1 : DISABLED_ALPHA;
-            button.rect.setAlpha(alpha).setStrokeStyle(3, isSelected ? SELECTED_STROKE : IDLE_STROKE);
-            button.text.setAlpha(alpha);
+            const price = priceOf(id);
+            button.render({state, selected: isSelected, paused, price: costText(price), lacks: shortfall(price, this.economy)});
             if (state === 'built') {
                 const type = getBuildingType(id);
-                button.text.setText(`${type.name} ${type.width}x${type.height}\nBUILT`);
-            }
+                this.menuText[id] = `${type.name} ${type.width}x${type.height}\nBUILT`;
+            } else this.menuText[id] = menuLabel(id);
             if (!visible) {
                 this.ui.proxies[id]?.destroy();
                 delete this.ui.proxies[id];
                 continue;
             }
             this.ui.proxies[id] ??= addProxy(this, button.rect, `build-${id}`, {label: isRoad ? 'Road' : BUILDING_TYPES[id].name});
-            this.ui.proxies[id].set({selected: isSelected, state, paused}).show(shown);
+            const lacks = shortfall(price, this.economy);
+            this.ui.proxies[id].set({selected: isSelected, state, paused, affordable: lacks === null}).show(shown);
         }
     }
 
     renderEndDay() {
         const {visible, enabled} = this.menu.endDay;
-        const {rect, text} = this.ui.endDay;
-        this.showButton(this.ui.endDay, visible);
-        const alpha = enabled ? 1 : DISABLED_ALPHA;
-        rect.setAlpha(alpha);
-        text.setAlpha(alpha);
-        this.ui.endDayProxy = this.syncProxy(this.ui.endDayProxy, this.ui.endDay, visible, 'end-day', 'End Day');
+        const {endDay} = this.ui;
+        endDay.setVisible(visible).setAlpha(enabled ? 1 : DISABLED_ALPHA);
+        this.ui.endDayProxy = this.syncProxy(this.ui.endDayProxy, endDay, visible, 'end-day', 'End Day');
         this.ui.endDayProxy?.set({enabled});
     }
 
     setCancelVisible(visible) {
-        this.showButton(this.ui.cancel, visible);
+        this.ui.cancel.setVisible(visible);
         this.ui.cancelProxy = this.syncProxy(this.ui.cancelProxy, this.ui.cancel, visible, 'cancel-placement', 'Cancel');
     }
 
     onSelection(selection) {
         this.selection = selection;
         if (!this.ui) return;
+        this.renderPalette();
+    }
+
+    /**
+     * The palette: the selection's switch first (power, or HQ's speakers), then the
+     * commands BuildingControls stacks below it. Hidden while the drawer is open, so
+     * the two never overlap; the selection itself is kept.
+     */
+    renderPalette() {
+        const selection = this.selection;
+        if (!this.ui || !selection) return;
         const {building, canFlag, workers, sent, canDemolish, confirmDemolish, refitTo, switchable, paused = false, repair = null, disperse = null} = selection;
-        this.ui.controls.update(building, {canFlag, workers, sent, canDemolish, confirmDemolish, refitTo, paused, repair, disperse});
-        const narrow = this.layout.touch || building?.type === BARRACKS_TYPE;
         const speakers = selection.speakers ?? null; // TASK 028: HQ's one switch for every Loudspeaker
-        if (switchable || speakers) this.layoutToggle(narrow);
-        this.showButton(this.ui.toggle, switchable || Boolean(speakers));
-        if (!speakers) {
+        const blocked = this.drawerOpen;
+        const hasSwitch = !blocked && (switchable || Boolean(speakers));
+        const quiet = {canFlag: false, workers, sent, canDemolish: false, confirmDemolish, refitTo: null, paused, repair: null, disperse: null};
+        const used = this.ui.controls.update(building, blocked ? quiet : {canFlag, workers, sent, canDemolish, confirmDemolish, refitTo, paused, repair, disperse},
+            hasSwitch ? 1 : 0);
+        this.ui.toggle.setVisible(hasSwitch);
+        const visible = hasSwitch || used > 0;
+        this.ui.palette.panel.setVisible(visible);
+        this.ui.palette.header.setVisible(visible).setText(visible ? this.paletteHeader(selection) : '');
+        if (!speakers || blocked) {
             this.ui.speakersProxy?.destroy();
             this.ui.speakersProxy = null;
         }
-        if (!switchable) {
+        if (!switchable || blocked) {
             this.ui.toggleProxy?.destroy();
             this.ui.toggleProxy = null;
-            if (speakers) this.renderSpeakers(speakers, paused);
+            if (speakers && !blocked) this.renderSpeakers(speakers, paused);
             return;
         }
-        const label = building.enabled ? 'Switch OFF' : 'Switch ON';
-        this.ui.toggle.text.setText(narrow ? label.replace(' ', '\n') : `${building.id}\n${label}`);
-        const alpha = paused ? PAUSED_ALPHA : 1;
-        this.ui.toggle.rect.setAlpha(alpha);
-        this.ui.toggle.text.setAlpha(alpha);
+        this.ui.toggle.setLabel(building.enabled ? 'SWITCH\nOFF' : 'SWITCH\nON').setTone(building.enabled ? TONE.on : TONE.neutral)
+            .setAlpha(paused ? PAUSED_ALPHA : 1);
         this.ui.toggleProxy ??= addProxy(this, this.ui.toggle.rect, 'toggle-power', {label: 'Toggle power'});
         this.ui.toggleProxy.set({target: building.id, enabled: building.enabled, paused});
     }
 
-    /** HQ selected with a tower standing: the power switch's place holds SPEAKERS ON / OFF. */
-    renderSpeakers({on}, paused) {
-        this.ui.toggle.text.setText(on ? 'SPEAKERS\nON' : 'SPEAKERS\nOFF');
-        const alpha = paused ? PAUSED_ALPHA : 1;
-        this.ui.toggle.rect.setAlpha(alpha);
-        this.ui.toggle.text.setAlpha(alpha);
-        this.ui.speakersProxy ??= addProxy(this, this.ui.toggle.rect, 'loudspeakers', {label: 'Loudspeakers'});
-        this.ui.speakersProxy.label(on ? 'SPEAKERS ON' : 'SPEAKERS OFF').set({enabled: on, paused});
+    /** Name, HP and state, where there are any. */
+    paletteHeader({building, disperse}) {
+        if (!building) return disperse ? 'PROTEST\nblocking a road' : '';
+        const type = getBuildingType(building.type);
+        const name = (building.role === 'rocket' ? 'Rocket Barracks' : type.name).toUpperCase();
+        const state = type.switchable === false ? null : !building.enabled ? 'OFF' : building.powered ? 'ON' : 'UNPOWERED';
+        return [name, `HP ${building.hp}/${building.maxHp}`, ...(state ? [state] : [])].join('\n');
     }
 
-    /** A Barracks shares the row with RESET FLAG. A proxy keeps the size it was made with, so it goes too. */
-    layoutToggle(narrow) {
-        if (narrow === this.toggleNarrow) return;
-        this.toggleNarrow = narrow;
-        const {x, y, width, height} = narrow ? this.layout.narrowToggle : this.layout.toggle;
-        const {rect, text} = this.ui.toggle;
-        rect.setPosition(x, y).setSize(width, height);
-        text.setPosition(x, y);
-        this.ui.toggleProxy?.destroy();
-        this.ui.toggleProxy = null;
-        this.ui.speakersProxy?.destroy();
-        this.ui.speakersProxy = null;
+    /** HQ selected with a tower standing: the switch's slot holds SPEAKERS ON / OFF. */
+    renderSpeakers({on}, paused) {
+        this.ui.toggle.setLabel(on ? 'SPEAKERS\nON' : 'SPEAKERS\nOFF').setTone(on ? TONE.on : TONE.neutral)
+            .setAlpha(paused ? PAUSED_ALPHA : 1);
+        this.ui.speakersProxy ??= addProxy(this, this.ui.toggle.rect, 'loudspeakers', {label: 'Loudspeakers'});
+        this.ui.speakersProxy.label(on ? 'SPEAKERS ON' : 'SPEAKERS OFF').set({enabled: on, paused});
     }
 
     // ---- QA ----------------------------------------------------------------
@@ -632,12 +739,14 @@ export class HUDScene extends Phaser.Scene {
             ui: {
                 titleVisible: this.title.visible,
                 startVisible: this.startButton.visible,
-                cancelVisible: ui ? ui.cancel.rect.visible : false,
-                endDayVisible: ui ? ui.endDay.rect.visible : false,
-                buildMenuVisible: ui ? (this.layout.touch ? ui.drawer.open.rect.visible : Object.values(ui.buttons).some(({rect}) => rect.visible)) : false,
-                toggleVisible: ui ? ui.toggle.rect.visible : false,
+                cancelVisible: ui ? ui.cancel.visible : false,
+                endDayVisible: ui ? ui.endDay.visible : false,
+                buildMenuVisible: ui ? ui.build.visible : false,
+                toggleVisible: ui ? ui.toggle.visible : false,
                 hintVisible: ui ? ui.hint.visible : false,
                 drawerOpen: this.drawerOpen,
+                paletteVisible: ui ? ui.palette.panel.visible : false,
+                audioOpen: Boolean(ui?.audioPanel?.open),
                 newspaperOpen: Boolean(ui?.newspaper.open),
                 layout: this.layout.touch ? 'touch' : 'desktop',
             },
@@ -651,20 +760,29 @@ export class HUDScene extends Phaser.Scene {
             speedView: ui ? ui.speed.view() : null,
             // How dimmed each gameplay button is: 1, or PAUSED_ALPHA in a paused Day.
             actionAlphaView: ui ? {
-                menu: Object.fromEntries(Object.entries(ui.buttons).filter(([, btn]) => btn.rect.visible).map(([id, btn]) => [id, btn.rect.alpha])),
-                toggle: ui.toggle.rect.visible ? ui.toggle.rect.alpha : null,
-                endDay: ui.endDay.rect.visible ? ui.endDay.rect.alpha : null,
-                dayPause: ui.dayPause.rect.visible ? ui.dayPause.rect.alpha : null,
+                menu: Object.fromEntries(Object.entries(ui.buttons).filter(([, btn]) => btn.visible).map(([id, btn]) => [id, btn.rect.alpha])),
+                toggle: ui.toggle.visible ? ui.toggle.rect.alpha : null,
+                endDay: ui.endDay.visible ? ui.endDay.rect.alpha : null,
+                dayPause: ui.dayPause.visible ? ui.dayPause.rect.alpha : null,
             } : null,
             dayTimeView: ui ? {
-                visible: ui.dayPause.rect.visible, pause: ui.dayPause.text.text, speed: ui.daySpeed.text.text,
+                visible: ui.dayPause.visible, pause: ui.dayPause.text.text, speed: ui.daySpeed.text.text,
             } : null,
             buildingControlsView: ui ? ui.controls.view() : null,
             placementHint: ui ? ui.hint.text : null,
             hudView: textView(ui?.resources),
+            // The full name and price of each offered button: its tooltip and accessible description.
             menuLabels: ui && this.menu
-                ? Object.fromEntries(Object.entries(ui.buttons).filter(([id]) => Object.hasOwn(this.menu.states, id)).map(([id, b]) => [id, b.text.text]))
+                ? Object.fromEntries(Object.keys(ui.buttons).filter((id) => Object.hasOwn(this.menu.states, id)).map((id) => [id, this.menuText[id]]))
                 : null,
+            // TASK 032: the build buttons as drawn, the palette and the audio settings.
+            buildButtonViews: ui ? Object.fromEntries(Object.entries(ui.buttons).map(([id, b]) => [id, b.view()])) : null,
+            paletteView: ui ? {
+                visible: ui.palette.panel.visible,
+                header: ui.palette.header.visible ? ui.palette.header.text : null,
+                toggle: ui.toggle.visible ? {label: ui.toggle.text.text, box: ui.toggle.box()} : null,
+            } : null,
+            audioSettingsView: ui?.audioPanel ? ui.audioPanel.view() : null,
         };
     }
 }

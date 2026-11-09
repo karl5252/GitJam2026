@@ -32,15 +32,17 @@ async function damagedHq(page, flow) {
 const MIN_TOUCH = 44; // CSS px, as every other touch control
 
 /**
- * Both icon buttons share the old Demolish slot: REPAIR left, DESTROY right. Squares
- * of 48 logical px on desktop and 90 on touch, side by side and never overlapping.
+ * TASK 032: both icon buttons are squares in the selection palette. On desktop they
+ * share one slot, REPAIR left and DESTROY right, 56 logical px each; on touch each
+ * has its own slot, 88 px, REPAIR above DESTROY. Never overlapping.
  */
 function expectPair({repairBox, demolishBox}, touchLayout) {
-    const size = touchLayout ? 90 : 48;
+    const size = touchLayout ? 88 : 56;
     expect([repairBox.width, repairBox.height, demolishBox.width, demolishBox.height]).toEqual([size, size, size, size]);
-    expect(repairBox.y).toBe(demolishBox.y);
-    expect(demolishBox.x - repairBox.x).toBeGreaterThanOrEqual(size + 4);
-    expect(demolishBox.x - repairBox.x).toBeLessThanOrEqual(size + 16);
+    const [along, across] = touchLayout ? ['y', 'x'] : ['x', 'y'];
+    expect(repairBox[across]).toBe(demolishBox[across]);
+    expect(demolishBox[along] - repairBox[along]).toBeGreaterThanOrEqual(size + 4);
+    expect(demolishBox[along] - repairBox[along]).toBeLessThanOrEqual(size + 16);
 }
 
 /** On a phone, each shown button's real rendered hit box is at least 44x44 CSS px, and none overlap. */

@@ -2,6 +2,7 @@ import Phaser from 'phaser';
 import {preloadArt, ART, artKey} from './SpriteArt.js';
 import {preloadOfficeArt, filterOfficeArt} from './OfficeMenuArt.js';
 import {KILLDOZER} from './killdozerIcon.js';
+import {UI_ART} from './uiArt.js';
 import {filterNewspaperArt, preloadNewspaperArt} from './newspaperArt.js';
 import {preloadEffects} from '../audio/audio.js';
 import {filterCombatFx, preloadCombatFx} from './CombatFxLayer.js';
@@ -19,6 +20,7 @@ export class BootScene extends Phaser.Scene {
         preloadArt(this);
         preloadOfficeArt(this);
         this.load.image(KILLDOZER.key, KILLDOZER.path); // the DESTROY icon
+        for (const {key, path} of Object.values(UI_ART)) this.load.image(key, path); // TASK 032: button frames, the wrench
         preloadNewspaperArt(this); // La Voz's photographs
         preloadEffects(this); // TASK 030: effects and voices; music follows the first gesture
         preloadCombatFx(this); // TASK 031: the three explosion strips
@@ -36,6 +38,9 @@ export class BootScene extends Phaser.Scene {
         filterNewspaperArt(this, nearest);
         filterCombatFx(this, nearest);
         if (nearest !== undefined && this.textures.exists(KILLDOZER.key)) this.textures.get(KILLDOZER.key).setFilter?.(nearest);
+        for (const {key} of Object.values(UI_ART)) {
+            if (nearest !== undefined && this.textures.exists(key)) this.textures.get(key).setFilter?.(nearest);
+        }
         this.scene.start('game');
     }
 }

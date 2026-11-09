@@ -1,26 +1,22 @@
 import {REFIT_COST} from '../core/buildingTypes.js';
 import {addProxy} from '../testShadow/TestProxy.js';
-import {audioFor} from '../audio/audio.js';
+import {HudButton, TONE} from './HudButton.js';
 import {KILLDOZER, killdozerPlacement} from './killdozerIcon.js';
+import {UI_ART, WRENCH_VISIBLE, fitArt} from './uiArt.js';
 
 const PAUSED_ALPHA = 0.45; // as the HUD's dimmed buttons: readable, pressable, refused in the domain
-const STROKE = 0x90a4ae;
-const FLAG_FILL = 0x37474f;
-const DEMOLISH_FILL = 0x8e2b2b;
-const CONFIRM_FILL = 0xe53935;
-const CONFIRM_STROKE = 0xffeb3b;
-const REPAIR_FILL = 0x2e7d32;
-const STOP_FILL = 0xb71c1c;
 const ICON_INK = 0xffffff;
 const TOOLTIP_STYLE = {fontFamily: 'monospace', fontSize: '16px', color: '#ffffff', backgroundColor: '#263238', padding: {x: 6, y: 3}};
+const DEPTH = 6;
 
 /**
- * What a selected building offers besides its power switch: Demolish during Day,
- * and for a Barracks its rally flag and, once it has one, RESET FLAG, in Day and
- * Night, and a paid refit during Day. HQ's work flag uses the same two flag buttons,
- * labelled for its workers. Presentation only, and where each button
- * goes is the layout's business. On desktop Refit sits where Speed does at Night, so
- * a late press at dawn can land on it, which is one more reason it takes two presses.
+ * What a selected object offers, in the palette beside the left rail (TASK 032): only
+ * the commands it accepts, stacked in a fixed order from the slot the caller gives,
+ * after its power or speaker switch. Presentation only; what each press means is
+ * decided elsewhere, and where the palette is, is the layout's business.
+ *
+ *   SET / MOVE FLAG (SEND WORKERS / MOVE FLAG on HQ), RESET FLAG (RECALL / SEND
+ *   WORKERS on HQ), REFIT, REPAIR / STOP REPAIR, DESTROY, and DISPERSE for a protest.
  *
  * Demolishing a real building takes two presses, because nothing refunds a slip.
  * The first arms the button for that one building, and only the second acts. Any
@@ -28,14 +24,15 @@ const TOOLTIP_STYLE = {fontFamily: 'monospace', fontSize: '16px', color: '#fffff
  * gates take one press, for fast base editing. A refit works the same way, because
  * it costs Credits and AP, and arming one disarms the other.
  *
- * DESTROY and REPAIR are compact square icon buttons, side by side in the Demolish
- * slot: the Killdozer, red, and a wrench, green; STOP REPAIR is the wrench crossed
- * out on red. Each has an accessible name and, on hover, a tooltip; an armed
- * DESTROY keeps its CONFIRM tooltip showing. REPAIR is dimmed, but still pressable
- * so the reason shows, when no worker is free. The whole square is the hit area.
+ * DESTROY and REPAIR are icon buttons: the Killdozer on red and the supplied wrench
+ * on green; STOP REPAIR is the wrench crossed out on red. On desktop they share one
+ * slot, side by side; on touch each has its own. Each has an accessible name and, on
+ * hover, a tooltip; an armed DESTROY keeps its CONFIRM tooltip showing. REPAIR is
+ * dimmed, but still pressable so the reason shows, when no worker is free.
  */
 export class BuildingControls {
     #scene;
+    #layout;
     #paused = false;
     #flag;
     #reset;
@@ -54,37 +51,43 @@ export class BuildingControls {
     #disperse;
     #tooltip;
     #hovered = null;
+    #used = 0;
 
     /**
-     * @param {{onFlag: () => void, onResetFlag: () => void, onDemolish: () => void, onRefit: () => void, onRepair: () => void,
-     *          onDisperse?: () => void}} handlers
-     * @param {{flag, reset, demolish, refit, repair, disperse?}} positions each {x, y, width, height}
+     * @param {{onFlag, onResetFlag, onDemolish, onRefit, onRepair, onDisperse?}} handlers
+     * @param {{slot: (i: number) => {x, y, width, height}, pair: boolean, icon: {width, height}, fontSize: string}} palette
      */
-    constructor(scene, {onFlag, onResetFlag, onDemolish, onRefit, onRepair, onDisperse}, {flag, reset, demolish, refit, repair, disperse}) {
+    constructor(scene, {onFlag, onResetFlag, onDemolish, onRefit, onRepair, onDisperse}, palette) {
         this.#scene = scene;
-        this.#tooltip = scene.add.text(0, 0, '', TOOLTIP_STYLE).setOrigin(0.5, 1).setDepth(9).setVisible(false);
-        this.#flag = this.#button(flag, FLAG_FILL, 'set-flag', 'Set flag', onFlag);
-        this.#reset = this.#button(reset, FLAG_FILL, 'reset-flag', 'Reset flag', onResetFlag);
+        this.#layout = palette;
+        this.#tooltip = scene.add.text(0, 0, '', TOOLTIP_STYLE).setOrigin(0.5, 1).setDepth(12).setVisible(false);
+        const at = {...palette.slot(0), fontSize: palette.fontSize};
+        this.#flag = this.#button(at, TONE.neutral, 'set-flag', 'Set flag', onFlag);
+        this.#reset = this.#button(at, TONE.neutral, 'reset-flag', 'Reset flag', onResetFlag);
         this.#reset.text.setText('RESET\nFLAG');
         this.#onDemolish = onDemolish;
         this.#onRefit = onRefit;
-        this.#demolish = this.#iconButton(demolish, DEMOLISH_FILL, 'demolish', 'DESTROY', () => this.#pressDemolish(), this.#killdozer(demolish));
-        this.#refit = this.#button(refit, FLAG_FILL, 'refit', 'Refit Barracks', () => this.#pressRefit());
-        this.#repair = this.#iconButton(repair, REPAIR_FILL, 'repair', 'REPAIR', () => onRepair?.(), scene.add.graphics());
+        const square = {...at, ...palette.icon};
+        this.#demolish = this.#iconButton(square, TONE.danger, 'demolish', 'DESTROY', () => this.#pressDemolish(), this.#killdozer(square));
+        this.#refit = this.#button({...at, fontSize: '14px'}, TONE.neutral, 'refit', 'Refit Barracks', () => this.#pressRefit());
+        this.#repair = this.#iconButton(square, TONE.go, 'repair', 'REPAIR', () => onRepair?.(), this.#wrench(square));
+        this.#repair.cross = scene.add.graphics().setDepth(DEPTH + 0.3).setVisible(false);
         // TASK 027.1: shown only while a protest is selected, when no building action is.
-        this.#disperse = disperse ? this.#button(disperse, REPAIR_FILL, 'disperse', 'DISPERSE', () => onDisperse?.()) : null;
+        this.#disperse = this.#button({...at, fontSize: '14px'}, TONE.go, 'disperse', 'DISPERSE', () => onDisperse?.());
         this.#paintDemolish();
     }
 
     /**
      * @param {{id: string, flag?: object|null} | null} building the selected building, if any
-     * @param {{canFlag: boolean, workers: boolean, canDemolish: boolean, confirmDemolish: boolean, refitTo: string|null}} options
+     * @param {{canFlag, workers, sent, canDemolish, confirmDemolish, refitTo, paused, repair, disperse}} options
      *   workers - the flag is HQ's work flag
      *   refitTo - the role a refit would give this building, or null when it cannot have one
      *   repair - {ordered, enabled, price} while REPAIR or STOP REPAIR applies, otherwise null
      *   disperse - {groupId, ordered, enabled} while a protest is selected, otherwise null
+     * @param {number} start the first palette slot these buttons may use
+     * @returns {number} the slots used
      */
-    update(building, {canFlag, workers, sent = true, canDemolish, confirmDemolish, refitTo, paused = false, repair = null, disperse = null}) {
+    update(building, {canFlag, workers, sent = true, canDemolish, confirmDemolish, refitTo, paused = false, repair = null, disperse = null}, start = 0) {
         this.#paused = paused;
         this.#targetId = canDemolish ? building.id : null;
         this.#confirm = confirmDemolish;
@@ -92,17 +95,46 @@ export class BuildingControls {
         this.#refitRole = refitTo;
         this.#repairState = repair;
         if (this.#armedId !== this.#targetId || this.#refitArmedId !== this.#refitTargetId) this.disarm();
+
+        const showReset = canFlag && building.flag !== null;
+        const showRepair = Boolean(repair);
+        let slot = start;
+        const place = (button, shown) => {
+            if (shown) this.#moveTo(button, this.#layout.slot(slot++));
+        };
+        place(this.#flag, canFlag);
+        place(this.#reset, showReset);
+        place(this.#refit, Boolean(refitTo));
+        if (this.#layout.pair) {
+            // One slot for both, REPAIR on the left and DESTROY on the right, whichever shows.
+            if (showRepair || canDemolish) {
+                const {x, y, width} = this.#layout.slot(slot++);
+                const {width: size} = this.#layout.icon;
+                this.#moveTo(this.#repair, {x: x - width / 2 + size / 2, y});
+                this.#moveTo(this.#demolish, {x: x + width / 2 - size / 2, y});
+            }
+        } else {
+            // Stacked: DESTROY always sits just below REPAIR's slot, shown or not, so the two keep their order.
+            if (showRepair) this.#moveTo(this.#repair, this.#layout.slot(slot));
+            if (showRepair || canDemolish) this.#moveTo(this.#demolish, this.#layout.slot(slot + (showRepair ? 1 : 0)));
+            slot += (showRepair ? 1 : 0) + (canDemolish ? 1 : 0);
+        }
+        place(this.#disperse, Boolean(disperse));
+        this.#used = slot - start;
+
         this.#show(this.#flag, canFlag, building?.id);
-        this.#show(this.#reset, canFlag && building.flag !== null, building?.id);
+        this.#show(this.#reset, showReset, building?.id);
         this.#show(this.#demolish, canDemolish, building?.id);
         this.#show(this.#refit, Boolean(refitTo), building?.id);
         this.#paintRefit();
         this.#paintDemolish();
         if (canFlag) this.#labelFlags(building.flag, workers, sent);
-        this.#show(this.#repair, Boolean(repair), building?.id);
+        this.#show(this.#repair, showRepair, building?.id);
         if (repair) this.#paintRepair(repair);
-        if (this.#disperse) this.#paintDisperse(disperse);
+        else this.#repair.cross.setVisible(false);
+        this.#paintDisperse(disperse);
         this.#refreshTooltip();
+        return this.#used;
     }
 
     /** DISPERSE on green, CANCEL DISPERSE on red; dimmed, still pressable for its reason, when it can only be refused. */
@@ -110,36 +142,34 @@ export class BuildingControls {
         const button = this.#disperse;
         button.label = disperse?.ordered ? 'CANCEL DISPERSE' : 'DISPERSE';
         button.text.setText(disperse?.ordered ? 'CANCEL\nDISPERSE' : 'DISPERSE');
-        button.rect.setFillStyle(disperse?.ordered ? STOP_FILL : REPAIR_FILL);
+        button.setTone(disperse?.ordered ? TONE.stop : TONE.go);
         this.#show(button, Boolean(disperse), disperse?.groupId);
         if (!disperse) return;
-        const alpha = (disperse.enabled ? 1 : 0.45) * (this.#paused ? PAUSED_ALPHA : 1);
-        button.rect.setAlpha(alpha);
-        button.text.setAlpha(alpha);
+        button.setAlpha((disperse.enabled ? 1 : 0.45) * (this.#paused ? PAUSED_ALPHA : 1));
         button.proxy?.label(button.label).set({ordered: disperse.ordered, enabled: disperse.enabled});
     }
 
-    /** A wrench on green; STOP REPAIR, the wrench crossed out on red. Dimmed when a press can only be refused. */
+    /** The wrench on green; STOP REPAIR, the wrench crossed out on red. Dimmed when a press can only be refused. */
     #paintRepair({ordered, enabled}) {
-        const {rect, icon, spec} = this.#repair;
-        rect.setFillStyle(ordered ? STOP_FILL : REPAIR_FILL);
-        drawWrench(icon, spec, ordered);
+        const button = this.#repair;
+        button.setTone(ordered ? TONE.stop : TONE.go);
         const alpha = enabled && !this.#paused ? 1 : PAUSED_ALPHA;
-        rect.setAlpha(alpha);
-        icon.setAlpha(alpha);
-        this.#repair.label = ordered ? 'STOP REPAIR' : 'REPAIR';
-        this.#repair.proxy?.label(this.#repair.label).set({ordered, enabled});
+        button.setAlpha(alpha);
+        drawCross(button.cross, button.box(), ordered);
+        button.cross.setVisible(ordered && button.visible).setAlpha(alpha);
+        button.label = ordered ? 'STOP REPAIR' : 'REPAIR';
+        button.proxy?.label(button.label).set({ordered, enabled});
     }
 
     /** HQ's second button recalls a squad that is out, and sends one that is home to the flag already down. */
     #labelFlags(flag, workers, sent) {
         if (workers) this.#flag.text.setText(flag ? 'MOVE\nFLAG' : 'SEND\nWORKERS');
-        else this.#flag.text.setText(flag ? 'Move\nflag' : 'Set\nflag');
+        else this.#flag.text.setText(flag ? 'MOVE\nFLAG' : 'SET\nFLAG');
         if (!workers) this.#reset.text.setText('RESET\nFLAG');
         else this.#reset.text.setText(sent ? 'RECALL\nWORKERS' : 'SEND\nWORKERS');
     }
 
-    /** Back to a plain Demolish button. Safe to call at any time. */
+    /** Back to a plain DESTROY button. Safe to call at any time. */
     disarm() {
         if (this.#armedId === null && this.#refitArmedId === null) return;
         this.#armedId = null;
@@ -151,30 +181,31 @@ export class BuildingControls {
 
     /** The rendered buttons, for QA. Icon buttons report their state names as labels. */
     view() {
-        const box = ({rect}) => ({x: rect.x, y: rect.y, width: rect.width, height: rect.height});
+        const box = (button) => button.box();
         return {
-            flagVisible: this.#flag.rect.visible,
+            flagVisible: this.#flag.visible,
             flagLabel: this.#flag.text.text,
-            resetVisible: this.#reset.rect.visible,
+            resetVisible: this.#reset.visible,
             resetLabel: this.#reset.text.text,
-            demolishVisible: this.#demolish.rect.visible,
+            demolishVisible: this.#demolish.visible,
             demolishLabel: this.#armedId !== null ? 'CONFIRM' : 'Demolish',
             demolishArmed: this.#armedId,
             demolishBox: box(this.#demolish),
-            refitVisible: this.#refit.rect.visible,
+            refitVisible: this.#refit.visible,
             refitLabel: this.#refit.text.text,
             refitArmed: this.#refitArmedId,
-            repairVisible: this.#repair.rect.visible,
+            repairVisible: this.#repair.visible,
             repairLabel: this.#repair.label,
             repairAlpha: this.#repair.rect.alpha,
             repairBox: box(this.#repair),
-            disperseVisible: Boolean(this.#disperse?.rect.visible),
-            disperseLabel: this.#disperse?.label ?? null,
-            disperseAlpha: this.#disperse?.rect.alpha ?? null,
-            disperseBox: this.#disperse ? box(this.#disperse) : null,
+            disperseVisible: this.#disperse.visible,
+            disperseLabel: this.#disperse.label,
+            disperseAlpha: this.#disperse.rect.alpha,
+            disperseBox: box(this.#disperse),
             tooltip: this.#tooltip.visible ? this.#tooltip.text : null,
             paused: this.#paused,
             alpha: this.#flag.rect.alpha,
+            slots: this.#used,
         };
     }
 
@@ -191,11 +222,11 @@ export class BuildingControls {
 
     #paintRefit() {
         const armed = this.#refitArmedId !== null;
-        const {rect, text} = this.#refit;
-        rect.setFillStyle(armed ? CONFIRM_FILL : FLAG_FILL).setStrokeStyle(3, armed ? CONFIRM_STROKE : STROKE);
-        const label = armed ? 'CONFIRM' : `Refit: ${this.#refitRole?.toUpperCase()}`;
-        text.setText(`${label}\n${REFIT_COST.credits}c · ${REFIT_COST.ap} AP`);
-        this.#refit.proxy?.set({armed, role: this.#refitRole});
+        const button = this.#refit;
+        button.setTone(armed ? TONE.confirm : TONE.neutral).setSelected(armed);
+        const label = armed ? 'CONFIRM' : `REFIT\n${this.#refitRole?.toUpperCase()}`;
+        button.text.setText(`${label}\n${REFIT_COST.credits}c ${REFIT_COST.ap}AP`);
+        button.proxy?.set({armed, role: this.#refitRole});
     }
 
     #pressDemolish() {
@@ -213,54 +244,58 @@ export class BuildingControls {
     /** Armed: bright red with a yellow frame, and its CONFIRM tooltip stays up. */
     #paintDemolish() {
         const armed = this.#armedId !== null;
-        const {rect} = this.#demolish;
-        rect.setFillStyle(armed ? CONFIRM_FILL : DEMOLISH_FILL).setStrokeStyle(armed ? 4 : 3, armed ? CONFIRM_STROKE : STROKE);
+        this.#demolish.setTone(armed ? TONE.confirm : TONE.danger).setSelected(armed);
         this.#demolish.label = 'DESTROY';
         this.#demolish.proxy?.set({armed});
     }
 
     /** The tooltip of the hovered icon button, or an armed DESTROY's CONFIRM. */
     #refreshTooltip() {
-        const armed = this.#armedId !== null && this.#demolish.rect.visible;
+        const armed = this.#armedId !== null && this.#demolish.visible;
         const button = armed ? this.#demolish : this.#hovered;
-        if (!button || !button.rect.visible) {
+        if (!button || !button.visible) {
             this.#tooltip.setVisible(false);
             return;
         }
         let text = button.label;
         if (armed) text = 'CONFIRM DESTROY';
         else if (button === this.#repair && this.#repairState?.price != null && !this.#repairState.ordered) text = `REPAIR · ${this.#repairState.price}c`;
-        const {rect} = button;
+        const {x, y, height} = button.box();
         this.#tooltip.setText(text);
-        // Above the button, but never past the screen's edge: DESTROY sits at the far right.
+        // Beside the button where there is room, and never past the screen's edge.
         const half = this.#tooltip.width / 2 + 4;
-        const x = Math.min(Math.max(rect.x, half), this.#scene.scale.width - half);
-        this.#tooltip.setPosition(x, rect.y - rect.height / 2 - 4).setVisible(true);
+        const tx = Math.min(Math.max(x, half), this.#scene.scale.width - half);
+        this.#tooltip.setPosition(tx, y - height / 2 - 4).setVisible(true);
     }
 
-    #killdozer({x, y, width}) {
+    #killdozer({x, y, width, height}) {
         if (!this.#scene.textures.exists(KILLDOZER.key)) return null;
         const {scale, originX, originY} = killdozerPlacement();
-        return this.#scene.add.image(x, y, KILLDOZER.key).setOrigin(originX, originY).setScale(scale * (width / 48)).setDepth(5).setVisible(false);
+        const size = Math.min(width, height);
+        return this.#scene.add.image(x, y, KILLDOZER.key).setOrigin(originX, originY).setScale(scale * (size / 48) * 0.92);
     }
 
-    #button({x, y, width, height, fontSize = '18px', wrap}, fill, action, label, onPress) {
-        const rect = this.#scene.add.rectangle(x, y, width, height, fill)
-            .setStrokeStyle(3, STROKE).setDepth(4).setVisible(false);
-        const text = this.#scene.add.text(x, y, '', {
-            fontFamily: 'monospace', fontSize, color: '#ffffff', align: 'center', ...(wrap ? {wordWrap: {width: wrap}} : {}),
-        })
-            .setOrigin(0.5).setDepth(5).setVisible(false);
-        rect.on('pointerdown', onPress);
-        rect.on('pointerover', () => audioFor(this.#scene.game).play('ui.hover'));
-        return {rect, text, action, label, proxy: null};
+    #wrench({x, y, width, height}) {
+        if (!this.#scene.textures.exists(UI_ART.wrench.key)) return null;
+        const size = Math.min(width, height) * 0.72;
+        const fit = fitArt(WRENCH_VISIBLE, {frameWidth: 48, frameHeight: 48}, {width: size, height: size});
+        return this.#scene.add.image(x, y, UI_ART.wrench.key).setOrigin(fit.originX, fit.originY).setScale(fit.scale);
     }
 
-    /** A square button whose picture is an icon; the rectangle, not the picture, takes the press. */
-    #iconButton(spec, fill, action, label, onPress, icon) {
-        const button = this.#button(spec, fill, action, label, onPress);
-        button.icon = icon?.setDepth(5).setVisible(false) ?? null;
-        button.spec = spec;
+    #button(spec, tone, action, label, onPress) {
+        const button = new HudButton(this.#scene, spec, {tone, depth: DEPTH, onPress});
+        button.action = action;
+        button.label = label;
+        button.proxy = null;
+        button.setVisible(false);
+        return button;
+    }
+
+    /** A square button whose picture is an icon; the square, not the picture, takes the press. */
+    #iconButton(spec, tone, action, label, onPress, icon) {
+        const button = new HudButton(this.#scene, spec, {tone, depth: DEPTH, onPress, icon});
+        Object.assign(button, {action, label, proxy: null});
+        button.setVisible(false);
         button.rect.on('pointerover', () => {
             this.#hovered = button;
             this.#refreshTooltip();
@@ -272,45 +307,36 @@ export class BuildingControls {
         return button;
     }
 
+    /** A proxy keeps the place it was made at, so a button that moves gets a new one. */
+    #moveTo(button, {x, y}) {
+        const {x: oldX, y: oldY} = button.box();
+        if (oldX === x && oldY === y) return;
+        button.setPosition(x, y);
+        button.cross?.clear();
+        button.proxy?.destroy();
+        button.proxy = null;
+    }
+
     #show(button, visible, target) {
-        const {rect, text, icon, action} = button;
-        rect.setVisible(visible);
-        text.setVisible(visible);
-        icon?.setVisible(visible);
+        button.setVisible(visible);
         if (!visible) {
-            rect.disableInteractive();
+            button.cross?.setVisible(false);
             button.proxy?.destroy();
             button.proxy = null;
             return;
         }
-        rect.setInteractive({useHandCursor: true});
-        const alpha = this.#paused ? PAUSED_ALPHA : 1;
-        rect.setAlpha(alpha);
-        text.setAlpha(alpha);
-        icon?.setAlpha(alpha);
-        button.proxy ??= addProxy(this.#scene, rect, action, {label: button.label});
+        button.setAlpha(this.#paused ? PAUSED_ALPHA : 1);
+        button.proxy ??= addProxy(this.#scene, button.rect, button.action, {label: button.label});
         button.proxy.label(button.label).set({target, paused: this.#paused, ...(button === this.#demolish ? {armed: this.#armedId !== null} : {})});
     }
 }
 
-/** A white wrench, head up and right; crossed out for STOP REPAIR. Drawn round the button's centre. */
-function drawWrench(graphics, {x, y, width}, crossed) {
-    const unit = width / 48;
+/** STOP REPAIR: a white cross over the wrench, drawn round the button's centre. */
+function drawCross(graphics, {x, y, width, height}, crossed) {
     graphics.clear();
-    graphics.fillStyle(ICON_INK, crossed ? 0.45 : 1);
-    // Handle: a thick bar from bottom-left towards the head.
-    graphics.fillPoints([
-        {x: x - 14 * unit, y: y + 10 * unit}, {x: x - 10 * unit, y: y + 14 * unit},
-        {x: x + 6 * unit, y: y - 2 * unit}, {x: x + 2 * unit, y: y - 6 * unit},
-    ], true);
-    // Head: a ring with its jaw open to the top right.
-    graphics.fillCircle(x + 7 * unit, y - 7 * unit, 9 * unit);
-    graphics.fillStyle(crossed ? STOP_FILL : REPAIR_FILL, 1);
-    graphics.fillRect(x + 7 * unit, y - 17 * unit, 7 * unit, 10 * unit);
-    graphics.fillCircle(x + 7 * unit, y - 7 * unit, 3 * unit);
-    if (crossed) {
-        graphics.lineStyle(5 * unit, ICON_INK, 1);
-        graphics.lineBetween(x - 15 * unit, y - 15 * unit, x + 15 * unit, y + 15 * unit);
-        graphics.lineBetween(x + 15 * unit, y - 15 * unit, x - 15 * unit, y + 15 * unit);
-    }
+    if (!crossed) return;
+    const r = Math.min(width, height) * 0.32;
+    graphics.lineStyle(Math.max(3, r / 5), ICON_INK, 1);
+    graphics.lineBetween(x - r, y - r, x + r, y + r);
+    graphics.lineBetween(x + r, y - r, x - r, y + r);
 }
