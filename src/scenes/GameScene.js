@@ -51,6 +51,8 @@ import {Command, EventBus, Hint, Hud, Notice, State} from './EventBus.js';
 import {edition as newspaperEdition} from '../content/newspaper.js';
 import {audioFor, loadMusicWhenUnlocked} from '../audio/audio.js';
 import {GameAudio} from '../audio/GameAudio.js';
+import {CombatFxLayer} from './CombatFxLayer.js';
+import {bodyCentreAbove, planEffects} from './combatFx.js';
 import {WorldCamera} from './WorldCamera.js';
 import {currentLayout} from './hudLayout.js';
 import {isOrientationBlocked} from './orientationGuard.js';
@@ -136,6 +138,7 @@ export class GameScene extends Phaser.Scene {
         this.pollution = null;
         this.mutants = null;
         this.mutantLayer = null;
+        this.combatFx = null;
         this.autocannons = null;
         this.autocannonLayer = null;
         this.siegeCannons = null;
@@ -325,6 +328,8 @@ export class GameScene extends Phaser.Scene {
         for (const [event, handler] of Object.entries(handlers)) EventBus.on(event, handler);
         this.events.once('shutdown', () => {
             this.gameAudio?.stop();
+            this.combatFx?.destroy();
+            this.combatFx = null;
             for (const [event, handler] of Object.entries(handlers)) EventBus.off(event, handler);
             this.scene.stop('hud');
         });
@@ -451,6 +456,7 @@ export class GameScene extends Phaser.Scene {
             }),
         });
         this.mutantLayer = new MutantLayer(this, this.grid);
+        this.combatFx = new CombatFxLayer(this); // TASK 031: impacts and explosions, presentation only
         this.nightTint = new NightTintLayer(this, this.grid);
         this.autocannons = new Autocannons({
             cycle: this.cycle,
@@ -562,7 +568,7 @@ export class GameScene extends Phaser.Scene {
         const power = calculatePower(this.placement.buildings());
         this.buildingIndex = new Map(this.placement.buildings().map((b) => {
             const {x, y, width, height} = this.grid.footprintRect(b);
-            return [b.id, {type: b.type, x: x + width / 2, y: y + height / 2}];
+            return [b.id, {type: b.type, x: x + width / 2, y: y + height / 2, tiles: b.width, height}];
         }));
         if (this.lastPowerStatus && power.status !== this.lastPowerStatus) {
             this.gameAudio?.play(power.status === 'normal' ? 'machinery.power_up' : 'machinery.power_down');
@@ -818,6 +824,7 @@ export class GameScene extends Phaser.Scene {
     /** Runs once: the Day/Night key changes only once into the defeated state. */
     enterDefeat() {
         this.closeNewspaper({resume: false}); // Game Over takes precedence
+        this.combatFx?.clear();
         this.phase = defeatGame(this.phase);
         this.selectAt(null);
         this.present(State.PHASE, {phase: this.phase});
@@ -1782,6 +1789,7 @@ export class GameScene extends Phaser.Scene {
             else this.clock.advance(delta, onTick);
         }
         this.syncShiftUi();
+        this.combatFx?.sync(this.clock.tick, delta, Boolean(this.cycle?.running || this.cycle?.fastForwarding));
         this.syncAudio(delta);
     }
 
@@ -1810,6 +1818,21 @@ export class GameScene extends Phaser.Scene {
                 return Boolean(building) && building.hp >= getBuildingType(building.type).maxHp;
             },
         }, delta);
+    }
+
+    /** Where effects happen, for one tick's results: the fog decides what can be seen. */
+    fxView(kinds = null) {
+        const isSeen = this.seenBy() ?? (() => true);
+        return {
+            isSeen,
+            // A hit's spark goes on the body the player sees, by mutant kind, when there is art.
+            bodyAbove: (mutantId) => (this.textures.exists('papi-art-runner') ? bodyCentreAbove(kinds?.get(mutantId) ?? 'runner') : 0),
+            turretAt: (id) => this.buildingIndex.get(id) ?? null,
+            buildingAt: (id) => {
+                const b = this.buildingIndex.get(id);
+                return b ? {type: b.type, x: b.x, y: b.y, width: b.tiles, height: b.height} : null;
+            },
+        };
     }
 
     /** Where sounds happen, for one tick's results. */
@@ -1844,6 +1867,8 @@ export class GameScene extends Phaser.Scene {
         this.simulationSteps++;
         this.cycle?.onTick(tick);
         this.loudspeakers?.step();
+        // Kinds before anything fires: a mutant killed this tick still gets its own body offset for its spark.
+        const kinds = this.combatFx && this.cycle?.shift === Shift.NIGHT ? new Map(this.mutants.snapshot().map((m) => [m.id, m.kind ?? 'runner'])) : null;
         const siege = this.siegeCannons?.step();
         if (siege?.fired.length) this.siegeLayer.recordFired(siege.fired, this.placement.buildings(), this.clock.tick);
         if (siege?.impacts.length) this.siegeLayer.recordImpacts(siege.impacts, this.clock.tick);
@@ -1862,6 +1887,8 @@ export class GameScene extends Phaser.Scene {
         if (work?.cancelled.length) this.showHint(work.cancelled.at(-1).reason); // e.g. a repair that ran out of Credits
         const effects = this.mutants?.step();
         if (this.gameAudio?.manager.enabled) this.gameAudio.tick({siege, defense, squads, effects}, this.audioView());
+        // Before destroyed buildings leave the index: where they stood is where they burn.
+        this.combatFx?.spawn(planEffects({siege, defense, squads, effects}, this.fxView(kinds)), tick);
         if (effects?.impacts) this.mutantLayer.recordImpacts(effects.impacts, this.clock.tick);
         if (effects?.destroyed.length) this.handleBuildingsDestroyed(effects.destroyed);
         if (this.ecologists?.step().protestsStarted) this.showHint(Hint.PROTEST); // after mutants, before trucks
@@ -1988,6 +2015,7 @@ export class GameScene extends Phaser.Scene {
             workerViews: this.workerLayer ? this.workerLayer.views() : null,
             ecologists: this.ecologists ? this.ecologists.snapshot() : null,
             selectedProtest: this.selectedProtestId ?? null,
+            combatFx: this.combatFx ? this.combatFx.view() : null,
             audio: this.gameAudio?.manager.enabled ? this.gameAudio.manager.snapshot() : null,
             newspaper: this.newspaper ? {enabled: this.newsEnabled, open: this.newspaper.open, reason: this.newspaper.reason,
                 pausedByNews: this.newspaper.pausedByNews, edition: this.newspaper.edition} : null,
