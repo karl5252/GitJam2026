@@ -54,7 +54,7 @@ soldier.retreat      -> soldier_retreat_01.ogg
 soldier.victory      -> soldier_victory_01/02.ogg
 soldier.rare         -> soldier_rare_01/02.ogg (low probability)
 papi.broadcast       -> loudspeeker_01/02/03/04/05.ogg (one global voice)
-papi.final           -> papi_final.ogg (ending only; not in normal rotation)
+papi.final           -> papi_final.ogg (TASK 036: the Day 100 ending only; one presidential voice; not in normal rotation)
 advice.papi_hq       -> papi_hq.ogg (Presidential Advice: build-hq; one presidential voice)
 advice.papi_power    -> papi_power.ogg (Presidential Advice: low-power; one presidential voice)
 advice.papi_defense  -> papi_defense.ogg (Presidential Advice: night-defence; one presidential voice)

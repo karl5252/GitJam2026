@@ -89,19 +89,20 @@ export function flightRoute(hq, view) {
 /**
  * Where the helicopter is, `t` (0..1) through one leg of the flight. `ground` is its
  * shadow; the sprite's skids are `altitude` px above it. Deterministic, no state.
+ * `heights` (TASK 036.1) lets a flight hover lower or climb higher than Day 1's; by default HELI's.
  */
-export function flightPose(leg, t, {start, pickup, end}) {
+export function flightPose(leg, t, {start, pickup, end}, {cruiseAltitude = HELI.cruiseAltitude, hoverAltitude = HELI.hoverAltitude} = {}) {
     const u = clamp01(t);
     if (leg === 'approach') { // fast at first, slowing into the hover
         const k = easeOut(u);
-        return {ground: {x: lerp(start.x, pickup.x, k), y: lerp(start.y, pickup.y, k)}, altitude: lerp(HELI.cruiseAltitude, HELI.hoverAltitude, k), dx: pickup.x - start.x};
+        return {ground: {x: lerp(start.x, pickup.x, k), y: lerp(start.y, pickup.y, k)}, altitude: lerp(cruiseAltitude, hoverAltitude, k), dx: pickup.x - start.x};
     }
     if (leg === 'hover') { // one slow dip over the roof
-        return {ground: {...pickup}, altitude: HELI.hoverAltitude - HELI.dip * Math.sin(Math.PI * u), dx: 0};
+        return {ground: {...pickup}, altitude: hoverAltitude - HELI.dip * Math.sin(Math.PI * u), dx: 0};
     }
     // depart: climbing at once, gathering speed
     const k = easeIn(u);
-    return {ground: {x: lerp(pickup.x, end.x, k), y: lerp(pickup.y, end.y, k)}, altitude: lerp(HELI.hoverAltitude, HELI.cruiseAltitude, easeOut(u)), dx: end.x - pickup.x};
+    return {ground: {x: lerp(pickup.x, end.x, k), y: lerp(pickup.y, end.y, k)}, altitude: lerp(hoverAltitude, cruiseAltitude, easeOut(u)), dx: end.x - pickup.x};
 }
 
 /** The camera pose to watch the pickup from: centred on HQ, closer in only if need be. */

@@ -1,6 +1,8 @@
 import {addProxy, markModal} from '../testShadow/TestProxy.js';
 import {fitLines} from '../content/newspaper.js';
-import {NEWSPAPER_PHOTOS} from './newspaperArt.js';
+import {NEWSPAPER_PHOTOS, printedPhoto} from './newspaperArt.js';
+import {browserStorage} from '../audio/SoundManager.js';
+import {endingSeen} from './profile.js';
 
 /**
  * TASK 029: LA VOZ DE SAN PAPI, drawn from an edition (src/content/newspaper.js).
@@ -214,12 +216,16 @@ export class NewspaperLayer {
      * with its own aspect ratio and transparency, in a black frame. A missing
      * texture leaves the frame empty, never a broken page.
      */
-    #photo({asset}, x, y, scale, objects, g) {
+    #photo({asset: printed}, x, y, scale, objects, g) {
+        // TASK 036: after the Day 100 ending, El Papi's photograph is the other one; the page is the same.
+        const asset = printedPhoto(printed, endingSeen(browserStorage()));
         const key = NEWSPAPER_PHOTOS[asset]?.key ?? null;
         const loaded = key !== null && this.#scene.textures.exists(key);
         const source = loaded ? this.#scene.textures.get(key).getSourceImage() : {width: 64, height: 96};
-        const [width, height] = [source.width * scale, source.height * scale];
-        if (loaded) objects.push(this.#scene.add.image(x, y, key).setOrigin(0, 0).setScale(scale).setDepth(DEPTH + 1));
+        const frame = NEWSPAPER_PHOTOS[asset]?.frame ?? source; // a smaller photo sits centred in its frame
+        const [width, height] = [frame.width * scale, frame.height * scale];
+        const inset = {x: Math.floor((frame.width - source.width) / 2) * scale, y: Math.floor((frame.height - source.height) / 2) * scale};
+        if (loaded) objects.push(this.#scene.add.image(x + inset.x, y + inset.y, key).setOrigin(0, 0).setScale(scale).setDepth(DEPTH + 1));
         g.lineStyle(3, RULE, 1).strokeRect(x - 2, y - 2, width + 4, height + 4);
         return {asset, key, loaded, x, y, width, height, scale};
     }

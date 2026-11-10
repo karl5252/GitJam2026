@@ -85,7 +85,9 @@ export const SOUND_EVENTS = Object.freeze({
     'advice.papi_barracks': event('voices', [`${V}papi_barracks`], {voice: 'president', maxConcurrent: 1}),
     'advice.papi_mining': event('voices', [`${V}papi_mining`], {voice: 'president', maxConcurrent: 1}),
     'advice.papi_pollution': event('voices', [`${V}papi_pollution`], {voice: 'president', maxConcurrent: 1}),
-    // papi.final (papi_final) belongs to the Night 99 ending, not built yet: kept in audio-src/.
+    // TASK 036: the Day 100 speech, the whole ending's soundtrack (drumroll, crowd, scream and chewing are in it).
+    // The presidential voice, so it never overlaps a tip's line and silences the units. Ending only.
+    'papi.final': event('voices', [`${V}papi_final`], {voice: 'president', maxConcurrent: 1}),
 });
 
 /** How often a select line is replaced by the pool's rare line. */

@@ -49,8 +49,9 @@ export function tickEvents({siege = null, defense = null, squads = null, effects
 }
 
 /** The music a moment wants. */
-export function musicState({phase, shift}) {
+export function musicState({phase, shift, ending = false}) {
     if (phase === 'ready') return 'menu';
+    if (ending) return 'night'; // TASK 036: silence under the Day 100 speech, which brings its own crowd
     if (phase === 'defeated' || shift === 'defeated') return 'defeat';
     if (shift === 'dusk') return 'dusk';
     if (shift === 'night') return 'night';

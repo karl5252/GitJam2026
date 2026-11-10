@@ -12,16 +12,26 @@ const IMAGES = Object.freeze({
     rug: 'rug.png',
     desk: 'desk.png',
     portrait: 'portrait-colonel.png',
-    // Reserved for a future save/progression flag. No automatic portrait swap.
+    // TASK 036: after the Day 100 ending (papi_profile), the portrait is this one.
     mutantPortrait: 'portrait-mutant.png',
-    globe: 'globe.png',
-    bust: 'bust-gold.png',
 });
 
 const SHEETS = Object.freeze({
     flag: {path: 'flag-sheet.png', frameWidth: 32, frameHeight: 64}, // 3 frames
     phone: {path: 'phone-sheet.png', frameWidth: 51, frameHeight: 50}, // 8 frames, flying handset
     colonel: {path: 'el-colonel-menu-sheet.png', frameWidth: 64, frameHeight: 56}, // authored 7x4 grid
+    // TASK 036: 76x48, two 38x48 frames: 0 intact, 1 bitten (after the Day 100 ending).
+    bust: {path: 'bust-gold.png', frameWidth: 38, frameHeight: 48},
+    // TASK 036.1: 64x44, two 32x44 frames: 0 the globe, 1 bitten (after the Day 100 ending).
+    globe: {path: 'globe.png', frameWidth: 32, frameHeight: 44},
+});
+
+/** TASK 036: the menu as the profile has it. The same flag drives all of it, and nothing else. */
+export const officeArtFor = (endingSeen) => Object.freeze({
+    portrait: endingSeen ? 'mutantPortrait' : 'portrait',
+    bustFrame: endingSeen ? 1 : 0,
+    globeFrame: endingSeen ? 1 : 0, // TASK 036.1
+    colonel: !endingSeen, // El Colonel no longer patrols his office
 });
 
 export const OFFICE = Object.freeze(Object.fromEntries(

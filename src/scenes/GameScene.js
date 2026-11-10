@@ -49,6 +49,9 @@ import {browserStorage} from '../audio/SoundManager.js';
 import {PresidentLayer} from './PresidentLayer.js';
 import {HeliVisit, blendPose, cameraTarget, pickupPoint} from './presidentialHeli.js';
 import {HeliLayer} from './HeliLayer.js';
+import {endingDue} from './presidentialEnding.js';
+import {endingSeen, setEndingSeen} from './profile.js';
+import {createEndingQa} from '../testShadow/endingQa.js';
 import {EcologistLayer} from './EcologistLayer.js';
 import {TerrainLayer} from './TerrainLayer.js';
 import {TruckLayer} from './TruckLayer.js';
@@ -215,6 +218,7 @@ export class GameScene extends Phaser.Scene {
         const {cols, rows, tileSize} = this.map;
         this.layout = currentLayout();
         this.suspension = new Suspension(); // TASK 032: a new scene holds no stale reason
+        this.ending = null; // TASK 036: the Day 100 ending, once it has begun
         // TASK 033.3: Presidential Advice, made here so the book's TIPS switches work on the
         // menu too. Only TEST_MODE can switch it off for a session (?tips=off, which boot() adds).
         const adviceParams = new URLSearchParams(TEST_MODE ? window.location.search : '');
@@ -291,6 +295,7 @@ export class GameScene extends Phaser.Scene {
             window.__qa.perf = createPerfProbe(this);
             window.__qa.layout = createLayoutQa(this);
             window.__qa.economy = createEconomyQa(this);
+            window.__qa.ending = createEndingQa(this); // TASK 036
             window.__qa.busListeners = () => Object.fromEntries(EventBus.eventNames().map((event) => [event, EventBus.listenerCount(event)]));
             // TASK 033.3: draw one catalogue tip as if it showed (null for the real state), so
             // layout tests can measure every card. It changes nothing: not the controller, not seen.
@@ -382,6 +387,8 @@ export class GameScene extends Phaser.Scene {
             this.heliLayer = null;
             this.heli = null;
             this.heliCamera = null;
+            this.scene.stop('ending'); // TASK 036: its speech and actors go with it
+            this.ending = null;
             for (const [event, handler] of Object.entries(handlers)) EventBus.off(event, handler);
             this.scene.stop('hud');
         });
@@ -587,6 +594,44 @@ export class GameScene extends Phaser.Scene {
         this.heliLayer = null;
         this.heliCamera = null;
         this.heliRestored = null;
+    }
+
+    // ---- TASK 036: THE PRESIDENTIAL VISIT, the Day 100 ending -------------------------
+
+    /**
+     * Once a run, on the first tick of the timed Day the HUD calls Day 100 (after Night 100),
+     * once La Voz is closed and nothing else holds the world. From then on the world is held
+     * as the `cinematic` reason for good (no tick runs again), the HUD sleeps and the
+     * ceremony plays in EndingScene. Nothing in the run is changed or removed.
+     */
+    syncEnding() {
+        const {cycle} = this;
+        if (this.ending || !cycle?.started || this.phase !== GamePhase.STARTED) return;
+        if (!endingDue({timed: cycle.timed, deployment: cycle.deployment, shift: cycle.shift, day: cycle.day})) return;
+        if (this.newspaper?.open || this.suspension.active || cycle.fastForwarding) return;
+        this.startEnding();
+    }
+
+    startEnding() {
+        this.exitPlacementMode();
+        this.exitFlagMode();
+        this.mousePan = null;
+        this.pendingPress = null;
+        this.dragCell = null;
+        this.suspension.set(SuspendReason.CINEMATIC, true);
+        this.ending = {day: this.cycle.day, tick: this.clock.tick, finished: false};
+        this.scene.sleep('hud');
+        const speed = TEST_MODE ? Number(new URLSearchParams(window.location.search).get('endingSpeed')) || 1 : 1;
+        this.scene.launch('ending', {speed, onComplete: () => this.finishEnding()});
+        this.scene.bringToTop('ending');
+    }
+
+    /** The recording is over and the screen is black: remember it, then the menu. */
+    finishEnding() {
+        if (!this.ending || this.ending.finished) return;
+        this.ending.finished = true;
+        setEndingSeen(browserStorage(), true);
+        this.scene.restart(); // the title, as RESTART does; shutdown stops the ending and the HUD
     }
 
     // ---- TASK 035: the Day 1 helicopter -----------------------------------------------
@@ -2011,6 +2056,7 @@ export class GameScene extends Phaser.Scene {
         this.syncShiftUi();
         this.syncPresident(delta);
         this.syncHeli(delta);
+        this.syncEnding();
         this.syncAdvice(delta);
         this.combatFx?.sync(this.clock.tick, delta, !this.suspension.active && Boolean(this.cycle?.running || this.cycle?.fastForwarding));
         this.syncAudio(delta);
@@ -2024,6 +2070,7 @@ export class GameScene extends Phaser.Scene {
         this.gameAudio.frame({
             phase: this.phase,
             shift: this.cycle?.shift ?? null,
+            ending: Boolean(this.ending), // TASK 036: no music under the speech
             newspaperOpen: Boolean(this.newspaper?.open),
             advice: this.advice.view(), // TASK 033.4: the tip really on screen, never a QA preview
             // The world sounds only while it runs: not behind La Voz, in a paused Day, on the menu or after defeat.
@@ -2242,6 +2289,8 @@ export class GameScene extends Phaser.Scene {
             selectedProtest: this.selectedProtestId ?? null,
             combatFx: this.combatFx ? this.combatFx.view() : null,
             president: this.president ? {...this.president.view(), drawn: this.presidentLayer.view()} : null, // TASK 033.2
+            ending: this.ending ? {...this.ending, ...(this.scene.isActive('ending') ? this.scene.get('ending').view() : {})} : null, // TASK 036
+            profile: {presidentialEndingSeen: endingSeen(browserStorage())}, // TASK 036
             heli: this.heli ? { // TASK 035
                 ...this.heli.view(),
                 drawn: this.heliLayer?.view() ?? null,

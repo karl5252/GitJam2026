@@ -2,6 +2,7 @@ import Phaser from 'phaser';
 import {BootScene} from './scenes/BootScene.js';
 import {GameScene} from './scenes/GameScene.js';
 import {HUDScene} from './scenes/HUDScene.js';
+import {EndingScene} from './scenes/EndingScene.js';
 import {installOrientationGuard} from './scenes/orientationGuard.js';
 import {TEST_MODE} from './testMode.js';
 
@@ -32,7 +33,7 @@ const game = new Phaser.Game({
     },
     dom: {createContainer: TEST_MODE},
     input: {activePointers: 3}, // the mouse and two fingers
-    scene: [BootScene, GameScene, HUDScene],
+    scene: [BootScene, GameScene, HUDScene, EndingScene], // TASK 036: the Day 100 ending, launched on top
 });
 
 installOrientationGuard(game);

@@ -234,6 +234,16 @@ export class SoundManager {
         return true;
     }
 
+    /**
+     * TASK 036: how far into the presidential line `name` playback is, in seconds, while it
+     * really plays; otherwise null (never started, ended, stopped, muted or paused).
+     */
+    presidentPosition(name) {
+        const {sound, event} = this.#president;
+        if (event !== name || !this.#speaking()) return null;
+        return Number.isFinite(sound.seek) ? sound.seek : null;
+    }
+
     /** Stop the presidential line, if one speaks: its tip has gone. */
     silence() {
         const {sound, event} = this.#president;

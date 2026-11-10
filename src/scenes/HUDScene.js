@@ -17,6 +17,8 @@ import {FieldManualLayer} from './FieldManualLayer.js';
 import {NewspaperLayer} from './NewspaperLayer.js';
 import {audioFor} from '../audio/audio.js';
 import {OfficeMenuLayer} from './OfficeMenuLayer.js';
+import {browserStorage} from '../audio/SoundManager.js';
+import {endingSeen} from './profile.js';
 import {SpeedControls} from './SpeedControls.js';
 import {DRAWER_ROWS, currentLayout} from './hudLayout.js';
 import {costText, shortfall} from './uiArt.js';
@@ -254,7 +256,7 @@ export class HUDScene extends Phaser.Scene {
 
     createTitle() {
         // Keep the existing START button, coordinates and test proxy.
-        this.officeMenu = new OfficeMenuLayer(this);
+        this.officeMenu = new OfficeMenuLayer(this, {endingSeen: endingSeen(browserStorage())}); // TASK 036
         const {width} = this.scale;
         this.title = this.add.text(width / 2, 52, 'PAPI Industries: The Green Shift', {
             fontFamily: 'monospace',
@@ -853,6 +855,7 @@ export class HUDScene extends Phaser.Scene {
         const ui = this.ui;
         const textView = (view) => (view ? {visible: view.visible, text: view.text} : null);
         return {
+            officeMenuView: this.officeMenu?.view() ?? null, // TASK 036: portrait, bust frame, El Colonel
             ui: {
                 titleVisible: this.title.visible,
                 startVisible: this.startButton.visible,

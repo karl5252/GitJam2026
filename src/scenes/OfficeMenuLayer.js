@@ -1,4 +1,4 @@
-import {OFFICE} from './OfficeMenuArt.js';
+import {OFFICE, officeArtFor} from './OfficeMenuArt.js';
 import {officeMenuLayout} from './officeMenuLayout.js';
 import {officeColonelPose, officeFlagFrame, officePhoneFrame} from './officeMenuTiming.js';
 
@@ -8,8 +8,10 @@ import {officeColonelPose, officeFlagFrame, officePhoneFrame} from './officeMenu
  * and changes to the EventBus, 60 Hz simulation or the QA start proxy.
  */
 export class OfficeMenuLayer {
-    constructor(scene) {
+    /** @param {{endingSeen?: boolean}} options TASK 036: the Day 100 ending has been seen */
+    constructor(scene, {endingSeen = false} = {}) {
         this.scene = scene;
+        this.endingSeen = Boolean(endingSeen);
         this.elapsedMs = 0;
         this.objects = [];
         this.layout = officeMenuLayout({
@@ -65,21 +67,35 @@ export class OfficeMenuLayer {
         if (!l.touch) {
             this.image(OFFICE.rug, l.rug, -12);
             this.flags = l.flags.map((position) => this.sprite(OFFICE.flag, position, -8));
-            this.image(OFFICE.globe, l.globe, 4, 1);
+            // TASK 036.1: a two-frame sheet now; the ending picks the bitten one. Same place, scale and depth.
+            this.globe = this.sprite(OFFICE.globe, l.globe, 4, officeArtFor(this.endingSeen).globeFrame, 1);
         } else {
             this.flags = [];
         }
 
-        // The portrait is deliberately fixed for now. The future Day 100 flag
-        // can select OFFICE.mutantPortrait without altering the composition.
-        this.image(OFFICE.portrait, l.portrait, -7);
+        // TASK 036: the Day 100 ending (papi_profile) selects the portrait, the bust's frame
+        // and whether El Colonel patrols; the composition never changes.
+        const art = officeArtFor(this.endingSeen);
+        this.art = art;
+        this.portrait = this.image(OFFICE[art.portrait], l.portrait, -7);
         this.image(OFFICE.desk, l.desk, 3, 1);
-        if (!l.touch) this.image(OFFICE.bust, l.bust, 5, 1).setFlipX(true);
+        this.bust = l.touch ? null : this.sprite(OFFICE.bust, l.bust, 5, art.bustFrame, 1).setFlipX(true);
 
         // The entire 51x50 phone cell is required: its handset jumps clear of
         // the body in frames 2-6. Cropping it to 16x16 would remove the joke.
         this.phone = this.sprite(OFFICE.phone, l.phone, 6, 0, 1);
-        this.colonel = this.sprite(OFFICE.colonel, l.colonel, 8, 0, 1);
+        this.colonel = art.colonel ? this.sprite(OFFICE.colonel, l.colonel, 8, 0, 1) : null;
+    }
+
+    /** TASK 036: what the menu really shows of the ending, for QA. */
+    view() {
+        return {
+            endingSeen: this.endingSeen,
+            portrait: this.portrait?.texture.key ?? null,
+            bustFrame: this.bust ? Number(this.bust.frame.name) : null,
+            globeFrame: this.globe ? Number(this.globe.frame.name) : null, // TASK 036.1
+            colonel: Boolean(this.colonel),
+        };
     }
 
     update(deltaMs = 0) {
@@ -90,6 +106,7 @@ export class OfficeMenuLayer {
         this.phone.setFrame(officePhoneFrame(t));
         this.flags.forEach((flag, i) => flag.setFrame(officeFlagFrame(t, i * 290)));
 
+        if (!this.colonel) return;
         const action = officeColonelPose(t, this.layout.touch);
         this.colonel.setFrame(action.frame)
             .setPosition(Math.round(this.layout.colonel.x + action.xOffset), this.layout.colonel.y)

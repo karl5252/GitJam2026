@@ -34,6 +34,9 @@ test('game boots into the game scene in the ready phase with a live QA surface',
         combatFx: null, // TASK 031: made at Start
         president: null, // TASK 033.2: made at Start
         heli: null, // TASK 035: made at Start
+        ending: null, // TASK 036: only once the Day 100 ending begins
+        profile: {presidentialEndingSeen: false}, // TASK 036: a fresh browser
+        officeMenuView: {endingSeen: false, portrait: 'papi-office-portrait', bustFrame: 0, globeFrame: 0, colonel: true},
         // TASK 033.3: boot() adds ?tips=off, so this session shows none, whatever is saved.
         advice: {enabled: false, setting: true, forcedOff: true, visible: false, suppressed: true, tip: null, pending: null, seen: [], preview: null},
         adviceView: null,

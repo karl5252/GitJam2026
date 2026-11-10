@@ -91,3 +91,25 @@ test('mobile only loads compact props and starts with El Colonel offstage', () =
     assert.equal(menu.colonel.flipX, true);
     menu.destroy();
 });
+
+test('TASK 036: after the Day 100 ending the office shows the mutant portrait and the bitten bust, and El Colonel is gone', () => {
+    const scene = testScene();
+    const menu = new OfficeMenuLayer(scene, {endingSeen: true});
+    const created = scene.objects.filter((o) => ['image', 'sprite'].includes(o.type));
+    const keys = created.map((o) => o.args[2]);
+    assert.ok(keys.includes(OFFICE.mutantPortrait));
+    assert.ok(!keys.includes(OFFICE.portrait));
+    assert.ok(!keys.includes(OFFICE.colonel), 'no El Colonel at all');
+    assert.equal(created.find((o) => o.args[2] === OFFICE.bust).args[3], 1, 'the bitten frame');
+    assert.equal(created.find((o) => o.args[2] === OFFICE.globe).args[3], 1, 'the bitten globe (TASK 036.1)');
+    assert.equal(menu.colonel, null);
+    for (let i = 0; i < 40; i++) menu.update(250); // the rest of the office still runs
+    menu.destroy();
+    assert.ok(scene.objects.every((o) => o.destroyed));
+
+    const before = testScene();
+    new OfficeMenuLayer(before);
+    const bust = before.objects.find((o) => o.args[2] === OFFICE.bust);
+    assert.equal(bust.args[3], 0, 'the intact frame until then');
+    assert.equal(before.objects.find((o) => o.args[2] === OFFICE.globe).args[3], 0, 'and the whole globe');
+});
