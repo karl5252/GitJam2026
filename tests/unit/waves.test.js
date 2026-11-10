@@ -1,8 +1,8 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {
-    WAVE, accelerationBudget, defenseResponse, lastSpawnTick, nightBudget, nightPlan, pollutionBudget, waveBudget,
-    waveProgress, waveSchedule,
+    MAX_WAVE_SLOTS, WAVE, accelerationBudget, defenseResponse, lastSpawnTick, nightBudget, nightPlan, pollutionBudget, waveBudget,
+    waveCap, waveProgress, waveSchedule,
 } from '../../src/core/waves.js';
 import {Autocannons} from '../../src/core/autocannons.js';
 import {BuildingPlacement} from '../../src/core/buildingPlacement.js';
@@ -25,6 +25,7 @@ test('wave values are the approved ones, and frozen', () => {
         firstTick: 600, lastTick: 2700, minLastTick: 1200, windowShrinkPerNight: 100,
         nightsPerExtra: 2, perThreatLevel: 2, cannonsPerResponse: 2, maxResponse: 4,
         accelerationFromNight: 6, accelerationDivisor: 12, maxPerNight: 40,
+        lateFromNight: 40, lateSlots: 2, lateNights: 3, lateMax: 80, // TASK 037
     });
     assert.ok(Object.isFrozen(WAVE));
 });
@@ -68,7 +69,21 @@ test('the total cap of 40 holds, and is reached on the expected nights', () => {
     assert.equal(firstCapped(0), 23);
     assert.equal(firstCapped(9), 22);
     assert.equal(waveBudget(21, 4, 9), 39);
-    assert.equal(waveBudget(1000, 4, 1000), 40);
+    for (let night = 22; night <= 41; night++) assert.equal(waveBudget(night, 4, 1000), 40, `night ${night}: still 40`);
+});
+
+test('TASK 037: after Night 40 the cap rises 2 slots every 3 Nights, to 80 on Night 100, and stops there', () => {
+    const expected = [[1, 40], [40, 40], [41, 40], [42, 41], [43, 42], [55, 50], [70, 60], [85, 70], [99, 79], [100, 80], [101, 80], [1000, 80]];
+    for (const [night, cap] of expected) assert.equal(waveCap(night), cap, `night ${night}`);
+    for (let night = 41; night <= 100; night++) {
+        assert.ok(waveCap(night) - waveCap(night - 1) <= 1, 'smooth: never more than one slot a Night');
+        for (const threat of [1, 4]) assert.equal(waveBudget(night, threat, 0), waveCap(night), 'every late base is at the cap');
+    }
+    assert.equal(MAX_WAVE_SLOTS, 80);
+    assert.equal(waveSchedule(MAX_WAVE_SLOTS, lastSpawnTick(100)).length, 80, 'the largest wave fits its window');
+    const finale = nightPlan({day: 100, pollution: 1400, buildings: []});
+    assert.deepEqual([finale.budget, finale.spitters, finale.brutes, finale.absorbedSlots.length], [80, 6, 3, 6], 'only ordinary mutants are added: 74 spawn');
+    assert.ok(finale.schedule.at(-1) <= 1200);
 });
 
 test('acceleration starts after night 6 and grows with the square of the nights since', () => {

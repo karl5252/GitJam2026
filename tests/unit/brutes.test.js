@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import {BRUTE, MUTANT, SPITTER, TARGET_BIAS} from '../../src/core/mutants.js';
 import {Shift} from '../../src/core/shiftCycle.js';
 import {
-    BRUTE_WAVE, WAVE, bruteCount, bruteSlots, nightPlan, spitterCount, spitterSlots, waveBudget, waveProgress, waveSchedule,
+    BRUTE_WAVE, WAVE, bruteCount, bruteSlots, nightPlan, spitterCount, spitterSlots, waveBudget, waveCap, waveProgress, waveSchedule,
 } from '../../src/core/waves.js';
 import {canonicalState, checkInvariants, createWorld, digestOf, worldState} from '../soak/harness.js';
 
@@ -99,7 +99,7 @@ test('every plan before Night 30 is the plan it always was', () => {
 test('from Night 29 every base is at the cap, so a Brute always has room', () => {
     for (let night = 29; night <= 80; night++) {
         for (const threat of [1, 2, 3, 4]) {
-            for (const cannons of [0, 1, 9, 30]) assert.equal(waveBudget(night, threat, cannons), WAVE.maxPerNight);
+            for (const cannons of [0, 1, 9, 30]) assert.equal(waveBudget(night, threat, cannons), waveCap(night)); // TASK 037: the cap rises after Night 40
         }
     }
 });

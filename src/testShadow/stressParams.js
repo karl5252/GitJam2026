@@ -4,7 +4,7 @@
 // this with TEST_MODE, so production never reads these parameters. Both give
 // the real Mutants a fixed schedule; nothing here simulates anything.
 //
-//   ?waveBudget=N    the real waveSchedule(N), for N in 0..WAVE.maxPerNight
+//   ?waveBudget=N    the real waveSchedule(N), for N in 0..MAX_WAVE_SLOTS (TASK 037: the late cap, 80)
 //   ?waveLastTick=T  with waveBudget, ends that schedule on tick T, for T in
 //                    WAVE.minLastTick..WAVE.lastTick. Ignored on its own.
 //   ?stressRamp=N  one mutant per tick from tick 1, for N in 1..3599
@@ -14,7 +14,7 @@
 //                    bruteSlots after any Spitters. Ignored on its own, or when
 //                    they do not fit.
 
-import {WAVE, bruteSlots, spitterSlots, waveSchedule} from '../core/waves.js';
+import {MAX_WAVE_SLOTS, WAVE, bruteSlots, spitterSlots, waveSchedule} from '../core/waves.js';
 
 const MAX_RAMP = 3599; // spawns must land on a night tick before the last
 
@@ -29,7 +29,7 @@ export function parseStressSchedule(search) {
     const params = new URLSearchParams(search);
     const ramp = parseCount(params.get('stressRamp'), 1, MAX_RAMP);
     if (ramp !== null) return Array.from({length: ramp}, (_, i) => i + 1);
-    const budget = parseCount(params.get('waveBudget'), 0, WAVE.maxPerNight);
+    const budget = parseCount(params.get('waveBudget'), 0, MAX_WAVE_SLOTS);
     if (budget === null) return null;
     const lastTick = parseCount(params.get('waveLastTick'), WAVE.minLastTick, WAVE.lastTick);
     return [...waveSchedule(budget, lastTick ?? WAVE.lastTick)];
@@ -40,8 +40,8 @@ export function parseStressBrutes(search) {
     const none = {bruteSlots: [], absorbedSlots: []};
     const params = new URLSearchParams(search);
     if (parseCount(params.get('stressRamp'), 1, MAX_RAMP) !== null) return none;
-    const budget = parseCount(params.get('waveBudget'), 0, WAVE.maxPerNight);
-    const brutes = parseCount(params.get('waveBrutes'), 0, WAVE.maxPerNight);
+    const budget = parseCount(params.get('waveBudget'), 0, MAX_WAVE_SLOTS);
+    const brutes = parseCount(params.get('waveBrutes'), 0, MAX_WAVE_SLOTS);
     if (budget === null || brutes === null) return none;
     try {
         const placed = bruteSlots(budget, parseStressSpitters(search), brutes);
@@ -55,7 +55,7 @@ export function parseStressBrutes(search) {
 export function parseStressSpitters(search) {
     const params = new URLSearchParams(search);
     if (parseCount(params.get('stressRamp'), 1, MAX_RAMP) !== null) return [];
-    const budget = parseCount(params.get('waveBudget'), 0, WAVE.maxPerNight);
+    const budget = parseCount(params.get('waveBudget'), 0, MAX_WAVE_SLOTS);
     if (budget === null) return [];
     const spitters = parseCount(params.get('waveSpitters'), 0, budget);
     return spitters === null ? [] : [...spitterSlots(budget, spitters)];

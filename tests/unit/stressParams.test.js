@@ -59,7 +59,7 @@ test('stressRamp wins when both are present', () => {
 });
 
 test('invalid values are ignored', () => {
-    for (const query of ['?waveBudget=41', '?waveBudget=-1', '?waveBudget=1.5', '?waveBudget=x', '?waveBudget=', '?stressRamp=0', '?stressRamp=3600', '?stressRamp=-5', '?stressRamp=2e3']) {
+    for (const query of ['?waveBudget=81', '?waveBudget=-1', '?waveBudget=1.5', '?waveBudget=x', '?waveBudget=', '?stressRamp=0', '?stressRamp=3600', '?stressRamp=-5', '?stressRamp=2e3']) {
         assert.equal(parseStressSchedule(query), null, query);
     }
 });

@@ -7,7 +7,12 @@
  *   pollutionBudget    = perThreatLevel * (threatLevel - 1)
  *   defenseResponse    = min(maxResponse, floor(max(0, stationary guns - 1) / cannonsPerResponse))
  *   accelerationBudget = floor(max(0, night - accelerationFromNight)^2 / accelerationDivisor)
- *   budget             = min(maxPerNight, the sum of all four)
+ *   budget             = min(waveCap(night), the sum of all four)
+ *   waveCap            = min(lateMax, maxPerNight + floor(max(0, night - lateFromNight) * lateSlots / lateNights))
+ *
+ * TASK 037 (Balanced): the cap is 40 to Night 40, then rises smoothly, 2 slots every
+ * 3 Nights, to 80 on Night 100. Only the cap moves: Spitters and Brutes keep their own
+ * limits, so the extra slots are ordinary mutants. Provisional, for playtesting.
  *   lastSpawnTick      = max(minLastTick, lastTick - windowShrinkPerNight * max(0, night - accelerationFromNight))
  *
  * Acceleration and the shrinking spawn window depend only on the night, so
@@ -49,8 +54,17 @@ export const WAVE = Object.freeze({
     maxResponse: 4,
     accelerationFromNight: 6,
     accelerationDivisor: 12,
-    maxPerNight: 40,
+    maxPerNight: 40, // the cap through Night 40
+    // TASK 037: the late ramp. The schedule must fit its window (at most 601 slots in
+    // ticks 600-1200), so lateMax also guards any Night a test or setDay reaches.
+    lateFromNight: 40,
+    lateSlots: 2,
+    lateNights: 3,
+    lateMax: 80,
 });
+
+/** TASK 037: the most slots any Night can have. */
+export const MAX_WAVE_SLOTS = WAVE.lateMax;
 
 export const SPITTER_WAVE = Object.freeze({
     firstNight: 5,
@@ -101,7 +115,14 @@ export function accelerationBudget(night) {
 
 export function waveBudget(night, threat, autocannons) {
     const total = nightBudget(night) + pollutionBudget(threat) + defenseResponse(autocannons) + accelerationBudget(night);
-    return Math.min(WAVE.maxPerNight, total);
+    return Math.min(waveCap(night), total);
+}
+
+/** TASK 037: a Night's slot cap: 40 to Night 40, then 2 more every 3 Nights, 80 at most (Night 100). */
+export function waveCap(night) {
+    assertCount('night', night, 1);
+    const late = Math.floor(Math.max(0, night - WAVE.lateFromNight) * WAVE.lateSlots / WAVE.lateNights);
+    return Math.min(WAVE.lateMax, WAVE.maxPerNight + late);
 }
 
 /** The latest spawn tick of a night: the window closes earlier as nights pass. */
