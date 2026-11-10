@@ -16,6 +16,7 @@ export const SuspendReason = Object.freeze({
     AUDIO: 'audio',
     BUILD: 'build',
     MANUAL: 'manual', // TASK 033.1: THE LITTLE YELLOW BOOK
+    CINEMATIC: 'cinematic', // TASK 035: the Presidential helicopter; GameScene's own, never the HUD's
 });
 
 const KNOWN = new Set(Object.values(SuspendReason));

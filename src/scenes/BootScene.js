@@ -6,6 +6,7 @@ import {UI_ART} from './uiArt.js';
 import {filterNewspaperArt, preloadNewspaperArt} from './newspaperArt.js';
 import {preloadEffects} from '../audio/audio.js';
 import {filterCombatFx, preloadCombatFx} from './CombatFxLayer.js';
+import {filterHeli, preloadHeli} from './HeliLayer.js';
 
 /**
  * Preloads the independent micro-scale PNG sprite sheets before starting the
@@ -24,6 +25,7 @@ export class BootScene extends Phaser.Scene {
         preloadNewspaperArt(this); // La Voz's photographs
         preloadEffects(this); // TASK 030: effects and voices; music follows the first gesture
         preloadCombatFx(this); // TASK 031: the three explosion strips
+        preloadHeli(this); // TASK 035: the Presidential helicopter
     }
 
     create() {
@@ -37,6 +39,7 @@ export class BootScene extends Phaser.Scene {
         filterOfficeArt(this, nearest);
         filterNewspaperArt(this, nearest);
         filterCombatFx(this, nearest);
+        filterHeli(this, nearest);
         if (nearest !== undefined && this.textures.exists(KILLDOZER.key)) this.textures.get(KILLDOZER.key).setFilter?.(nearest);
         for (const {key} of Object.values(UI_ART)) {
             if (nearest !== undefined && this.textures.exists(key)) this.textures.get(key).setFilter?.(nearest);

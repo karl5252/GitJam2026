@@ -33,6 +33,7 @@ test('game boots into the game scene in the ready phase with a live QA surface',
         audio: null, // TASK 030: ?audio=off
         combatFx: null, // TASK 031: made at Start
         president: null, // TASK 033.2: made at Start
+        heli: null, // TASK 035: made at Start
         // TASK 033.3: boot() adds ?tips=off, so this session shows none, whatever is saved.
         advice: {enabled: false, setting: true, forcedOff: true, visible: false, suppressed: true, tip: null, pending: null, seen: [], preview: null},
         adviceView: null,

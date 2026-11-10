@@ -1,6 +1,7 @@
 import {addArt, placeArt, buildingFrame, doorwayAt} from './SpriteArt.js';
 import {gateDepth} from './GateLayer.js';
-import {wallAppearance} from './WallTiles.js';
+import {wallFrames} from './WallTiles.js';
+import {getBuildingType} from '../core/buildingTypes.js';
 
 const ART_BUILDINGS = new Set(['hq', 'barracks', 'factory', 'powerPlant', 'mine', 'outpost', 'loudspeaker', 'wall']);
 /**
@@ -37,7 +38,7 @@ export class BuildingArtLayer {
         if (!sprite) return false;
         const {x, y, width, height} = this.#grid.footprintRect(building);
         // Images are bottom anchored; independent source aspect ratios are retained.
-        // Wall graphics now use full 32x32 frames centred on their own tile.
+        // Wall frames are centred on their own tile (see ART.wall).
         // Taller building art stays bottom-anchored as before.
         placeArt(sprite, building.type, x + width / 2, building.type === 'wall' ? y + height / 2 : y + height - 2);
         this.#sprites.set(building.id, sprite);
@@ -52,7 +53,7 @@ export class BuildingArtLayer {
     views() {
         return [...this.#sprites.entries()].map(([id, sprite]) => ({
             id, kind: sprite.texture.key.replace('papi-art-', ''), x: sprite.x, y: sprite.y,
-            width: sprite.displayWidth, height: sprite.displayHeight, depth: sprite.depth, originY: sprite.originY,
+            frame: Number(sprite.frame.name), width: sprite.displayWidth, height: sprite.displayHeight, depth: sprite.depth, originY: sprite.originY,
             doorway: doorwayAt(sprite.texture.key.replace('papi-art-', ''), sprite),
         }));
     }
@@ -60,7 +61,7 @@ export class BuildingArtLayer {
     update(building, shift) {
         const sprite = this.#sprites.get(building.id);
         if (!sprite) return;
-        if (building.type === 'wall') return; // neighbor topology and damage handled by syncWalls
+        if (building.type === 'wall') return; // its frame follows its neighbours, in syncWalls
         sprite.setFrame(buildingFrame(building, shift))
             .setAlpha(building.enabled ? 1 : DISABLED_ALPHA);
     }
@@ -74,19 +75,16 @@ export class BuildingArtLayer {
         this.syncWalls(buildings);
     }
 
-    /** Runs often but changes frames only when wall geometry or HP actually changes. */
+    /**
+     * Called from sync(), i.e. on every placement, demolition, destruction and layout
+     * load. Frames change only when wall or gate geometry changes; HP plays no part.
+     */
     syncWalls(buildings) {
-        const walls = buildings.filter(({type}) => type === 'wall');
-        const signature = walls.map(({id, col, row, hp}) => `${id}:${col},${row}:${hp}`).join('|');
+        const linked = buildings.filter(({type}) => type === 'wall' || getBuildingType(type)?.gate);
+        const signature = linked.map(({id, col, row}) => `${id}:${col},${row}`).join('|');
         if (signature === this.#wallSignature) return;
         this.#wallSignature = signature;
-        const occupied = new Set(walls.map(({col, row}) => `${col},${row}`));
-        for (const wall of walls) {
-            const sprite = this.#sprites.get(wall.id);
-            if (!sprite) continue;
-            const {frame, angle} = wallAppearance(wall, occupied);
-            sprite.setFrame(frame).setAngle(angle);
-        }
+        for (const [id, frame] of wallFrames(linked)) this.#sprites.get(id)?.setFrame(frame);
     }
 
     remove(id) {

@@ -41,7 +41,11 @@ export const ART = Object.freeze({
     // building layer gives larger art). The footprint stays one tile.
     outpost: {path: 'buildings/outpost.png', frameWidth: 32, frameHeight: 64, scale: 1, offsetX: 0, offsetY: 2, originY: 1},
     loudspeaker: {path: 'buildings/loudspeaker.png', frameWidth: 32, frameHeight: 72, scale: 1, offsetX: 0, offsetY: 2, originY: 1},
-    wall: {path: 'buildings/walls.png', frameWidth: 32, frameHeight: 32, scale: 1, offsetX: 0, originY: 0.5},
+    // 16 frames of 64x64 in one row (walls_v3.json), frame = N1|E2|S4|W8 mask. The post
+    // is centred in each frame and every arm runs to the frame's edge, so at 0.5 the
+    // frame covers exactly its 32 px tile, centred on it, and an arm ends on the tile
+    // edge where its neighbour's begins: nothing overlaps. Nearest filtering (BootScene).
+    wall: {path: 'buildings/walls_v3.png', frameWidth: 64, frameHeight: 64, scale: 0.5, offsetX: 0, originY: 0.5},
     // One sheet per orientation, 8 frames closed to open, each in a 32x48 cell with
     // 5 px of transparent spacing (291 px wide). The art stands on the cell's bottom
     // edge: a horizontal gate fills the bottom 32 px, a vertical one all 48, rising

@@ -47,6 +47,8 @@ import {ADVICE_TIMING, PresidentialAdvice} from './presidentialAdvice.js';
 import {ADVICE} from '../content/advice.js';
 import {browserStorage} from '../audio/SoundManager.js';
 import {PresidentLayer} from './PresidentLayer.js';
+import {HeliVisit, blendPose, cameraTarget, pickupPoint} from './presidentialHeli.js';
+import {HeliLayer} from './HeliLayer.js';
 import {EcologistLayer} from './EcologistLayer.js';
 import {TerrainLayer} from './TerrainLayer.js';
 import {TruckLayer} from './TruckLayer.js';
@@ -71,6 +73,7 @@ import {SuspendReason, Suspension} from './suspension.js';
 export const FAST_FORWARD_TICKS_PER_FRAME = MAX_MANUAL_STEPS;
 
 /** What a player may still do while END DAY's fast-forward runs: look around. */
+const HELI_DAY = 2; // TASK 035: the calendar's day 2 is the HUD's Day 1, the first timed Day after Night 1
 const FAST_FORWARD_ALLOWED = new Set([Command.ZOOM_IN, Command.ZOOM_OUT, Command.FIT, Command.RESTART]);
 
 const GRID_LINE_COLOR = 0x78909c;
@@ -249,7 +252,7 @@ export class GameScene extends Phaser.Scene {
         });
         for (const [key, dx, dy] of [['LEFT', 1, 0], ['RIGHT', -1, 0], ['UP', 0, 1], ['DOWN', 0, -1]]) {
             this.input.keyboard.on(`keydown-${key}`, (event) => {
-                if (!this.newspaper?.open && !this.readingManual(event)) this.worldCamera.panBy(dx * KEY_PAN, dy * KEY_PAN);
+                if (!this.newspaper?.open && !this.readingManual(event) && !this.inCinematic()) this.worldCamera.panBy(dx * KEY_PAN, dy * KEY_PAN);
             });
         }
 
@@ -364,7 +367,7 @@ export class GameScene extends Phaser.Scene {
             if (!handlers[event] || event === Command.CLOSE_NEWSPAPER || event === Command.SUSPEND || event === Command.ADVICE) continue;
             const handler = handlers[event];
             handlers[event] = (payload) => {
-                if (!this.newspaper?.open) handler(payload);
+                if (!this.newspaper?.open && !this.inCinematic()) handler(payload); // TASK 035: nor during the helicopter
             };
         }
         for (const [event, handler] of Object.entries(handlers)) EventBus.on(event, handler);
@@ -375,6 +378,10 @@ export class GameScene extends Phaser.Scene {
             this.presidentLayer?.destroy(); // TASK 033.2: the scene object is reused on restart
             this.presidentLayer = null;
             this.president = null;
+            this.heliLayer?.destroy(); // TASK 035: a flight cut short leaves nothing behind
+            this.heliLayer = null;
+            this.heli = null;
+            this.heliCamera = null;
             for (const [event, handler] of Object.entries(handlers)) EventBus.off(event, handler);
             this.scene.stop('hud');
         });
@@ -573,6 +580,76 @@ export class GameScene extends Phaser.Scene {
         // TASK 033.2: El Presidente's Day 0 cameo. Presentation only: see syncPresident.
         this.president = new PresidentCameo();
         this.presidentLayer = new PresidentLayer(this);
+        // TASK 035: the Day 1 helicopter. Presentation only: see syncHeli. TEST_MODE may switch it
+        // off (?heli=off, which boot() adds) or fly it faster (?heliSpeed=N); a shipped game always has it.
+        const heliParams = new URLSearchParams(TEST_MODE ? window.location.search : '');
+        this.heli = new HeliVisit({enabled: heliParams.get('heli') !== 'off', timeScale: Number(heliParams.get('heliSpeed')) || 1});
+        this.heliLayer = null;
+        this.heliCamera = null;
+        this.heliRestored = null;
+    }
+
+    // ---- TASK 035: the Day 1 helicopter -----------------------------------------------
+
+    /** The helicopter holds the world: no map press, wheel, key pan or order means anything. */
+    inCinematic() {
+        return this.suspension.has(SuspendReason.CINEMATIC);
+    }
+
+    /**
+     * One presentation frame of the Day 1 helicopter. It waits for the first timed Day
+     * after Night 1 to be free to show (La Voz closed, nothing else holding the world, no
+     * END DAY under way), then holds the world as the `cinematic` reason, so no tick runs
+     * and none is made up: the Day starts exactly as it would have. It moves the camera
+     * onto HQ and back to the player's own view, and touches nothing else.
+     */
+    syncHeli(delta) {
+        const {heli, cycle} = this;
+        if (!heli || !cycle?.started) return;
+        if (heli.waiting) {
+            const day1 = cycle.timed && !cycle.deployment && cycle.day === HELI_DAY;
+            if (!cycle.timed || this.phase === GamePhase.DEFEATED || cycle.day > HELI_DAY || (cycle.day === HELI_DAY && cycle.shift !== Shift.DAY)) {
+                heli.skip(); // its moment passed (or there is none): never this run
+                return;
+            }
+            const hq = this.placement.buildings().find((b) => b.type === HQ_TYPE);
+            const free = !this.newspaper?.open && !this.suspension.active && !cycle.fastForwarding && this.phase === GamePhase.STARTED;
+            if (!day1 || !free || !hq) return;
+            this.startHeli(this.grid.footprintRect(hq));
+        }
+        if (!heli.active) return;
+        const held = this.suspension.reasons().some((reason) => reason !== SuspendReason.CINEMATIC);
+        heli.update(held ? 0 : delta, delta); // the rotor turns whatever holds the flight
+        const view = heli.view();
+        if (heli.active) {
+            this.worldCamera.setPose(blendPose(this.heliCamera.saved, this.heliCamera.target, view.cameraBlend));
+            this.heliLayer.sync(view);
+        } else this.endHeli();
+    }
+
+    startHeli(hqRect) {
+        this.exitPlacementMode();
+        this.exitFlagMode();
+        this.mousePan = null;
+        this.pendingPress = null; // a press begun before it means nothing after
+        this.dragCell = null;
+        const saved = this.worldCamera.pose();
+        const pickup = pickupPoint(hqRect);
+        const {view: target, rect} = this.worldCamera.framing(cameraTarget(saved, pickup));
+        this.heli.start(hqRect, rect);
+        this.heliCamera = {saved, target};
+        this.heliLayer = new HeliLayer(this);
+        this.suspension.set(SuspendReason.CINEMATIC, true);
+    }
+
+    /** Everything back as the player left it: the camera exactly, input and the world released. */
+    endHeli() {
+        this.worldCamera.setPose(this.heliCamera.saved);
+        this.heliRestored = this.worldCamera.pose();
+        this.heliLayer?.destroy();
+        this.heliLayer = null;
+        this.heliCamera = null;
+        this.suspension.set(SuspendReason.CINEMATIC, false);
     }
 
     /**
@@ -844,7 +921,6 @@ export class GameScene extends Phaser.Scene {
         this.present(State.SPEED, {speed: this.clock.speed});
         const mutants = this.mutants.snapshot();
         const buildings = this.placement.buildings();
-        this.buildingArt?.syncWalls(buildings); // damage changes during combat, without power events
         const isSeen = this.seenBy();
         this.fogLayer?.sync();
         this.syncTerrain();
@@ -1434,7 +1510,7 @@ export class GameScene extends Phaser.Scene {
     /** A press the HUD did not capture. A mouse acts now; a finger may yet become a gesture. */
     handleGridPointerDown(pointer) {
         this.dragCell = null; // lifting a finger sends no move, so a finished drag ends here
-        if (!this.grid || this.phase === GamePhase.DEFEATED || isOrientationBlocked() || this.newspaper?.open || this.readingManual()) return;
+        if (!this.grid || this.phase === GamePhase.DEFEATED || isOrientationBlocked() || this.newspaper?.open || this.readingManual() || this.inCinematic()) return;
         // During END DAY's fast-forward a click only looks: construction is closed in
         // the domain, and here a left click no longer selects or arms anything.
         const looking = pointer.rightButtonDown() || pointer.middleButtonDown();
@@ -1781,7 +1857,7 @@ export class GameScene extends Phaser.Scene {
     }
 
     handleWheel(pointer, deltaY) {
-        if (this.newspaper?.open || this.readingManual() || !this.worldCamera.worldAt(pointer) || isOrientationBlocked()) return;
+        if (this.newspaper?.open || this.readingManual() || this.inCinematic() || !this.worldCamera.worldAt(pointer) || isOrientationBlocked()) return;
         if (deltaY < 0) this.worldCamera.zoomIn(pointer);
         else if (deltaY > 0) this.worldCamera.zoomOut(pointer);
     }
@@ -1845,7 +1921,7 @@ export class GameScene extends Phaser.Scene {
     }
 
     handleGridPointerMove(pointer) {
-        if (!this.grid || isOrientationBlocked() || this.newspaper?.open || this.readingManual()) return;
+        if (!this.grid || isOrientationBlocked() || this.newspaper?.open || this.readingManual() || this.inCinematic()) return;
         if (this.mousePan && !pointer.rightButtonDown() && !pointer.middleButtonDown()) this.mousePan = null; // released over the HUD
         if (this.mousePan) {
             this.worldCamera.panBy(pointer.x - this.mousePan.x, pointer.y - this.mousePan.y);
@@ -1934,6 +2010,7 @@ export class GameScene extends Phaser.Scene {
         }
         this.syncShiftUi();
         this.syncPresident(delta);
+        this.syncHeli(delta);
         this.syncAdvice(delta);
         this.combatFx?.sync(this.clock.tick, delta, !this.suspension.active && Boolean(this.cycle?.running || this.cycle?.fastForwarding));
         this.syncAudio(delta);
@@ -2165,6 +2242,15 @@ export class GameScene extends Phaser.Scene {
             selectedProtest: this.selectedProtestId ?? null,
             combatFx: this.combatFx ? this.combatFx.view() : null,
             president: this.president ? {...this.president.view(), drawn: this.presidentLayer.view()} : null, // TASK 033.2
+            heli: this.heli ? { // TASK 035
+                ...this.heli.view(),
+                drawn: this.heliLayer?.view() ?? null,
+                camera: this.heliCamera ? {saved: {...this.heliCamera.saved}, target: {...this.heliCamera.target}} : null,
+                restored: this.heliRestored ?? null,
+                // What the world really holds, by texture: one hidden El Presidente, at most one helicopter, nobody else.
+                actors: Object.fromEntries([['heli', 'papi-heli'], ['president', 'papi-art-elcolonel']]
+                    .map(([name, key]) => [name, this.children.list.filter((o) => o.texture?.key === key).length])),
+            } : null,
             advice: {...this.advice.view(), preview: this.advicePreview}, // TASK 033.3
             audio: this.gameAudio?.manager.enabled ? {...this.gameAudio.manager.snapshot(), narration: this.gameAudio.narration()} : null,
             newspaper: this.newspaper ? {enabled: this.newsEnabled, open: this.newspaper.open, reason: this.newspaper.reason,

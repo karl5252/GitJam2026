@@ -74,6 +74,24 @@ export class WorldCamera {
         return worldToScreen(this.#view, this.#viewport, point);
     }
 
+    /** TASK 035: the view as it stands, to put back later exactly. */
+    pose() {
+        return {zoom: this.#view.zoom, x: this.#view.x, y: this.#view.y};
+    }
+
+    /** TASK 035: a pose as it would really be shown (kept inside the world), and the world rectangle it shows. */
+    framing(pose) {
+        const view = clampView(pose, this.#viewport, this.#world);
+        const width = this.#viewport.width / view.zoom;
+        const height = this.#viewport.height / view.zoom;
+        return {view, rect: {x: view.x - width / 2, y: view.y - height / 2, width, height}};
+    }
+
+    /** TASK 035: show a pose, kept inside the world. A pose taken by pose() comes back unchanged. */
+    setPose(pose) {
+        this.#show(clampView(pose, this.#viewport, this.#world));
+    }
+
     snapshot() {
         return {...this.#view, viewport: {...this.#viewport}, fitZoom: fitZoom(this.#viewport, this.#world), maxZoom: MAX_ZOOM};
     }

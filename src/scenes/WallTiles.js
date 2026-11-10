@@ -1,49 +1,59 @@
+import {getBuildingType} from '../core/buildingTypes.js';
+
 /**
- * Presentation-only wall autotiling over the nine authored junction frames.
- * Frame indices reflect the original 64x260 PNG with 32x26 cells (2 columns).
- * The second column is blank except for the last damaged frame.
+ * Presentation-only wall autotiling over `walls_v3.png`: 16 frames of 64x64, one
+ * per cardinal connection mask, so the mask is the frame index. Every frame holds
+ * its own post, centred at (32, 32), and its arms run to the frame's edges.
+ * Nothing here participates in gameplay occupancy, walking or combat.
  */
-export const WALL_FRAME = Object.freeze({
-    horizontal: 0,
-    vertical: 2,
-    upperLeft: 4,       // east + south
-    upperRight: 6,      // west + south
-    lowerRight: 8,      // west + north
-    lowerLeft: 10,      // east + north
-    reverseT: 12,       // west + north + east
-    tee: 14,            // west + south + east
-    cross: 16,
-    damaged: 18,
-    rubble: 19,
-});
+export const NORTH = 1;
+export const EAST = 2;
+export const SOUTH = 4;
+export const WEST = 8;
 
-/** Returns the visual frame/angle; never participates in gameplay occupancy. */
-export function wallAppearance({col, row, hp = 100}, occupied, maxHp = 100) {
-    const ratio = maxHp > 0 ? hp / maxHp : 1;
-    if (ratio <= 1 / 3) return {frame: WALL_FRAME.rubble, angle: 0};
-    if (ratio <= 2 / 3) return {frame: WALL_FRAME.damaged, angle: 0};
+const SIDES = Object.freeze([
+    {bit: NORTH, dc: 0, dr: -1, axis: 'y'},
+    {bit: EAST, dc: 1, dr: 0, axis: 'x'},
+    {bit: SOUTH, dc: 0, dr: 1, axis: 'y'},
+    {bit: WEST, dc: -1, dr: 0, axis: 'x'},
+]);
 
-    const has = (c, r) => occupied.has(`${c},${r}`);
-    const n = has(col, row - 1), e = has(col + 1, row);
-    const s = has(col, row + 1), w = has(col - 1, row);
-    const count = Number(n) + Number(e) + Number(s) + Number(w);
+const key = (col, row) => `${col},${row}`;
 
-    if (count === 4) return {frame: WALL_FRAME.cross, angle: 0};
-    if (count === 3) {
-        if (!n) return {frame: WALL_FRAME.tee, angle: 0};
-        if (!s) return {frame: WALL_FRAME.reverseT, angle: 0};
-        // Only top/bottom T images were supplied. Rotation covers the other two.
-        if (!w) return {frame: WALL_FRAME.reverseT, angle: 90};
-        return {frame: WALL_FRAME.reverseT, angle: -90};
+/**
+ * What each wall or gate tile offers a neighbouring wall: a wall joins on every
+ * side; a gate joins only along its barrier, which runs across its passage axis.
+ * A Vertical Gate (passage `x`) joins walls north and south, a Horizontal Gate
+ * (passage `y`) walls east and west.
+ */
+export function wallLinks(buildings) {
+    const links = new Map();
+    for (const {type, col, row} of buildings) {
+        if (type === 'wall') links.set(key(col, row), 'wall');
+        else {
+            const gate = getBuildingType(type)?.gate;
+            if (gate) links.set(key(col, row), gate.passageAxis === 'x' ? 'y' : 'x');
+        }
     }
-    if (count === 2) {
-        if (n && s) return {frame: WALL_FRAME.vertical, angle: 0};
-        if (e && w) return {frame: WALL_FRAME.horizontal, angle: 0};
-        if (n && e) return {frame: WALL_FRAME.lowerLeft, angle: 0};
-        if (e && s) return {frame: WALL_FRAME.upperLeft, angle: 0};
-        if (s && w) return {frame: WALL_FRAME.upperRight, angle: 0};
-        return {frame: WALL_FRAME.lowerRight, angle: 0};
+    return links;
+}
+
+/** The 4-bit N/E/S/W mask, which is the frame index. No diagonals. */
+export function wallFrame({col, row}, links) {
+    let mask = 0;
+    for (const {bit, dc, dr, axis} of SIDES) {
+        const link = links.get(key(col + dc, row + dr));
+        if (link === 'wall' || link === axis) mask |= bit;
     }
-    if (n || s) return {frame: WALL_FRAME.vertical, angle: 0};
-    return {frame: WALL_FRAME.horizontal, angle: 0};
+    return mask;
+}
+
+/** Frame per wall id for a whole building list. */
+export function wallFrames(buildings) {
+    const links = wallLinks(buildings);
+    const frames = new Map();
+    for (const building of buildings) {
+        if (building.type === 'wall') frames.set(building.id, wallFrame(building, links));
+    }
+    return frames;
 }

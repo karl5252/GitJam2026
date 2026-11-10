@@ -179,16 +179,18 @@ export const body = (page) => page.locator('body');
  *   older suites that step through a dawn and press the map keep working; a shipped game always shows it.
  * @param {boolean} [opts.tips] - TASK 033.3: Presidential Advice. Off by default in tests (TEST_MODE's ?tips=off),
  *   so no suite gains a card it did not ask for; a shipped game always has it, on by default.
+ * @param {boolean} [opts.heli] - TASK 035: the Day 1 helicopter. Off by default in tests (TEST_MODE's ?heli=off),
+ *   so suites that reach Day 1 are never held by it; a shipped game always has it.
  * @param {string|null} [opts.cycle] - 'legacy' (the default) keeps the untimed Day that
  *   older suites were written for. null plays the real active Day, Dusk and Night;
  *   evidence about the active cycle must come from tests that pass null.
  * @param {string|null} [opts.map] - suites run on the original open map unless they
  *   ask for another. null adds nothing, which is the map a real new game gets.
  */
-export async function boot(page, {path = '/', scene, waitForQA = false, mutants = true, hq = true, query = '', map = 'open', cycle = 'legacy', news = false, audio = false, tips = false} = {}) {
+export async function boot(page, {path = '/', scene, waitForQA = false, mutants = true, hq = true, query = '', map = 'open', cycle = 'legacy', news = false, audio = false, tips = false, heli = false} = {}) {
     const watch = watchBoot(page);
     try {
-        await page.goto(`${path}?testMode${cycle ? `&cycle=${cycle}` : ''}${map ? `&map=${map}` : ''}${mutants ? '' : '&mutants=off'}${hq ? '' : '&hq=off'}${news ? '' : '&news=off'}${audio ? '' : '&audio=off'}${tips ? '' : '&tips=off'}${query ? `&${query}` : ''}`);
+        await page.goto(`${path}?testMode${cycle ? `&cycle=${cycle}` : ''}${map ? `&map=${map}` : ''}${mutants ? '' : '&mutants=off'}${hq ? '' : '&hq=off'}${news ? '' : '&news=off'}${audio ? '' : '&audio=off'}${tips ? '' : '&tips=off'}${heli ? '' : '&heli=off'}${query ? `&${query}` : ''}`);
         if (scene) {
             await expect(body(page)).toHaveAttribute('data-scene', scene, {timeout: 10_000});
         }
