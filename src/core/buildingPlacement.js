@@ -406,6 +406,98 @@ export class BuildingPlacement {
         return check;
     }
 
+    /**
+     * TASK 042: what a saved dawn needs to put the base back: every building in
+     * creation order (list order is data: targeting and ties follow it), the id
+     * counter and the Loudspeaker switch. Detached plain data.
+     */
+    checkpoint() {
+        return {buildings: this.buildings(), nextId: this.#nextId, loudspeakerNetwork: this.#loudspeakerNetwork};
+    }
+
+    /**
+     * TASK 042: put a saved base back into a fresh placement, keeping ids, order,
+     * HP, switches, flags and roles, without paying or re-running the placement
+     * rules, which a legal base may no longer meet (a flag walled off since, a
+     * road left disconnected). Grid, terrain and road rules still apply to every
+     * tile. Order as in real play: HQ and its ring, then player roads (a gate
+     * stands on one), then everything else. Listeners are not told: whatever
+     * follows the buildings restores its own records from the same checkpoint.
+     * Every record is checked before anything changes; a spatial refusal after
+     * that throws, and the caller must discard the world.
+     * @param {{buildings: object[], roads: Array<{col, row}>, nextId: number, loudspeakerNetwork: boolean}} checkpoint
+     */
+    restoreCheckpoint({buildings, roads, nextId, loudspeakerNetwork}) {
+        if (this.#buildings.length > 0 || this.#hqBuilt) throw new Error('restoreCheckpoint needs an empty placement');
+        if (!Array.isArray(buildings) || !Array.isArray(roads) || typeof loudspeakerNetwork !== 'boolean') {
+            throw new TypeError('a checkpoint needs buildings, roads and the Loudspeaker switch');
+        }
+        if (!Number.isSafeInteger(nextId) || nextId < 1) throw new RangeError(`nextId must be a positive integer, got ${nextId}`);
+        const ids = new Set();
+        buildings.forEach((record, index) => {
+            const problem = this.#checkRecord(record, nextId, loudspeakerNetwork);
+            if (problem) throw new TypeError(`building ${index}: ${problem}`);
+            if (ids.has(record.id)) throw new TypeError(`building ${index}: duplicate id ${record.id}`);
+            ids.add(record.id);
+        });
+        if (this.#requireHq && buildings[0]?.type !== HQ_TYPE) throw new TypeError('the HQ must come first');
+        if (buildings.some((b, i) => i > 0 && b.type === HQ_TYPE)) throw new TypeError('one HQ only');
+        if (roads.length > 0 && !this.#roads) throw new TypeError('roads without a road network');
+        for (const cell of roads) if (!this.#inBounds(cell)) throw new TypeError(`road out of bounds: ${JSON.stringify(cell)}`);
+
+        const occupy = (record) => {
+            const {col, row, width, height} = record;
+            const placed = this.#grid.place(record.id, {col, row, width, height});
+            if (!placed.ok) throw new Error(`${record.id} cannot stand at ${col},${row}: ${placed.reason}`);
+            const copy = {...record, ...(record.flag ? {flag: {...record.flag}} : {})};
+            this.#buildings.push(copy);
+            return copy;
+        };
+        const [first, ...rest] = buildings;
+        if (first?.type === HQ_TYPE) {
+            const hq = occupy(first);
+            this.#hqBuilt = true;
+            const ring = this.#roads?.addHqRing(hq);
+            if (ring && !ring.ok) throw new Error(`HQ ring: ${ring.reason}`);
+        } else if (first) {
+            occupy(first);
+        }
+        for (const cell of roads) {
+            const restored = this.#roads.restoreTile(cell);
+            if (!restored.ok) throw new Error(`road at ${cell.col},${cell.row}: ${restored.reason}`);
+        }
+        for (const record of rest) {
+            const building = occupy(record);
+            const gate = getBuildingType(building.type).gate;
+            if (!gate) continue;
+            if (!this.#roads?.has(building)) throw new Error(`${building.id} is not on a road`);
+            this.#roads.setGate(building, gate.passageAxis);
+        }
+        this.#nextId = nextId;
+        this.#loudspeakerNetwork = loudspeakerNetwork;
+        this.#revision++;
+    }
+
+    /** A record's own shape, before anything is touched. @returns {string | null} what is wrong */
+    #checkRecord(record, nextId, loudspeakerNetwork) {
+        const type = getBuildingType(record?.type);
+        if (!type) return `unknown type ${record?.type}`;
+        const number = Number(String(record.id).slice(type.id.length + 1));
+        if (record.id !== `${type.id}-${number}` || !Number.isSafeInteger(number) || number < 1 || number >= nextId) return `bad id ${record.id}`;
+        if (![record.col, record.row].every(Number.isInteger)) return 'position';
+        if (record.width !== type.width || record.height !== type.height) return 'footprint';
+        if (!Number.isSafeInteger(record.hp) || record.hp < 1 || record.hp > type.maxHp) return `hp ${record.hp}`;
+        if (typeof record.enabled !== 'boolean') return 'enabled';
+        if (type.network && record.enabled !== loudspeakerNetwork) return 'a Loudspeaker follows the HQ switch';
+        const barracks = type.id === BARRACKS_TYPE;
+        if (barracks !== Object.hasOwn(record, 'flag')) return 'flag';
+        if (barracks && record.flag !== null && !this.#inBounds(record.flag)) return 'flag out of bounds';
+        if (Object.hasOwn(record, 'role') && !(barracks && record.role === BarracksRole.ROCKET)) return `role ${record.role}`;
+        const allowed = new Set(['id', 'type', 'col', 'row', 'width', 'height', 'enabled', 'hp', 'flag', 'role']);
+        const extra = Object.keys(record).find((key) => !allowed.has(key));
+        return extra ? `unexpected field ${extra}` : null;
+    }
+
     /** Layout fixtures only: a loaded base has already paid for what it is. */
     restoreRole(id, role) {
         if (!this.#barracks().some((b) => b.id === id)) return {ok: false, reason: UNKNOWN_BUILDING};

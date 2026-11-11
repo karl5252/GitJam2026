@@ -176,8 +176,5 @@ export const NOTICES = Object.freeze([
     {headline: 'PUBLIC NOTICE', body: 'Census complete. Report for recounting.'},
 ].map((entry) => Object.freeze(entry)));
 
-// Backwards-compatible default until newspaper.js selects from NOTICES by issue.
-export const NOTICE = NOTICES[0];
-
 /** Select a notice deterministically without consuming gameplay RNG. */
 export const noticeForIssue = (issue) => NOTICES[(Math.max(1, issue) - 1) % NOTICES.length];

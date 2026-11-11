@@ -36,11 +36,23 @@ export function browserStorage() {
                 return null;
             }
         },
+        /** @returns {boolean} whether it was stored (TASK 043: the campaign save needs to know) */
         set(key, value) {
             try {
-                globalThis.localStorage?.setItem(key, value);
+                if (!globalThis.localStorage) return false;
+                globalThis.localStorage.setItem(key, value);
+                return true;
             } catch {
-                // nothing to do: the setting simply does not persist
+                return false; // the setting simply does not persist
+            }
+        },
+        /** @returns {boolean} whether the key is now absent */
+        remove(key) {
+            try {
+                globalThis.localStorage?.removeItem(key);
+                return true;
+            } catch {
+                return false;
             }
         },
     };

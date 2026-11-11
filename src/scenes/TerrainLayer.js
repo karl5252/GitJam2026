@@ -243,6 +243,21 @@ function paintPlant(ctx, sheet, {plant, x, y, w, h}) {
 }
 
 /**
+ * Per seed: the generated picture, its bare ground and the ore, painted once and only
+ * ever read. Plain canvases, not Phaser textures, so they never take GPU memory
+ * (TASK 040: on the jungle, three 24 MB textures nothing drew). Same lifetime as the
+ * game's texture manager, which kept them before.
+ * @type {Map<string, {picture: HTMLCanvasElement, ground: HTMLCanvasElement, ore: HTMLCanvasElement}>}
+ */
+const SOURCES = new Map();
+
+function canvas(width, height) {
+    const element = document.createElement('canvas');
+    [element.width, element.height] = [width, height];
+    return element;
+}
+
+/**
  * The terrain, painted once into a single texture and shown as a single image, so it
  * costs one quad a frame however dense the jungle is, and it cannot drift from the
  * grid, because it is one world object at the grid's origin. The same seed always
@@ -271,8 +286,8 @@ export class TerrainLayer {
     #repainted = 0;
 
     /**
-     * The generated picture and its bare ground are made once per seed and never
-     * touched again. Each run paints on its own copy, so a restart always shows the
+     * The generated picture and its bare ground are made once per seed (SOURCES) and
+     * never touched again. Each run paints on its own copy, the only GPU texture, so a restart always shows the
      * jungle as it was generated, with nothing a previous run cleared. The picture is
      * the jungle as generated: a tile already cleared counts as jungle there, and
      * clearTiles repaints it.
@@ -306,16 +321,14 @@ export class TerrainLayer {
         });
         this.#hints = planHints(new SeededRandom(mixSeed(terrain.seed + 2)), terrain, tileSize);
 
-        if (!scene.textures.exists(key)) {
-            const texture = scene.textures.createCanvas(key, width, height);
-            const ground = scene.textures.createCanvas(`${key}-ground`, width, height);
-            const ctx = texture.getContext();
+        if (!SOURCES.has(key)) {
+            const [picture, ground, ore] = [canvas(width, height), canvas(width, height), canvas(width, height)];
+            const ctx = picture.getContext('2d');
             const rng = new SeededRandom(mixSeed(terrain.seed + 1));
             ctx.scale(RESOLUTION, RESOLUTION);
             paintGround(ctx, rng, width / RESOLUTION, height / RESOLUTION);
             paintPath(ctx, rng, terrain, tileSize);
-            ground.getContext().drawImage(texture.getSourceImage(), 0, 0);
-            ground.refresh();
+            ground.getContext('2d').drawImage(picture, 0, 0);
             paintTileEdges(ctx, generated, terrain, tileSize);
             for (let row = 0; row < terrain.rows; row++) {
                 for (let col = 0; col < terrain.cols; col++) if (generated(col, row)) paintFloor(ctx, tileSize, col, row);
@@ -323,20 +336,19 @@ export class TerrainLayer {
             ctx.imageSmoothingEnabled = false;
             for (const plant of this.#plants) paintPlant(ctx, this.#sheet, plant);
             for (const hint of this.#hints) paintHint(ctx, hint);
-            texture.refresh();
-            const ore = scene.textures.createCanvas(`${key}-ore`, width, height);
-            const oreCtx = ore.getContext();
+            const oreCtx = ore.getContext('2d');
             oreCtx.scale(RESOLUTION, RESOLUTION);
             paintOre(oreCtx, new SeededRandom(mixSeed(terrain.seed + 3)), terrain, tileSize);
-            ore.refresh();
+            SOURCES.set(key, {picture, ground, ore});
         }
+        const sources = SOURCES.get(key);
         const runKey = `${key}-run`;
         if (scene.textures.exists(runKey)) scene.textures.remove(runKey);
         this.#run = scene.textures.createCanvas(runKey, width, height);
-        this.#run.getContext().drawImage(scene.textures.get(key).getSourceImage(), 0, 0);
+        this.#run.getContext().drawImage(sources.picture, 0, 0);
         this.#run.refresh();
-        this.#ground = scene.textures.get(`${key}-ground`).getSourceImage();
-        this.#ore = scene.textures.get(`${key}-ore`).getSourceImage();
+        this.#ground = sources.ground;
+        this.#ore = sources.ore;
         this.#image = scene.add.image(grid.originX, grid.originY, runKey).setOrigin(0, 0).setScale(1 / RESOLUTION).setDepth(DEPTH);
     }
 

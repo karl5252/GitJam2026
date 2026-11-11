@@ -437,6 +437,21 @@ export class Mutants {
         return {ok: true, killed: true, hp};
     }
 
+    /** TASK 042: a saved dawn keeps only the id counters: dawn removed every mutant and shell. */
+    checkpoint() {
+        return {nextId: this.#nextId, nextShellId: this.#nextShellId};
+    }
+
+    /** TASK 042: on Continue only, into fresh mutants. The Night's plan is made on its first tick, as always. */
+    restoreDawn({nextId, nextShellId}) {
+        if (this.#mutants.length > 0 || this.#shells.length > 0) throw new Error('restoreDawn needs fresh mutants');
+        for (const [name, value] of Object.entries({nextId, nextShellId})) {
+            if (!Number.isSafeInteger(value) || value < 1) throw new RangeError(`${name} ${value}`);
+        }
+        this.#nextId = nextId;
+        this.#nextShellId = nextShellId;
+    }
+
     /** Detached plain data, in spawn order. */
     snapshot() {
         return this.#mutants.map((mutant) => (mutant.aim ? {...mutant, aim: {...mutant.aim}} : {...mutant}));

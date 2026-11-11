@@ -200,6 +200,41 @@ export class Ecologists {
         return members.length > 0 && members.some((e) => e.state === EcologistState.GATHERING) ? EcologistState.GATHERING : null;
     }
 
+    /**
+     * TASK 042: what a saved dawn keeps: the stream, so the next groups are drawn as
+     * they would have been, and the counters. Dusk ended every protest, so at dawn
+     * nothing on the map is more than a survivor running for the exit.
+     */
+    checkpoint() {
+        return {rng: this.#rng.snapshot(), nextId: this.#nextId, nextGroup: this.#nextGroup, totals: {...this.#totals}};
+    }
+
+    /**
+     * TASK 042: on Continue only. The survivors still running for the exit are gone:
+     * they were leaving and could block nothing. The Day's arrivals are planned
+     * afresh from the day and Pollution on its first tick, as they always are.
+     * @param {{rng: {seed: number, state: number}, nextId: number, nextGroup: number, totals: object}} checkpoint
+     */
+    restoreDawn({rng, nextId, nextGroup, totals}) {
+        if (this.#ecologists.length > 0 || this.#groups.length > 0) throw new Error('restoreDawn needs fresh ecologists');
+        for (const [name, value] of Object.entries({nextId, nextGroup})) {
+            if (!Number.isSafeInteger(value) || value < 1) throw new RangeError(`${name} ${value}`);
+        }
+        const keys = Object.keys(this.#totals);
+        if (!totals || Object.keys(totals).length !== keys.length || !keys.every((k) => Number.isSafeInteger(totals[k]) && totals[k] >= 0)) {
+            throw new TypeError(`totals ${JSON.stringify(totals)}`);
+        }
+        this.#rng.restore(rng);
+        this.#nextId = nextId;
+        this.#nextGroup = nextGroup;
+        this.#totals = {...totals};
+        this.#day = null;
+        this.#arrivals = [];
+        this.#map = null;
+        this.#revision = null;
+        this.#fields.clear();
+    }
+
     /** Detached state. Reading it changes nothing. */
     snapshot() {
         return {

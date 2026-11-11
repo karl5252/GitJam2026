@@ -5,7 +5,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {edition, fitLines, stories} from '../../src/content/newspaper.js';
-import {CONTEXT_COLUMNS, LEADS, NOTICE, WORLD_COLUMNS} from '../../src/content/newspaperStories.js';
+import {CONTEXT_COLUMNS, LEADS, NOTICES, WORLD_COLUMNS, noticeForIssue} from '../../src/content/newspaperStories.js';
 import {Economy} from '../../src/core/economy.js';
 import {DAY_TICKS, DUSK_TICKS, Shift, ShiftCycle} from '../../src/core/shiftCycle.js';
 import {SimulationClock} from '../../src/core/simulationClock.js';
@@ -38,10 +38,15 @@ const settlementWith = ({power = 'normal', emitted = 0, threat = 1, factory = 0,
     ...SETTLEMENT, power: {...SETTLEMENT.power, status: power}, pollution: {...SETTLEMENT.pollution, emitted, threatLevel: threat}, counts: {factory, mine},
 });
 
-test('the pool: twenty stories with unique ids, every slot written, no placeholder left anywhere in an edition', () => {
+test('the pool: every story has an id unique across all three kinds, every slot written, no placeholder left anywhere in an edition', () => {
     const ids = allStories().map((s) => s.id);
-    assert.equal(ids.length, 20);
-    assert.equal(new Set(ids).size, ids.length);
+    // The content contract, not a fixed total: a lead for every issue, three world columns for the
+    // desktop's three slots, and context stories for what really happened.
+    assert.ok(LEADS.length >= 1, 'at least one lead');
+    assert.ok(WORLD_COLUMNS.length >= 3, 'enough world news to fill three columns');
+    assert.ok(CONTEXT_COLUMNS.length >= 1, 'at least one context story');
+    for (const id of ids) assert.ok(typeof id === 'string' && id.length > 0, `id: ${id}`);
+    assert.equal(new Set(ids).size, ids.length, 'ids are unique');
     for (const lead of LEADS) {
         for (const field of ['kicker', 'headline', 'subhead', 'body', 'brief']) assert.ok(typeof lead[field] === 'string' && lead[field].length > 0, `${lead.id}.${field}`);
     }
@@ -68,7 +73,17 @@ test('every story fits its slot as the layouts cut it: nothing would end in an e
         assert.ok(fits(column.body, 30, 4), `${column.id} body`);
         assert.ok(column.headline.length <= 18, `${column.id} headline`); // bold 18 px Georgia: at most about 240 px of a 244 px column
     }
-    assert.ok(fits(NOTICE.body, 30, 2), 'notice');
+    for (const notice of NOTICES) assert.ok(fits(notice.body, 30, 2), `notice: ${notice.body}`);
+});
+
+test('the public notice turns once per issue through all twelve, then round again; the same issue always prints the same', () => {
+    const notices = Array.from({length: NOTICES.length * 2}, (_, i) => edition({issue: i + 1, settlement: SETTLEMENT}).advert.body);
+    assert.equal(NOTICES.length, 12);
+    assert.deepEqual(notices.slice(0, NOTICES.length), NOTICES.map((n) => n.body), 'every notice once, in order');
+    assert.deepEqual(notices.slice(NOTICES.length), notices.slice(0, NOTICES.length), 'then the same round again');
+    assert.deepEqual(edition({issue: 7, settlement: SETTLEMENT}).advert, edition({issue: 7, settlement: SETTLEMENT}).advert);
+    assert.deepEqual(edition({issue: 1, settlement: SETTLEMENT}).advert, {...NOTICES[0]}, 'issue 1 prints what it always printed');
+    assert.deepEqual(noticeForIssue(0), NOTICES[0], 'an issue before the first never breaks');
 });
 
 test('one lead per issue in order, round again; the artillery is dismantled before it returns; the ketchup runs once a round', () => {

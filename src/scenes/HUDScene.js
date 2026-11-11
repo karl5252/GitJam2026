@@ -22,6 +22,7 @@ import {endingSeen} from './profile.js';
 import {SpeedControls} from './SpeedControls.js';
 import {DRAWER_ROWS, currentLayout} from './hudLayout.js';
 import {costText, shortfall} from './uiArt.js';
+import {CampaignMenu} from './CampaignMenu.js';
 
 const PLACEMENT_HINTS = {
     [Hint.POWER_WARNING]: 'LOW POWER: this stops every powered building. Press again to build',
@@ -43,6 +44,8 @@ const PLACEMENT_HINTS = {
     [BARRACKS_LIMIT]: `No more than ${MAX_BARRACKS} Barracks`,
     [Hint.MINE_DOCK]: 'Mine dock (bottom side) needs a connected road',
     [Hint.PROTEST]: 'ECOLOGISTAS! Protesters are blocking a delivery road',
+    [Hint.SAVE_FAILED]: 'Campaign could not be saved. Progress may be lost when you leave', // TASK 044
+    [Hint.SAVE_REPLACED]: 'Not saved: another tab has replaced or moved on with this campaign', // TASK 044
     [MineFailure.NO_DEPOSIT]: 'A Mine needs all four tiles on one ore deposit',
     [MineFailure.DEPOSIT_TAKEN]: 'This deposit already has a Mine',
     [FlagFailure.OCCUPIED]: 'Flags go on open ground or roads',
@@ -211,6 +214,7 @@ export class HUDScene extends Phaser.Scene {
 
         const handlers = {
             [State.PHASE]: (value) => this.onPhase(value),
+            [State.CAMPAIGN]: (value) => this.campaignMenu?.setOffer(value), // TASK 044
             [State.SHIFT]: (value) => this.onShift(value),
             [State.ECONOMY]: (economy) => {
                 this.economy = economy;
@@ -269,10 +273,23 @@ export class HUDScene extends Phaser.Scene {
         this.startButton = new HudButton(this, {...MENU_ROW.start, fontSize: '32px'}, {
             text: 'START', tone: TONE.danger, depth: MENU_DEPTH, onPress: () => {
                 audioFor(this.game).play('ui.click');
-                EventBus.emit(Command.START);
+                if (this.campaignMenu?.offered) this.campaignMenu.openConfirm(); // TASK 044: it would end the saved campaign
+                else EventBus.emit(Command.START);
             },
         });
         this.startProxy = addProxy(this, this.startButton.rect, 'start', {label: 'Start'});
+        // TASK 044: CONTINUE, its notices and the New Game question. GameScene says what may be continued.
+        this.campaignMenu = new CampaignMenu(this, {
+            depth: MENU_DEPTH,
+            onContinue: () => {
+                audioFor(this.game).play('ui.click');
+                EventBus.emit(Command.CONTINUE);
+            },
+            onNewGame: () => {
+                audioFor(this.game).play('ui.click');
+                EventBus.emit(Command.START, {replace: true});
+            },
+        });
         this.menuSound = this.menuSoundButton(MENU_ROW.sound);
         this.menuManual = this.menuManualButton(MENU_ROW.manual);
     }
@@ -370,6 +387,8 @@ export class HUDScene extends Phaser.Scene {
         this.officeMenu?.destroy();
         this.officeMenu = null;
         this.title.setVisible(false);
+        this.campaignMenu?.destroy(); // TASK 044
+        this.campaignMenu = null;
         this.startButton.setVisible(false);
         this.startProxy.destroy();
         this.startProxy = null;

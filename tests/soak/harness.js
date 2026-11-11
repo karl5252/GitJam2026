@@ -69,7 +69,7 @@ const gridFor = ({cols, rows, tileSize}, terrain) => ({
  *   active - the real ACTIVE cycle GameScene plays: a timed Day, Dusk, then Night.
  *   Off by default, which keeps the untimed Day every older test was written for.
  */
-export function createWorld({seed = 731, schedule = null, resources = STARTING_RESOURCES, openConstruction = false, requireHq = false, roads: useRoads = false, pollution: startingPollution = 0, firstNight = 1, rng: fixedRng = null, spitterSlots = [], bruteSlots = [], absorbedSlots = [], spitters = true, brutes = true, map = null, terrain = null, active = false, ecologists: useEcologists = false} = {}) {
+export function createWorld({seed = 731, schedule = null, resources = STARTING_RESOURCES, openConstruction = false, requireHq = false, roads: useRoads = false, pollution: startingPollution = 0, firstNight = 1, rng: fixedRng = null, spitterSlots = [], bruteSlots = [], absorbedSlots = [], spitters = true, brutes = true, map = null, terrain = null, active = false, ecologists: useEcologists = false, begin = true} = {}) {
     const clock = new SimulationClock();
     const economy = new Economy(resources);
     const pollution = new Pollution(startingPollution);
@@ -122,7 +122,7 @@ export function createWorld({seed = 731, schedule = null, resources = STARTING_R
     const loudspeakers = new Loudspeakers({cycle, placement});
     mutants.setLoudspeakers(loudspeakers);
     ecologists?.setLoudspeakers(loudspeakers);
-    cycle.begin();
+    if (begin) cycle.begin(); // TASK 042: a world for a restored dawn is built but never begun
 
     const soldierKills = new Set(); // this tick's: a turret that had one locked has not stepped since
 

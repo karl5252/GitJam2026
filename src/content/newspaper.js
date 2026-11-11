@@ -17,7 +17,7 @@
  * period is the Night just completed, whose number is the settlement's `day`.
  */
 
-import {CONTEXT_COLUMNS, LEADS, NOTICE, WORLD_COLUMNS} from './newspaperStories.js';
+import {CONTEXT_COLUMNS, LEADS, WORLD_COLUMNS, noticeForIssue} from './newspaperStories.js';
 
 const mod = (n, m) => ((n % m) + m) % m;
 
@@ -91,7 +91,7 @@ export function edition({issue, settlement, delivered = 0}) {
         columns: columns.map(({id, headline, body}) => ({id, headline, body})),
         figuresTitle: `CIFRAS OFICIALES · NIGHT\u00A0${night}`, // "NIGHT 1" never splits: a phone wraps before it
         figures,
-        advert: {...NOTICE}, // a government notice in the desktop's small box
+        advert: {...noticeForIssue(issue)}, // a government notice in the desktop's small box, one per issue in turn
         footer: '«La verdad oficial» · Ministry of Information',
     });
 }

@@ -51,6 +51,8 @@ import {HeliVisit, blendPose, cameraTarget, pickupPoint} from './presidentialHel
 import {HeliLayer} from './HeliLayer.js';
 import {endingDue} from './presidentialEnding.js';
 import {endingSeen, setEndingSeen} from './profile.js';
+import {atDawnHold, captureDawn, restoreDawn} from '../core/dawnCheckpoint.js';
+import {endCampaign, newCampaign, readCampaign, worldOf, writeCampaign} from './campaignStorage.js';
 import {createEndingQa} from '../testShadow/endingQa.js';
 import {EcologistLayer} from './EcologistLayer.js';
 import {TerrainLayer} from './TerrainLayer.js';
@@ -139,7 +141,7 @@ export class GameScene extends Phaser.Scene {
         super('game');
     }
 
-    create() {
+    create(data = {}) {
         this.phase = GamePhase.READY;
         this.grid = null;
         this.terrain = null;
@@ -219,6 +221,10 @@ export class GameScene extends Phaser.Scene {
         this.layout = currentLayout();
         this.suspension = new Suspension(); // TASK 032: a new scene holds no stale reason
         this.ending = null; // TASK 036: the Day 100 ending, once it has begun
+        // TASK 043: this run's campaign {id, startedAt}, the dawn it last saved, and how that went.
+        this.campaign = null;
+        this.savedDawnDay = null;
+        this.campaignSave = {last: null, restored: null};
         // TASK 033.3: Presidential Advice, made here so the book's TIPS switches work on the
         // menu too. Only TEST_MODE can switch it off for a session (?tips=off, which boot() adds).
         const adviceParams = new URLSearchParams(TEST_MODE ? window.location.search : '');
@@ -296,6 +302,13 @@ export class GameScene extends Phaser.Scene {
             window.__qa.layout = createLayoutQa(this);
             window.__qa.economy = createEconomyQa(this);
             window.__qa.ending = createEndingQa(this); // TASK 036
+            // TASK 043: Continue's entry point, which the stage 3 menu button will call, and the stored save as read.
+            window.__qa.campaign = {
+                continue: () => this.continueCampaign(),
+                read: () => readCampaign(browserStorage(), this.campaignWorld()),
+                status: () => ({id: this.campaign?.id ?? null, savedDawnDay: this.savedDawnDay, last: this.campaignSave.last, restored: this.campaignSave.restored}),
+                menu: () => this.scene.get('hud')?.campaignMenu?.view() ?? null, // TASK 044: CONTINUE, its notice, the New Game question
+            };
             window.__qa.busListeners = () => Object.fromEntries(EventBus.eventNames().map((event) => [event, EventBus.listenerCount(event)]));
             // TASK 033.3: draw one catalogue tip as if it showed (null for the real state), so
             // layout tests can measure every card. It changes nothing: not the controller, not seen.
@@ -321,6 +334,7 @@ export class GameScene extends Phaser.Scene {
 
         this.subscribe();
         this.present(State.PHASE, {phase: this.phase});
+        this.offerCampaign(data.campaignNotice ?? null); // TASK 044: what the menu may continue
         this.scene.launch('hud');
     }
 
@@ -331,7 +345,8 @@ export class GameScene extends Phaser.Scene {
             [Notice.POINTER_LEFT_HUD]: (pointer) => {
                 if (!pointer.wasTouch) this.handleGridPointerMove(pointer);
             },
-            [Command.START]: () => this.handleStart(),
+            [Command.START]: (payload) => this.handleStart(payload),
+            [Command.CONTINUE]: () => this.handleContinue(),
             [Command.RESTART]: () => this.scene.restart(),
             [Command.BUILD]: ({type}) => this.enterPlacementMode(type),
             [Command.ROAD]: () => this.enterRoadMode(),
@@ -412,7 +427,14 @@ export class GameScene extends Phaser.Scene {
 
     // ---- Start -------------------------------------------------------------
 
-    handleStart() {
+    handleStart({replace = false} = {}) {
+        // TASK 044: a New Game over a saved campaign only once the player has confirmed it,
+        // and then that campaign ends now, for every tab, not at the new game's first dawn.
+        if (this.phase === GamePhase.READY && this.campaignOffer) {
+            if (!replace) return;
+            endCampaign(browserStorage(), this.campaignOffer.campaignId);
+            this.campaignOffer = null;
+        }
         const previous = this.phase;
         this.phase = startGame(this.phase);
         if (previous === GamePhase.READY && this.phase === GamePhase.STARTED) {
@@ -420,10 +442,122 @@ export class GameScene extends Phaser.Scene {
             this.present(State.PHASE, {phase: this.phase});
             this.present(State.NEWSPAPER, {enabled: this.newsEnabled, open: false});
             this.cycle.begin(); // Day 1; the clock starts paused for Day Shift
+            this.campaign = this.savesCampaign() ? newCampaign() : null; // TASK 043: a New Game
             this.syncShiftUi();
             this.refreshPower();
         }
         setBodyState({phase: this.phase});
+    }
+
+    // ---- TASK 043: the campaign save ---------------------------------------------
+
+    /**
+     * TASK 044: before Start, will this game keep campaigns? The same rule as savesCampaign()
+     * once the world exists: only TEST_MODE's ?hq=off, ?cycle=legacy and ?news=off say no.
+     */
+    keepsCampaigns() {
+        if (!TEST_MODE) return true;
+        const params = new URLSearchParams(window.location.search);
+        return params.get('hq') !== 'off' && params.get('cycle') !== 'legacy' && params.get('news') !== 'off';
+    }
+
+    /**
+     * TASK 044: tell the menu what it may continue: a valid save for this world, its HUD day,
+     * and whether it is the Day 100 dawn that only the ending follows. A save that is there
+     * but cannot be used is not offered, and the menu says why; nothing is deleted.
+     */
+    offerCampaign(notice = null) {
+        const read = this.keepsCampaigns() ? readCampaign(browserStorage(), this.campaignWorld()) : {ok: false, reason: 'no-save'};
+        this.campaignOffer = read.ok ? {campaignId: read.save.campaignId, calendarDay: read.save.checkpoint.day} : null;
+        const unusable = !read.ok && !['no-save', 'campaign-ended'].includes(read.reason) ? read.reason : null;
+        const day = this.campaignOffer?.calendarDay;
+        this.present(State.CAMPAIGN, {
+            offer: this.campaignOffer ? {day: day - 1, ending: endingDue({timed: true, deployment: false, shift: Shift.DAY, day})} : null, // the HUD's Day N
+            notice: notice ?? unusable,
+        });
+    }
+
+    /** CONTINUE on the menu. A refusal leaves the menu, with the reason; a world that refused it restarts the scene. */
+    handleContinue() {
+        if (this.phase !== GamePhase.READY) return;
+        const result = this.continueCampaign();
+        if (!result.ok && result.reason !== 'restore-failed') this.offerCampaign(result.reason);
+    }
+
+    /** Real play saves: the ACTIVE cycle with HQ and roads, where a dawn hold exists. */
+    savesCampaign() {
+        return Boolean(this.cycle?.timed && this.hqRequired && this.roads && this.workers && this.newsEnabled);
+    }
+
+    /** What the save belongs to: this map, its world seed and the game's random seed. */
+    campaignWorld() {
+        return worldOf({map: this.map, worldSeed: this.worldSeed, rngSeed: this.rng.snapshot().seed});
+    }
+
+    /** The simulation, as core/dawnCheckpoint.js reads and restores it. */
+    checkpointWorld() {
+        const {cycle, economy, pollution, rng, grid, fog, placement, roads, logistics, workers, ecologists, mutants, infantry, siegeCannons} = this;
+        return {cycle, economy, pollution, rng, grid, fog, placement, roads, logistics, workers, ecologists, mutants, infantry, siegeCannons};
+    }
+
+    /**
+     * At the dawn hold, as La Voz opens: the Night is settled and no tick is running,
+     * because the clock paused inside the tick that settled it. Once per dawn. A failed
+     * write keeps the game going; the last good save stays where it was.
+     */
+    autosave() {
+        if (!this.campaign || this.phase !== GamePhase.STARTED || this.ending || !atDawnHold(this.cycle)) return;
+        if (this.savedDawnDay === this.cycle.day) return;
+        this.savedDawnDay = this.cycle.day;
+        let result;
+        try {
+            result = writeCampaign(browserStorage(), {campaign: this.campaign, world: this.campaignWorld(), checkpoint: captureDawn(this.checkpointWorld())});
+        } catch (error) {
+            result = {ok: false, reason: 'capture-failed', detail: error.message};
+        }
+        this.campaignSave.last = {day: this.cycle.day, ...result};
+        // TASK 044: say so, once for this dawn, on the HUD's hint line (it stays until the player acts).
+        if (!result.ok) this.showHint(['superseded', 'older-dawn', 'campaign-ended'].includes(result.reason) ? Hint.SAVE_REPLACED : Hint.SAVE_FAILED);
+    }
+
+    /** HQ fell, or the ending finished: this campaign is over for every tab. The profile is untouched. */
+    retireCampaign() {
+        if (!this.campaign) return;
+        endCampaign(browserStorage(), this.campaign.id);
+        this.campaign = null;
+    }
+
+    /**
+     * Continue (TASK 043 stage 2: the entry point; the menu button is stage 3). Builds the
+     * world as Start does, then puts the saved dawn into it in place of cycle.begin(). The
+     * save is checked whole first; if the world still refuses it, the half-built world is
+     * discarded by restarting the scene, and the save stays as it was.
+     * @returns {{ok: true, day: number} | {ok: false, reason: string, detail?: string}}
+     */
+    continueCampaign() {
+        if (this.phase !== GamePhase.READY) return {ok: false, reason: 'not-ready'};
+        const read = readCampaign(browserStorage(), this.campaignWorld());
+        if (!read.ok) return (this.campaignSave.restored = read);
+        const {save} = read;
+        this.phase = startGame(this.phase);
+        try {
+            this.createGrid();
+            if (!this.savesCampaign()) throw new Error('this game does not keep campaigns');
+            restoreDawn(this.checkpointWorld(), save.checkpoint);
+        } catch (error) {
+            this.campaignSave.restored = {ok: false, reason: 'restore-failed', detail: error.message};
+            this.scene.restart({campaignNotice: 'restore-failed'}); // the half-built world goes; nothing of it is played
+            return this.campaignSave.restored;
+        }
+        this.campaign = {id: save.campaignId, startedAt: save.startedAt};
+        this.savedDawnDay = save.checkpoint.day; // this dawn is already saved
+        this.present(State.PHASE, {phase: this.phase});
+        this.present(State.NEWSPAPER, {enabled: this.newsEnabled, open: false});
+        this.handleLayoutLoaded(); // building views, roads and docks, HUD, power, menu
+        this.syncShiftUi(); // the dawn: La Voz prints from the saved settlement and holds the Day
+        setBodyState({phase: this.phase});
+        this.campaignSave.restored = {ok: true, day: save.checkpoint.day};
+        return this.campaignSave.restored;
     }
 
     createGrid() {
@@ -631,6 +765,7 @@ export class GameScene extends Phaser.Scene {
         if (!this.ending || this.ending.finished) return;
         this.ending.finished = true;
         setEndingSeen(browserStorage(), true);
+        this.retireCampaign(); // TASK 043: completed. Until here a closed browser replays the ending from Day 100's dawn
         this.scene.restart(); // the title, as RESTART does; shutdown stops the ending and the HUD
     }
 
@@ -955,7 +1090,10 @@ export class GameScene extends Phaser.Scene {
             this.updateHud(); // AP is restored and the night settled at the start of each Day
             this.updatePollutionHud();
             if (isDay && this.cycle.lastSettlement) this.presentSettlement(this.cycle.lastSettlement);
-            if (isDay && this.cycle.lastSettlement && this.newsEnabled && this.cycle.timed && !this.cycle.deployment) this.printNewspaper();
+            if (isDay && this.cycle.lastSettlement && this.newsEnabled && this.cycle.timed && !this.cycle.deployment) {
+                this.printNewspaper();
+                this.autosave(); // TASK 043: the dawn hold, once per dawn
+            }
             if (this.cycle.shift === Shift.DEFEATED) this.enterDefeat();
             if (this.cycle.shift !== this.renderedShift) this.handleShiftChange(isDay);
         }
@@ -1076,6 +1214,7 @@ export class GameScene extends Phaser.Scene {
         this.closeNewspaper({resume: false}); // Game Over takes precedence
         this.combatFx?.clear();
         this.phase = defeatGame(this.phase);
+        this.retireCampaign(); // TASK 043: permadeath; no tab may save or continue it again
         this.selectAt(null);
         this.present(State.PHASE, {phase: this.phase});
         this.present(State.GAME_OVER, this.cycle.defeatReport);

@@ -252,6 +252,24 @@ export class Infantry {
         };
     }
 
+    /** TASK 042: a saved dawn keeps only the counters: squads exist at Night alone. */
+    checkpoint() {
+        return {nextId: this.#nextId, nextRocketId: this.#nextRocketId, totals: {...this.#totals}};
+    }
+
+    /** TASK 042: on Continue only, into fresh infantry. */
+    restoreDawn({nextId, nextRocketId, totals}) {
+        if (this.#squads.size > 0 || this.#soldiers.length > 0) throw new Error('restoreDawn needs fresh infantry');
+        for (const [name, value] of Object.entries({nextId, nextRocketId})) {
+            if (!Number.isSafeInteger(value) || value < 1) throw new RangeError(`${name} ${value}`);
+        }
+        const keys = Object.keys(emptyTally());
+        if (!totals || !keys.every((k) => Number.isSafeInteger(totals[k]) && totals[k] >= 0)) throw new TypeError(`totals ${JSON.stringify(totals)}`);
+        this.#nextId = nextId;
+        this.#nextRocketId = nextRocketId;
+        this.#totals = Object.fromEntries(keys.map((k) => [k, totals[k]]));
+    }
+
     #standDown() {
         if (this.#squads.size === 0 && this.#rockets.length === 0) return;
         this.#squads.clear();

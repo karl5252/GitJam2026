@@ -865,6 +865,75 @@ export class Workers {
         return this.#ecologists ? {...active, dispersals: this.dispersals()} : active; // only where protesters exist
     }
 
+    /**
+     * TASK 042: what a saved dawn keeps. Work belongs to tiles and buildings, not to
+     * workers, so the squad itself is not kept: where its members stand and walk.
+     */
+    checkpoint() {
+        return {
+            flag: this.flag,
+            sent: this.#sent,
+            progress: this.clearing().progress,
+            cleared: this.#cleared,
+            orders: [...this.#orders].map(([buildingId, {ticks}]) => ({buildingId, ticks})),
+            repairSpent: this.#repairSpent,
+            repairRestored: this.#repairRestored,
+            nextId: this.#nextId,
+        };
+    }
+
+    /**
+     * TASK 042: on Continue only. A saved dawn's squad is whole and inside HQ, as each
+     * dawn makes it up: a survivor still walking home is simply home, and the next
+     * to leave walks out at full HP, as one who went in would. Tile progress, repair
+     * orders with their partial block, the flag and the counters are kept, so no
+     * work is lost and no repair is free. Dusk has already ended every dispersal.
+     * @param {{day: number, flag: object | null, sent: boolean, progress: object[], cleared: number,
+     *          orders: object[], repairSpent: number, repairRestored: number, nextId: number}} checkpoint
+     */
+    restoreDawn({day, flag, sent, progress, cleared, orders, repairSpent, repairRestored, nextId}) {
+        if (this.#workers.length > 0 || this.#orders.size > 0 || this.#progress.size > 0) throw new Error('restoreDawn needs a fresh squad');
+        const count = (value, name) => {
+            if (!Number.isSafeInteger(value) || value < 0) throw new RangeError(`${name} ${value}`);
+            return value;
+        };
+        if (flag !== null && !(Number.isInteger(flag?.col) && Number.isInteger(flag?.row))) throw new TypeError(`flag ${JSON.stringify(flag)}`);
+        if (typeof sent !== 'boolean') throw new TypeError('sent');
+        const standing = new Set(this.#placement.buildings().map((b) => b.id));
+        this.#progress.clear();
+        for (const {col, row, ticks} of progress) {
+            if (!Number.isInteger(col) || !Number.isInteger(row) || ticks < 1 || ticks >= CLEARING.ticksPerTile || !Number.isSafeInteger(ticks)) {
+                throw new RangeError(`clearing progress ${JSON.stringify({col, row, ticks})}`);
+            }
+            this.#progress.set(tileKey({col, row}), ticks);
+        }
+        this.#orders.clear();
+        for (const {buildingId, ticks} of orders) {
+            if (!standing.has(buildingId)) throw new Error(`repair order for ${buildingId}, which does not stand`);
+            if (!Number.isSafeInteger(ticks) || ticks < 0 || ticks >= REPAIR.ticksPerBlock) throw new RangeError(`repair ticks ${ticks}`);
+            this.#orders.set(buildingId, {worker: null, ticks, tile: null});
+        }
+        this.#flag = flag && {col: flag.col, row: flag.row};
+        this.#sent = sent;
+        this.#cleared = count(cleared, 'cleared');
+        this.#repairSpent = count(repairSpent, 'repairSpent');
+        this.#repairRestored = count(repairRestored, 'repairRestored');
+        this.#nextId = count(nextId, 'nextId');
+        this.#workers.length = 0;
+        this.#inside = WORKER.squadSize;
+        this.#lost = 0;
+        this.#deployTimer = 1;
+        this.#dawnDay = day;
+        this.#lastShift = Shift.DAY;
+        this.#dispersals.clear();
+        this.#assigned.clear();
+        this.#notices = [];
+        this.#jobFields.clear();
+        this.#map = null;
+        this.#route = null;
+        this.#revision = -1;
+    }
+
     #hq() {
         return this.#placement.buildings().find((building) => building.type === HQ_TYPE) ?? null;
     }

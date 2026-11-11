@@ -35,6 +35,7 @@ export const State = Object.freeze({
     GAME_OVER: 'game:over', // {completedShifts}
     NEWSPAPER: 'newspaper:changed', // {enabled, open, reason, edition}: TASK 029
     ADVICE: 'advice:changed', // {enabled, setting, visible, tip, seen}: TASK 033.3, Presidential Advice
+    CAMPAIGN: 'campaign:changed', // {offer: {day, ending} | null, notice}: TASK 044, what the menu may continue
 });
 
 /** Something happened that the HUD should react to, but which is not state. */
@@ -46,7 +47,8 @@ export const Notice = Object.freeze({
 
 /** HUD to GameScene. */
 export const Command = Object.freeze({
-    START: 'game:start',
+    START: 'game:start', // {replace}: TASK 044, true once the player confirmed replacing the saved campaign
+    CONTINUE: 'game:continue', // TASK 044: the saved campaign, from its dawn
     RESTART: 'game:restart',
     BUILD: 'build:select', // {type}
     ROAD: 'build:road',
@@ -77,4 +79,6 @@ export const Hint = Object.freeze({
     REFIT_REFUSED: 'refit-refused',
     MINE_DOCK: 'mine-dock',
     PROTEST: 'protest',
+    SAVE_FAILED: 'save-failed', // TASK 044: the dawn could not be written
+    SAVE_REPLACED: 'save-replaced', // TASK 044: another tab holds a newer campaign, or ended this one
 });

@@ -57,6 +57,15 @@ export const ShiftFailure = Object.freeze({
 
 const isPositiveInt = (n) => Number.isInteger(n) && n > 0;
 
+/** A settlement report is frozen through and through, as settleNight returns it. */
+function deepFreeze(value) {
+    if (value && typeof value === 'object') {
+        for (const child of Object.values(value)) deepFreeze(child);
+        Object.freeze(value);
+    }
+    return value;
+}
+
 export class ShiftCycle {
     #clock;
     #economy;
@@ -262,6 +271,31 @@ export class ShiftCycle {
         if (this.#shift !== Shift.DAY) return {ok: false, reason: ShiftFailure.NOT_DAY};
         this.#day = day;
         return {ok: true};
+    }
+
+    /**
+     * TASK 042: instead of begin(), enter a saved dawn exactly as #completeNight leaves
+     * one in the ACTIVE cycle: Day `day` at tick 0, its AP restored, the completed
+     * Night's settlement kept for La Voz, the clock started at 1x and paused, as
+     * the dawn hold leaves it. The caller resumes it when La Voz closes.
+     * @param {{day: number, lastSettlement: object | null}} checkpoint
+     */
+    restoreDawn({day, lastSettlement}) {
+        if (this.started) throw new Error('restoreDawn needs a cycle that has not begun');
+        if (!this.timed) throw new Error('only the ACTIVE cycle has a dawn to restore');
+        if (!Number.isSafeInteger(day) || day < 2) throw new RangeError(`a saved dawn is calendar day 2 or later, got ${day}`);
+        this.#day = day;
+        this.#shift = Shift.DAY;
+        this.#deployment = false;
+        this.#fastForward = false;
+        this.#elapsedNightTicks = 0;
+        this.#elapsedDayTicks = 0;
+        this.#elapsedDuskTicks = 0;
+        this.#lastSettlement = lastSettlement === null ? null : deepFreeze(structuredClone(lastSettlement));
+        this.#economy.restoreAp(this.#dayAp);
+        this.#clock.start();
+        this.#clock.setSpeed(1);
+        this.#clock.pause();
     }
 
     /** Resume a paused clock: LEGACY only at Night, ACTIVE in any phase that ticks. */

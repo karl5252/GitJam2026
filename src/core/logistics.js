@@ -240,6 +240,87 @@ export class Logistics {
         };
     }
 
+    /**
+     * TASK 042: what a saved dawn keeps. Producers in creation order with their
+     * progress and storage; per truck only its HP, wreck countdown and cargo, and
+     * whether its producer still stands. Positions and routes are not kept.
+     */
+    checkpoint() {
+        return {
+            factories: [...this.#factories].map(([id, {progress, stored, noRoute}]) => ({id, progress, stored, noRoute})),
+            trucks: [...this.#trucks.values()].map(({factoryId, state, hp, respawn, cargo}) => ({
+                factoryId, respawning: state === TruckState.RESPAWNING, hp, respawn, cargo, orphaned: !this.#factories.has(factoryId),
+            })),
+            night: {...this.#night},
+            lastNight: this.lastNight,
+            totals: {...this.#totals},
+        };
+    }
+
+    /**
+     * TASK 042: on Continue only, after BuildingPlacement.restoreCheckpoint. Producers
+     * keep their progress and storage exactly. Every truck is back at its dock with
+     * no route, keeping its HP, or still wrecked with its countdown. Cargo that was
+     * on a truck is discarded, never refunded to storage or paid: each such load is
+     * counted lost, as the existing losses are. A truck whose producer is gone is
+     * not brought back, and nothing replaces what it carried.
+     * @param {{day: number, factories: object[], trucks: object[], night: object, lastNight: object | null, totals: object}} checkpoint
+     */
+    restoreDawn({day, factories, trucks, night, lastNight, totals}) {
+        if (this.#trucks.size > 0 && [...this.#trucks.values()].some((t) => t.state !== TruckState.IDLE || t.cargo > 0)) {
+            throw new Error('restoreDawn needs fresh logistics');
+        }
+        const buildings = new Map(this.#placement.buildings().map((b) => [b.id, b]));
+        const tally = (value) => {
+            if (!value || !['loads', 'credits', 'cargoLost'].every((k) => Number.isSafeInteger(value[k]) && value[k] >= 0)) {
+                throw new TypeError(`bad tally ${JSON.stringify(value)}`);
+            }
+            return {loads: value.loads, credits: value.credits, cargoLost: value.cargoLost};
+        };
+        this.#factories.clear();
+        this.#trucks.clear();
+        this.#types.clear();
+        for (const {id, progress, stored, noRoute} of factories) {
+            const building = buildings.get(id);
+            if (!building || !ROAD_ACCESS_TYPES.includes(building.type)) throw new Error(`no producer ${id}`);
+            const output = outputOf(building.type);
+            if (!Number.isSafeInteger(progress) || progress < 0 || progress >= output.loadTicks) throw new RangeError(`${id} progress ${progress}`);
+            if (!Number.isSafeInteger(stored) || stored < 0 || stored > output.storageLoads) throw new RangeError(`${id} stored ${stored}`);
+            this.#factories.set(id, {progress, stored, noRoute: noRoute === true});
+            this.#types.set(id, building.type);
+        }
+        this.#night = tally(night);
+        this.#lastNight = lastNight === null ? null : tally(lastNight);
+        this.#totals = tally(totals);
+        this.#tallyDay = day; // this Day's tally is already open: the first tick must not roll it again
+        this.#inNight = true;
+        this.#roadsRevision = -1;
+        const saved = new Map();
+        for (const truck of trucks) {
+            if (!Number.isSafeInteger(truck.cargo) || truck.cargo < 0) throw new RangeError(`truck cargo ${truck.cargo}`);
+            if (truck.cargo > 0) this.#countLost(); // discarded on Continue, as #loseCargo counts a lost load
+            if (truck.orphaned || !this.#factories.has(truck.factoryId)) continue;
+            saved.set(truck.factoryId, truck);
+        }
+        for (const id of this.#factories.keys()) {
+            const building = buildings.get(id);
+            const dock = shippingDock(building.type, building);
+            const truck = {
+                id: `truck-${id}`, factoryId: id, dock, state: TruckState.IDLE, hp: LOGISTICS.truckHp,
+                cargo: 0, route: null, travelled: 0, respawn: 0, orphaned: false, ...this.#grid.cellCenter(dock.col, dock.row),
+            };
+            const old = saved.get(id);
+            if (old?.respawning) {
+                if (!Number.isSafeInteger(old.respawn) || old.respawn < 1 || old.respawn > LOGISTICS.respawnTicks) throw new RangeError(`respawn ${old.respawn}`);
+                Object.assign(truck, {state: TruckState.RESPAWNING, hp: 0, respawn: old.respawn});
+            } else if (old) {
+                if (!Number.isSafeInteger(old.hp) || old.hp < 1 || old.hp > LOGISTICS.truckHp) throw new RangeError(`truck hp ${old.hp}`);
+                truck.hp = old.hp;
+            }
+            this.#trucks.set(id, truck);
+        }
+    }
+
     /** ACTIVE: a new Day closes the last cycle's tally. Nothing else changes at any boundary. */
     #rollTally() {
         this.#inNight = true; // every loss belongs to a cycle's tally

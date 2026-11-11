@@ -99,6 +99,6 @@ Found during TASK 038 and marked *(Stale: …)* in place rather than rewritten:
 - Touch drawer: "A HUD redesign waits for the newspaper"; `MENU_SLOTS` no longer exists in `src/`.
 - Pre-TASK 032 pixel layouts in GameScene, `BuildingControls` and `SpeedControls` notes (marked in `docs/presentation.md`).
 - The old "Simulation Architecture" consumer list (ShiftCycle, SiegeCannons, Autocannons, Gates, Infantry, Mutants, Logistics) omitted Loudspeakers, Workers and Ecologists; `docs/architecture.md` now gives the full `stepSimulation` order.
-- `walls.png` and `gate-regular.png` are described as no longer loaded, yet remain in `public/assets/sprites/buildings/` (shipped but unused).
+- `walls.png` and `gate-regular.png` are described as no longer loaded, yet remain in `public/assets/sprites/buildings/` (shipped but unused). *(Resolved, TASK 040: they, `units/rifleman.json`, `units/rocketman.json` and `characters/el-papi.gif` moved to `art-src/sprites/retired/`, nothing deleted)*
 - `music.txt`, referenced by `SOUND_MAP.txt`, does not exist (already recorded under Audio).
 

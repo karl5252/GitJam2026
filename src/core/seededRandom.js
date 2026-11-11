@@ -58,4 +58,16 @@ export class SeededRandom {
     snapshot() {
         return {seed: this.#seed, state: this.#state};
     }
+
+    /**
+     * TASK 042: continue a saved sequence. The seed must be this generator's own,
+     * so a checkpoint can never graft one run's draws onto another's.
+     */
+    restore({seed, state}) {
+        if (seed !== this.#seed) throw new RangeError(`checkpoint seed ${seed} is not this generator's ${this.#seed}`);
+        if (!Number.isInteger(state) || state < 0 || state > MAX_UINT32) {
+            throw new RangeError(`state must be an integer in 0..${MAX_UINT32}, got ${state}`);
+        }
+        this.#state = state;
+    }
 }

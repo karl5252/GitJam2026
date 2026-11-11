@@ -124,6 +124,17 @@ export class SiegeCannons {
         return fired.length || impacts.length ? {fired, impacts} : NO_EFFECTS;
     }
 
+    /** TASK 042: a saved dawn keeps only the shell counter: dawn cleared reloads and shells. */
+    checkpoint() {
+        return {nextShellId: this.#nextShellId};
+    }
+
+    /** TASK 042: on Continue only, into fresh guns. */
+    restoreDawn({nextShellId}) {
+        if (!Number.isSafeInteger(nextShellId) || nextShellId < 1) throw new RangeError(`nextShellId ${nextShellId}`);
+        this.#nextShellId = nextShellId;
+    }
+
     /** Detached reloads for existing guns, in building-list order. */
     snapshot() {
         return this.#placement.buildings()

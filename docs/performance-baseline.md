@@ -268,3 +268,22 @@ Rows with an extra Plant are in the result file but are not a fair comparison: t
 - Desktop viewport only, and no real mobile hardware.
 - Synthetic scenarios use one spawn per tick, so a ramp of N takes N ticks to reach full load.
 - The 8 to 11% of 33 ms frames at idle are unexplained. They may belong to this environment.
+
+## Release candidate audit (TASK 040)
+
+Measured on 11 November 2026, same machine, Chromium headless with software rendering, dev server with `?testMode` unless noted. GPU texture memory was counted by wrapping the page's WebGL `createTexture`/`texImage2D`/`texStorage2D`/`deleteTexture` (level 0, 4 bytes a texel); no game code was added for it.
+
+| Scenario | Live GPU textures | GPU MB before | GPU MB after |
+|---|---:|---:|---:|
+| Main menu | 58 | 7.5 | 7.5 |
+| Fresh jungle (48x32) | 127 / 124 | 103.8 | 31.8 |
+| Golden jungle colony | 131 / 128 | 103.8 | 31.8 |
+| Night, 40 mutants ending on tick 1200, 1x | 131 / 128 | 103.8 | 31.8 |
+| After 3 defeats and restarts | 127 / 124 | 103.8 | 31.8 |
+| Mobile landscape 844x390, colony | 130 / 127 | 103.8 | 31.8 |
+
+- The change: TerrainLayer's per-seed generated picture, bare ground and ore (three 3072x2048 canvases, 24 MB each, only ever read) are plain canvases instead of Phaser `CanvasTexture`s, so only the run's copy is on the GPU. Screenshots of a fresh jungle and of the same jungle after a scripted clearing of 18 tiles are pixel-identical before and after (0 of 435,200 pixels differ). The CPU-side canvases are unchanged (about 72 MB for the jungle).
+- Texture upload at Start fell from 206.9 to 62.9 MB. Frame and render timings did not change: render callbacks 0.59 ms a frame for the colony and 0.63 to 0.65 ms in the 40-mutant Night, simulation 0.14 ms a tick, 60 ticks a second. Frames sit on the 33 ms step this software renderer always shows.
+- Restarts accumulate nothing: textures, game objects (19 after Start) and listeners are the same after each of three defeat-restart cycles.
+
+Production build (`vite preview`, OGG browser), cold load: JS 506 KB transferred, PNG 244 KB, effects and voices 2.27 MB (82 files) at boot, and the music about 9.2 MB more after the first gesture. The last boot request ended at about 530 ms locally. Images are about 2% of the transfer, so atlasing or PNG optimisation cannot gain much; the sprite sheets stay as they are.
