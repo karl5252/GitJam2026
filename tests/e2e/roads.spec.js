@@ -44,6 +44,10 @@ function roadSuite(input) {
         const first = s.roadViews[0];
         expect(first).toMatchObject({col: 10, row: 6, kind: 'hq-ring'});
         expect([first.x, first.y]).toEqual([state.grid.originX + 10 * state.grid.tileSize, state.grid.originY + 6 * state.grid.tileSize]);
+        // TASK 039: the ring is drawn with the road sheet by N1|E2|S4|W8 mask: four corners, straights between.
+        const frame = (col, row) => s.roadViews.find((v) => v.col === col && v.row === row).frame;
+        expect([frame(10, 6), frame(14, 6), frame(14, 10), frame(10, 10)]).toEqual([2 | 4, 4 | 8, 1 | 8, 1 | 2]);
+        expect([frame(12, 6), frame(12, 10), frame(10, 8), frame(14, 8)]).toEqual([2 | 8, 2 | 8, 1 | 4, 1 | 4]);
     });
 
     test('HQ cannot be placed unless the whole ring fits', async ({page}) => {
@@ -80,9 +84,15 @@ function roadSuite(input) {
         await expect.poll(() => roadCount(page)).toBe(17);
         expect((await sample(page)).roadViews).toHaveLength(17);
         expect((await sample(page)).resources).toEqual({...before, credits: before.credits - 2});
+        // TASK 039: the new road is a dead end into the ring, whose tile below becomes a T; removal restores it.
+        const frame = (views, col, row) => views.find((v) => v.col === col && v.row === row).frame;
+        let views = (await sample(page)).roadViews;
+        expect([frame(views, ABOVE_RING.col, ABOVE_RING.row), frame(views, ABOVE_RING.col, ABOVE_RING.row + 1)]).toEqual([4, 1 | 2 | 8]);
         await pressCell(page, state, ABOVE_RING);
         await expect.poll(() => roadCount(page)).toBe(16);
-        expect((await sample(page)).roadViews).toHaveLength(16);
+        views = (await sample(page)).roadViews;
+        expect(views).toHaveLength(16);
+        expect(frame(views, ABOVE_RING.col, ABOVE_RING.row + 1)).toBe(2 | 8);
         expect((await sample(page)).resources).toEqual({...before, credits: before.credits - 2});
 
         await pressAction(page, 'cancel-placement');

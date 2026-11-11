@@ -1,5 +1,6 @@
 import {SeededRandom} from '../core/seededRandom.js';
 import {TerrainKind, mixSeed} from '../core/terrain.js';
+import {PLANTS, VEGETATION_SHEET, planVegetation, stumpsIn, touched, visible} from './vegetation.js';
 
 const RESOLUTION = 2; // texels per world pixel, so a close zoom stays sharp
 const DEPTH = -1; // under everything that exists in the world
@@ -9,13 +10,6 @@ const GROUND_FLECKS = ['#4d5433', '#676d42', '#6e6a42', '#50583a'];
 const GRID_LINE = 'rgba(205, 214, 170, 0.2)';
 const JUNGLE_SHADE = 'rgba(8, 20, 10, 0.34)';
 const JUNGLE_FLOOR = '#0f2d1a';
-const JUNGLE_EDGE = '#0a2013';
-const CANOPY = [
-    ['#113a20', '#1a5230', '#2a6f3e'],
-    ['#0f3a26', '#17553a', '#277350'],
-    ['#163f1c', '#25602a', '#3d8036'],
-    ['#123720', '#1d4f2b', '#336e34'],
-];
 const DIRT = '#94703f';
 const CLEARED_EARTH = 'rgba(122, 88, 48, 0.55)'; // raw earth where trees stood, not the clearing's grass
 const STUMP = '#5b3b1c';
@@ -24,11 +18,9 @@ const DIRT_DARK = '#775731';
 const DIRT_LIGHT = '#ad8a55';
 
 const SHADE_DEPTH = 7; // px the jungle's shadow falls on open ground
-const CROWNS_PER_TILE = 6;
 const TRACK_RADIUS = 18; // px of each dab; the dabs together cover a track's two tiles
 const TRACK_DABS = [[-14, -14], [14, -14], [-14, 14], [14, 14], [0, 0]];
 const TRACK_FADE = 8; // tiles over which it thins out at the far end
-const LOBES = 5; // a crown is a clump of foliage, not a ball
 
 /** Average out the track's corners, then round what is left. */
 function smooth(points, reach = 3, passes = 2) {
@@ -105,8 +97,7 @@ function paintPath(ctx, rng, terrain, tileSize) {
 }
 
 /** One open tile's line, and the jungle's shadow along any edge that faces jungle. */
-function paintTileEdge(ctx, terrain, tileSize, col, row) {
-    const jungle = (c, r) => terrain.kindAt(c, r) === TerrainKind.JUNGLE;
+function paintTileEdge(ctx, jungle, tileSize, col, row) {
     const [x, y] = [col * tileSize, row * tileSize];
     ctx.strokeStyle = GRID_LINE;
     ctx.lineWidth = 1;
@@ -119,24 +110,26 @@ function paintTileEdge(ctx, terrain, tileSize, col, row) {
 }
 
 /** Open ground shows its tiles, and the jungle's shadow falls on it along tile edges. */
-function paintTileEdges(ctx, terrain, tileSize) {
+function paintTileEdges(ctx, jungle, terrain, tileSize) {
     for (let row = 0; row < terrain.rows; row++) {
         for (let col = 0; col < terrain.cols; col++) {
-            if (terrain.kindAt(col, row) !== TerrainKind.JUNGLE) paintTileEdge(ctx, terrain, tileSize, col, row);
+            if (!jungle(col, row)) paintTileEdge(ctx, jungle, tileSize, col, row);
         }
     }
 }
 
-/** Raw earth and a few stumps, placed by the tile's own coordinates, so a cleared tile reads as new ground. */
-function paintCleared(ctx, tileSize, col, row) {
+/**
+ * Raw earth, and a stump where each tree or palm rooted in this tile stood (TASK
+ * 039: the plan's trunks, so the same seed fells the same stumps). A tile that only
+ * grew shrubs is left bare. The stump itself is the one drawn before the art.
+ */
+function paintCleared(ctx, tileSize, col, row, stumps) {
     const [x, y] = [col * tileSize, row * tileSize];
     ctx.fillStyle = CLEARED_EARTH;
     ctx.fillRect(x, y, tileSize, tileSize);
-    let hash = ((col + 1) * 73856093) ^ ((row + 1) * 19349663);
-    for (let i = 0; i < 3; i++) {
-        hash = (hash * 1103515245 + 12345) >>> 0;
-        const sx = x + 6 + (hash % (tileSize - 12));
-        const sy = y + 6 + ((hash >>> 8) % (tileSize - 12));
+    for (const stump of stumps) {
+        const sx = Math.min(Math.max(stump.x, x + 3), x + tileSize - 3); // the whole stump on its own tile
+        const sy = Math.min(Math.max(stump.y - 2, y + 3), y + tileSize - 3);
         ctx.fillStyle = STUMP;
         ctx.beginPath();
         ctx.arc(sx, sy, 3, 0, Math.PI * 2);
@@ -203,75 +196,50 @@ function paintOre(ctx, rng, terrain, tileSize) {
     }
 }
 
+
 /**
- * Surface signs under the trees: a faint rusty stain and a stone or two between the
- * crowns, surest over the seam core. Subtle on purpose; the fog hides them until the
- * ground is explored, and only clearing shows the ore.
+ * Surface signs in the jungle: a faint rusty stain and a stone or two, surest over
+ * the seam core. Subtle on purpose; the fog hides them until the ground is explored,
+ * and only clearing shows the ore. Planned once (same stream, same order as when
+ * they were painted directly) so a repaint can draw them again.
  */
-function paintHints(ctx, rng, terrain, tileSize) {
-    const stone = (x, y, radius) => {
-        ctx.fillStyle = HINT_STONE[rng.nextInt(0, HINT_STONE.length - 1)];
-        ctx.beginPath();
-        ctx.ellipse(x, y, radius, radius * 0.7, rng.next() * Math.PI, 0, Math.PI * 2);
-        ctx.fill();
-    };
+function planHints(rng, terrain, tileSize) {
+    const hints = [];
     for (const {core, tiles} of terrain.deposits) {
         for (const {col, row} of tiles) {
             const inCore = col >= core.col && col <= core.col + 1 && row >= core.row && row <= core.row + 1;
             if (!inCore && rng.next() > 0.35) continue;
             const [x, y] = [(col + 0.2 + rng.next() * 0.6) * tileSize, (row + 0.2 + rng.next() * 0.6) * tileSize];
-            ctx.fillStyle = HINT_STAIN;
-            ctx.beginPath();
-            ctx.ellipse(x, y, 7 + rng.next() * 4, 5 + rng.next() * 3, rng.next() * Math.PI, 0, Math.PI * 2);
-            ctx.fill();
-            stone(x + (rng.next() - 0.5) * 6, y + (rng.next() - 0.5) * 4, 1.6 + rng.next());
+            const stain = {x, y, rx: 7 + rng.next() * 4, ry: 5 + rng.next() * 3, turn: rng.next() * Math.PI};
+            const [sx, sy, radius] = [x + (rng.next() - 0.5) * 6, y + (rng.next() - 0.5) * 4, 1.6 + rng.next()];
+            const color = HINT_STONE[rng.nextInt(0, HINT_STONE.length - 1)];
+            hints.push({col, row, stain, stone: {x: sx, y: sy, radius, color, turn: rng.next() * Math.PI}});
         }
     }
+    return hints;
 }
 
-/**
- * Overlapping tree crowns, painted row by row so nearer trees cover farther ones.
- * They are clipped to jungle tiles, so the canopy is continuous inside the jungle and
- * ends exactly on the tile that stops building, at any zoom.
- */
-function paintCanopy(ctx, rng, terrain, tileSize) {
-    const tiles = [];
-    for (let row = 0; row < terrain.rows; row++) {
-        for (let col = 0; col < terrain.cols; col++) {
-            if (terrain.kindAt(col, row) === TerrainKind.JUNGLE) tiles.push({col, row});
-        }
-    }
-    ctx.save();
+function paintHint(ctx, {stain, stone}) {
+    ctx.fillStyle = HINT_STAIN;
     ctx.beginPath();
-    for (const {col, row} of tiles) ctx.rect(col * tileSize, row * tileSize, tileSize, tileSize);
-    ctx.clip();
+    ctx.ellipse(stain.x, stain.y, stain.rx, stain.ry, stain.turn, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.fillStyle = stone.color;
+    ctx.beginPath();
+    ctx.ellipse(stone.x, stone.y, stone.radius, stone.radius * 0.7, stone.turn, 0, Math.PI * 2);
+    ctx.fill();
+}
+
+/** The jungle's own dark floor, which shows between the plants and reads as unbuildable. */
+function paintFloor(ctx, tileSize, col, row) {
     ctx.fillStyle = JUNGLE_FLOOR;
-    ctx.fillRect(0, 0, terrain.cols * tileSize, terrain.rows * tileSize);
-    const circle = (x, y, radius, color) => {
-        ctx.fillStyle = color;
-        ctx.beginPath();
-        ctx.arc(x, y, radius, 0, Math.PI * 2);
-        ctx.fill();
-    };
-    for (const {col, row} of tiles) {
-        for (let i = 0; i < CROWNS_PER_TILE; i++) {
-            const x = (col + rng.next() * 1.2 - 0.1) * tileSize;
-            const y = (row + rng.next() * 1.2 - 0.1) * tileSize;
-            const radius = 7 + rng.next() * 8;
-            const [dark, mid, light] = CANOPY[rng.nextInt(0, CANOPY.length - 1)];
-            const lobes = Array.from({length: LOBES}, () => ({
-                x: x + (rng.next() - 0.5) * radius * 1.3,
-                y: y + (rng.next() - 0.5) * radius * 1.3,
-                radius: radius * (0.45 + rng.next() * 0.3),
-            }));
-            for (const lobe of lobes) circle(lobe.x + 1.5, lobe.y + 2.5, lobe.radius, JUNGLE_EDGE);
-            for (const lobe of lobes) circle(lobe.x, lobe.y, lobe.radius, dark);
-            for (const lobe of lobes) circle(lobe.x - lobe.radius * 0.18, lobe.y - lobe.radius * 0.22, lobe.radius * 0.7, mid);
-            const top = lobes[0];
-            circle(top.x - top.radius * 0.3, top.y - top.radius * 0.35, top.radius * 0.36, light);
-        }
-    }
-    ctx.restore();
+    ctx.fillRect(col * tileSize, row * tileSize, tileSize, tileSize);
+}
+
+/** One plant from the vegetation sheet, 1:1 at whole world pixels, so every source pixel is 2x2 texels. */
+function paintPlant(ctx, sheet, {plant, x, y, w, h}) {
+    const source = PLANTS[plant];
+    ctx.drawImage(sheet, source.x, source.y, w, h, x, y, w, h);
 }
 
 /**
@@ -279,22 +247,35 @@ function paintCanopy(ctx, rng, terrain, tileSize) {
  * costs one quad a frame however dense the jungle is, and it cannot drift from the
  * grid, because it is one world object at the grid's origin. The same seed always
  * paints the same picture, and a restart reuses it. Presentation only: the shapes
- * come from its own generator, not the game's.
+ * come from its own generators, not the game's.
+ *
+ * TASK 039: the jungle is the vegetation sheet's plants (vegetation.js) on a dark
+ * floor. Each plant may span several tiles, and shows only while every tile it
+ * stands over is jungle, so clearing a tile fells every plant over it and a cleared
+ * tile never stays under a felled plant's crown.
  */
 export class TerrainLayer {
     #image;
     #terrain;
     #tileSize;
     #run; // this run's canvas texture: the only one ever painted on after generation
-    #ground; // the generated ground and track, before tile lines and canopy
+    #ground; // the generated ground and track, before tile lines and jungle
     #ore; // the deposits' lumps on a transparent picture, shown only where cleared
+    #sheet; // the vegetation sheet, or null without it
+    #plants; // the plan, in draw order
+    #shown; // per plant: still drawn in this run
+    #byFootprint = new Map(); // tile index -> plants that fall when it is cleared
+    #byTouch = new Map(); // tile index -> plants drawn on it at all
+    #hints;
     #revealed = new Set(); // deposit tiles whose ore has been painted
     #repainted = 0;
 
     /**
      * The generated picture and its bare ground are made once per seed and never
      * touched again. Each run paints on its own copy, so a restart always shows the
-     * jungle as it was generated, with nothing a previous run cleared.
+     * jungle as it was generated, with nothing a previous run cleared. The picture is
+     * the jungle as generated: a tile already cleared counts as jungle there, and
+     * clearTiles repaints it.
      * @param {Phaser.Scene} scene
      * @param {import('../core/grid.js').Grid} grid
      * @param {import('../core/terrain.js').Terrain} terrain
@@ -303,6 +284,28 @@ export class TerrainLayer {
         const key = `terrain-${terrain.cols}x${terrain.rows}-${terrain.seed}`;
         const {tileSize} = grid;
         const [width, height] = [terrain.cols * tileSize * RESOLUTION, terrain.rows * tileSize * RESOLUTION];
+        const generated = (col, row) => {
+            const kind = terrain.kindAt(col, row);
+            return kind === TerrainKind.JUNGLE || kind === TerrainKind.CLEARED; // only jungle is ever cleared
+        };
+        this.#terrain = terrain;
+        this.#tileSize = tileSize;
+        this.#sheet = scene.textures.exists(VEGETATION_SHEET.key) ? scene.textures.get(VEGETATION_SHEET.key).getSourceImage() : null;
+        this.#plants = this.#sheet ? planVegetation({cols: terrain.cols, rows: terrain.rows, seed: terrain.seed, tileSize, isJungle: generated}) : [];
+        this.#shown = new Uint8Array(this.#plants.length).fill(1);
+        const index = (map, tiles, id) => {
+            for (const {col, row} of tiles) {
+                const i = row * terrain.cols + col;
+                if (!map.has(i)) map.set(i, []);
+                map.get(i).push(id);
+            }
+        };
+        this.#plants.forEach((plant, id) => {
+            index(this.#byFootprint, plant.footprint, id);
+            index(this.#byTouch, touched(plant, tileSize).filter(({col, row}) => terrain.kindAt(col, row) !== null), id);
+        });
+        this.#hints = planHints(new SeededRandom(mixSeed(terrain.seed + 2)), terrain, tileSize);
+
         if (!scene.textures.exists(key)) {
             const texture = scene.textures.createCanvas(key, width, height);
             const ground = scene.textures.createCanvas(`${key}-ground`, width, height);
@@ -313,10 +316,13 @@ export class TerrainLayer {
             paintPath(ctx, rng, terrain, tileSize);
             ground.getContext().drawImage(texture.getSourceImage(), 0, 0);
             ground.refresh();
-            paintTileEdges(ctx, terrain, tileSize);
-            paintCanopy(ctx, rng, terrain, tileSize);
-            // Their own streams, after everything else, so the jungle is painted exactly as before.
-            paintHints(ctx, new SeededRandom(mixSeed(terrain.seed + 2)), terrain, tileSize);
+            paintTileEdges(ctx, generated, terrain, tileSize);
+            for (let row = 0; row < terrain.rows; row++) {
+                for (let col = 0; col < terrain.cols; col++) if (generated(col, row)) paintFloor(ctx, tileSize, col, row);
+            }
+            ctx.imageSmoothingEnabled = false;
+            for (const plant of this.#plants) paintPlant(ctx, this.#sheet, plant);
+            for (const hint of this.#hints) paintHint(ctx, hint);
             texture.refresh();
             const ore = scene.textures.createCanvas(`${key}-ore`, width, height);
             const oreCtx = ore.getContext();
@@ -331,46 +337,64 @@ export class TerrainLayer {
         this.#run.refresh();
         this.#ground = scene.textures.get(`${key}-ground`).getSourceImage();
         this.#ore = scene.textures.get(`${key}-ore`).getSourceImage();
-        this.#terrain = terrain;
-        this.#tileSize = tileSize;
         this.#image = scene.add.image(grid.originX, grid.originY, runKey).setOrigin(0, 0).setScale(1 / RESOLUTION).setDepth(DEPTH);
     }
 
     /**
-     * Repaint cleared tiles and every open tile touching them: bare ground from the
-     * generated picture, raw earth on the cleared ones, then tile lines and the
-     * jungle's shadow as the terrain now stands. Jungle tiles are left as they are.
+     * Fell every plant standing over a cleared tile, then repaint, clipped to just
+     * those tiles: the cleared tiles, every tile touching them (their shadow lines),
+     * and every tile a felled plant was drawn on. Each is painted from scratch in the
+     * generated order: bare ground, raw earth and stumps on cleared tiles, ore, tile
+     * lines and shadow as the terrain now stands, the floor on jungle, then every
+     * plant still standing and the hints. Nothing outside the clip changes.
      * @param {Array<{col: number, row: number}>} cells
      */
     clearTiles(cells) {
-        const ctx = this.#run.getContext();
+        const terrain = this.#terrain;
         const size = this.#tileSize;
         const texel = size * RESOLUTION;
-        const touched = new Map();
+        const jungle = (col, row) => terrain.kindAt(col, row) === TerrainKind.JUNGLE;
+        const region = new Map();
+        const add = (col, row) => {
+            if (terrain.kindAt(col, row) !== null) region.set(row * terrain.cols + col, {col, row});
+        };
         for (const {col, row} of cells) {
             for (let dr = -1; dr <= 1; dr++) {
-                for (let dc = -1; dc <= 1; dc++) touched.set(`${col + dc},${row + dr}`, {col: col + dc, row: row + dr});
+                for (let dc = -1; dc <= 1; dc++) add(col + dc, row + dr);
+            }
+            for (const id of this.#byFootprint.get(row * terrain.cols + col) ?? []) {
+                if (!this.#shown[id] || visible(this.#plants[id], jungle)) continue;
+                this.#shown[id] = 0;
+                for (const tile of touched(this.#plants[id], size)) add(tile.col, tile.row);
             }
         }
-        const open = [...touched.values()].filter(({col, row}) => {
-            const kind = this.#terrain.kindAt(col, row);
-            return kind !== null && kind !== TerrainKind.JUNGLE;
-        });
+        const tiles = [...region.values()];
+        const open = tiles.filter(({col, row}) => !jungle(col, row));
+        const ctx = this.#run.getContext();
         ctx.save();
         ctx.setTransform(1, 0, 0, 1, 0, 0);
+        ctx.beginPath();
+        for (const {col, row} of tiles) ctx.rect(col * texel, row * texel, texel, texel);
+        ctx.clip();
         for (const {col, row} of open) ctx.drawImage(this.#ground, col * texel, row * texel, texel, texel, col * texel, row * texel, texel, texel);
         ctx.setTransform(RESOLUTION, 0, 0, RESOLUTION, 0, 0);
         for (const {col, row} of open) {
-            if (this.#terrain.kindAt(col, row) === TerrainKind.CLEARED) paintCleared(ctx, size, col, row);
+            if (terrain.kindAt(col, row) === TerrainKind.CLEARED) paintCleared(ctx, size, col, row, stumpsIn(this.#plants, col, row));
         }
-        // Ore on every repainted tile, so lumps spilling from a cleared deposit tile show too.
+        // Ore on every repainted open tile, so lumps spilling from a cleared deposit tile show too.
         ctx.setTransform(1, 0, 0, 1, 0, 0);
         for (const {col, row} of open) {
             ctx.drawImage(this.#ore, col * texel, row * texel, texel, texel, col * texel, row * texel, texel, texel);
-            if (this.#terrain.depositAt(col, row) !== null) this.#revealed.add(`${col},${row}`);
+            if (terrain.depositAt(col, row) !== null) this.#revealed.add(`${col},${row}`);
         }
         ctx.setTransform(RESOLUTION, 0, 0, RESOLUTION, 0, 0);
-        for (const {col, row} of open) paintTileEdge(ctx, this.#terrain, size, col, row);
+        for (const {col, row} of open) paintTileEdge(ctx, jungle, size, col, row);
+        for (const {col, row} of tiles) if (jungle(col, row)) paintFloor(ctx, size, col, row);
+        const standing = new Set();
+        for (const key of region.keys()) for (const id of this.#byTouch.get(key) ?? []) if (this.#shown[id]) standing.add(id);
+        ctx.imageSmoothingEnabled = false;
+        for (const id of [...standing].sort((a, b) => a - b)) paintPlant(ctx, this.#sheet, this.#plants[id]);
+        for (const hint of this.#hints) if (jungle(hint.col, hint.row)) paintHint(ctx, hint); // the clip keeps the rest
         ctx.restore();
         this.#run.refresh();
         this.#repainted += cells.length;
@@ -378,6 +402,11 @@ export class TerrainLayer {
 
     view() {
         const {x, y, depth, displayWidth: width, displayHeight: height, texture} = this.#image;
-        return {x, y, width, height, depth, texture: texture.key, repainted: this.#repainted, oreRevealed: this.#revealed.size};
+        let standing = 0;
+        for (const shown of this.#shown) standing += shown;
+        return {
+            x, y, width, height, depth, texture: texture.key, repainted: this.#repainted, oreRevealed: this.#revealed.size,
+            plants: this.#plants.length, plantsStanding: standing,
+        };
     }
 }

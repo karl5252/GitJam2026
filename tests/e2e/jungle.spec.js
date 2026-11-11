@@ -59,6 +59,10 @@ test.describe('jungle: a new game', () => {
         await clickAction(page, 'start');
         await expect(body(page)).toHaveAttribute('data-phase', 'started');
         expect((await sample(page)).terrain).toEqual(first.terrain);
+        // TASK 039: the same seed plants the same jungle, all of it standing.
+        const {plants, plantsStanding} = (await sample(page)).terrainView;
+        expect({plants, plantsStanding}).toEqual({plants: first.terrainView.plants, plantsStanding: first.terrainView.plants});
+        expect(plants).toBeGreaterThan(1000);
     });
 
     test('?worldSeed changes the terrain and not the wave RNG; ?seed does the reverse', async ({page}) => {

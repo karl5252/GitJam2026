@@ -8,6 +8,8 @@ import {preloadEffects} from '../audio/audio.js';
 import {filterCombatFx, preloadCombatFx} from './CombatFxLayer.js';
 import {filterHeli, preloadHeli} from './HeliLayer.js';
 import {filterEndingArt, preloadEndingArt} from './EndingScene.js';
+import {ROAD_SOURCE, buildRoadTexture} from './RoadTiles.js';
+import {VEGETATION_SHEET} from './vegetation.js';
 
 /**
  * Preloads the independent micro-scale PNG sprite sheets before starting the
@@ -28,6 +30,8 @@ export class BootScene extends Phaser.Scene {
         preloadCombatFx(this); // TASK 031: the three explosion strips
         preloadHeli(this); // TASK 035: the Presidential helicopter
         preloadEndingArt(this); // TASK 036: the Presidential guards
+        this.load.image(ROAD_SOURCE.key, ROAD_SOURCE.path); // TASK 039: road autotiles
+        this.load.image(VEGETATION_SHEET.key, VEGETATION_SHEET.path); // TASK 039: painted into the terrain
     }
 
     create() {
@@ -43,6 +47,7 @@ export class BootScene extends Phaser.Scene {
         filterCombatFx(this, nearest);
         filterHeli(this, nearest);
         filterEndingArt(this, nearest);
+        buildRoadTexture(this, nearest);
         if (nearest !== undefined && this.textures.exists(KILLDOZER.key)) this.textures.get(KILLDOZER.key).setFilter?.(nearest);
         for (const {key} of Object.values(UI_ART)) {
             if (nearest !== undefined && this.textures.exists(key)) this.textures.get(key).setFilter?.(nearest);

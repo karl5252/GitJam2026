@@ -74,6 +74,10 @@ test.describe('jungle clearing: desktop', () => {
         expect(s.pollution.value - pollution).toBe(s.workers.clearing.cleared);
         expect(s.pollutionView.text).toContain(`Pollution ${s.pollution.value}`);
         expect(s.terrainView.repainted).toBe(s.workers.clearing.cleared);
+        // TASK 039: every plant standing over a cleared tile fell with it, and only those.
+        expect(s.terrainView.plants).toBeGreaterThan(1000);
+        expect(s.terrainView.plantsStanding).toBeLessThan(s.terrainView.plants);
+        const plants = s.terrainView.plants;
 
         // Call them home, and build on the new ground.
         await qaSim(page, 'resume');
@@ -104,5 +108,6 @@ test.describe('jungle clearing: desktop', () => {
         expect(glyph(s, flag)).toBe('#');
         expect(s.terrain.rows.join('')).not.toContain(',');
         expect(s.terrainView.repainted).toBe(0);
+        expect(s.terrainView).toMatchObject({plants, plantsStanding: plants}); // the same jungle, whole again
     });
 });
