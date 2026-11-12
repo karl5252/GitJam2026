@@ -202,6 +202,18 @@ export const CHAPTERS = Object.freeze([
                 facts: [['Per load', `${LOGISTICS.creditsPerLoad}c`]],
                 wisdom: [WISDOM.roads],
             },
+            {
+                heading: 'On the Glorious Exports of San Papi',
+                text: [
+                    'The Republic of San Papi proudly exports two sacred pillars of national prosperity: bananas and El Presidente Papi™ Banana Ketchup.',
+                    'These mighty exports are the foundation of our prosperity, the envy of lesser nations, and the shining proof of Papist excellence.',
+                    'Both are personally blessed, approved, and undoubtedly admired by El Presidente himself.',
+                    'According to the Ministry of Truth, the Ministry of Agriculture, and the Ministry of Taste, both are officially certified muy delicioso.',
+                ],
+                wisdom: [
+                    'When you buy Papi, you support Papi. When you support Papi, you support progress.',
+                ],
+            },
         ],
     },
     {
@@ -308,6 +320,7 @@ export const CHAPTERS = Object.freeze([
             },
         ],
     },
+
 ]);
 
 /** One row of the building table: what the drawer and the game charge, from buildingTypes. */

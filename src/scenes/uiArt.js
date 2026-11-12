@@ -67,8 +67,8 @@ export const BUILD_ICON = Object.freeze({
     wall: Object.freeze({kind: 'wall', frame: 0, visible: Object.freeze({x: 22, y: 21, width: 20, height: 23})}), // walls_v3 frame 0, the lone pillar
     gateHorizontal: Object.freeze({kind: 'gateHorizontal', frame: 0, visible: Object.freeze({x: 0, y: 17, width: 32, height: 31})}),
     gateVertical: Object.freeze({kind: 'gateVertical', frame: 0, visible: Object.freeze({x: 11, y: 0, width: 10, height: 48})}),
-    autocannon: Object.freeze({kind: 'autocannon', frame: 0, visible: Object.freeze({x: 6, y: 3, width: 17, height: 24})}),
-    siegeCannon: Object.freeze({kind: 'siegeCannon', frame: 0, visible: Object.freeze({x: 7, y: 5, width: 19, height: 27})}),
+    autocannon: Object.freeze({kind: 'autocannon', frame: 5, visible: Object.freeze({x: 6, y: 3, width: 17, height: 24})}),
+    siegeCannon: Object.freeze({kind: 'siegeCannon', frame: 5, visible: Object.freeze({x: 7, y: 5, width: 19, height: 27})}),
     road: null,
 });
 
