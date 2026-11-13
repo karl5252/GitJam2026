@@ -63,6 +63,7 @@ import {firstSolid} from './lineOfFire.js';
 import {calculatePower} from './power.js';
 import {Shift} from './shiftCycle.js';
 import {BRUTE_KIND, flightTicks} from './shots.js';
+import {TerrainKind} from './terrain.js';
 
 export const MUTANT = Object.freeze({
     maxHp: 40,
@@ -255,6 +256,77 @@ function freshStats(kind) {
 
 const CELL_STEPS = Object.freeze([[0, -1], [1, 0], [0, 1], [-1, 0]]); // N, E, S, W
 
+/**
+ * A spawn must belong to at least this much cardinally connected jungle.
+ * Only components reaching the outer map edge count: an enclosed green pocket
+ * behind the player's defenses must never become a surprise spawn point.
+ */
+export const MIN_SPAWN_JUNGLE = 4;
+
+/**
+ * For each old spawn-frame slot, find the nearest eligible jungle tile on or
+ * outside that frame. Keeping the slots (rather than drawing from a changing
+ * candidate array) costs exactly one RNG draw per scheduled spawn and keeps
+ * attacks spread around the familiar perimeter as the clearing expands.
+ *
+ * Called only when terrain.revision changes, not for each simulation tick.
+ * A null slot means no suitable jungle remains; the caller uses an off-map
+ * entrance rather than materializing an enemy on cleared ground.
+ */
+export function jungleSpawnSites(grid, frame, slots = borderSpawns(grid, frame)) {
+    if (!grid.terrain || !frame) return slots.map(() => null);
+    const {cols, rows, terrain} = grid;
+    const visited = new Uint8Array(cols * rows);
+    const eligible = [];
+    const lastCol = frame.col + frame.cols - 1;
+    const lastRow = frame.row + frame.rows - 1;
+    const onOrOutsideFrame = (col, row) => col <= frame.col || col >= lastCol || row <= frame.row || row >= lastRow;
+
+    for (let row = 0; row < rows; row++) {
+        for (let col = 0; col < cols; col++) {
+            const root = row * cols + col;
+            if (visited[root] || terrain.kindAt(col, row) !== TerrainKind.JUNGLE) continue;
+            const component = [root];
+            visited[root] = 1;
+            let external = false;
+            for (let head = 0; head < component.length; head++) {
+                const index = component[head];
+                const c = index % cols;
+                const r = Math.floor(index / cols);
+                if (c === 0 || r === 0 || c === cols - 1 || r === rows - 1) external = true;
+                for (const [dc, dr] of CELL_STEPS) {
+                    const nc = c + dc;
+                    const nr = r + dr;
+                    if (nc < 0 || nr < 0 || nc >= cols || nr >= rows) continue;
+                    const next = nr * cols + nc;
+                    if (visited[next] || terrain.kindAt(nc, nr) !== TerrainKind.JUNGLE) continue;
+                    visited[next] = 1;
+                    component.push(next);
+                }
+            }
+            if (!external || component.length < MIN_SPAWN_JUNGLE) continue;
+            for (const index of component) {
+                const c = index % cols;
+                const r = Math.floor(index / cols);
+                if (onOrOutsideFrame(c, r) && grid.occupantAt(c, r) === null) eligible.push({col: c, row: r});
+            }
+        }
+    }
+
+    return slots.map((slot) => {
+        let best = null;
+        let distance = Infinity;
+        for (const cell of eligible) {
+            const d = Math.abs(slot.col - cell.col) + Math.abs(slot.row - cell.row);
+            if (d < distance) {
+                best = cell;
+                distance = d;
+            }
+        }
+        return best ? {...best, ...grid.cellCenter(best.col, best.row)} : null;
+    });
+}
+
 function assertValidSchedule(schedule, nightTicks) {
     const valid = Array.isArray(schedule) && schedule.every((tick, i) => Number.isInteger(tick)
         && tick >= 1 && tick < nightTicks && (i === 0 || tick > schedule[i - 1]));
@@ -289,6 +361,9 @@ export class Mutants {
     #workers = null;
     #spawns;
     #spawnBounds;
+    #jungleFrame;
+    #jungleRevision = -1;
+    #jungleSites = null;
     #powered; // this tick's powered ids, or null with no Mine; see #poweredNow
     #loudspeakers = null;
     #bounds;
@@ -331,6 +406,7 @@ export class Mutants {
         this.#logistics = logistics;
         this.#gates = gates;
         this.#spawns = borderSpawns(grid, spawnFrame);
+        this.#jungleFrame = grid.terrain && spawnFrame ? spawnFrame : null;
         this.#bounds = grid.footprintRect({col: 0, row: 0, width: grid.cols, height: grid.rows});
         this.#spawnBounds = spawnFrame
             ? grid.footprintRect({col: spawnFrame.col, row: spawnFrame.row, width: spawnFrame.cols, height: spawnFrame.rows})
@@ -819,37 +895,61 @@ export class Mutants {
     }
 
     /**
-     * Exactly one RNG draw picks a border position, whatever the board looks
-     * like. If that border cell holds a building the next position clockwise is
-     * used, and if none is left this spawn is skipped. A fortification does not
-     * displace a spawn: the mutant arrives outside it instead, so fortifying the
-     * border can neither cancel a wave nor funnel it to the cells left open.
+     * Exactly one RNG draw selects an original frame slot. On jungle maps the
+     * nearest externally connected jungle at that slot is used, moving outward
+     * as the player clears land. With no eligible jungle, enemies enter from
+     * outside the real world edge. Open-map spawning is unchanged.
      */
     #spawn(buildings, byId, effects, kind) {
         const start = this.#rng.nextInt(0, this.#spawns.length - 1);
         if (kind === ABSORBED) return;
+        if (this.#jungleFrame) {
+            const revision = this.#grid.terrain.revision;
+            if (this.#jungleRevision !== revision) {
+                this.#jungleSites = jungleSpawnSites(this.#grid, this.#jungleFrame, this.#spawns);
+                this.#jungleRevision = revision;
+            }
+            const point = this.#jungleSites[start] ?? this.#outsideWorld(start);
+            this.#spawnAt(point, buildings, effects, kind);
+            return;
+        }
+        // The original open battlefield still permits fortifications on its edge.
         for (let i = 0; i < this.#spawns.length; i++) {
             const spawn = this.#spawns[(start + i) % this.#spawns.length];
             const occupant = this.#grid.occupantAt(spawn.col, spawn.row);
             const building = byId.get(occupant);
             const fortified = Boolean(building) && isFortification(building);
             if (occupant !== null && !fortified) continue;
-            const {x, y} = fortified ? this.#outsideMap(spawn) : spawn;
-            const id = `mutant-${this.#nextId++}`;
-            const {hp, attackTimer, extra} = freshStats(kind);
-            this.#mutants.push({
-                id,
-                x,
-                y,
-                hp,
-                targetId: selectTarget({x, y}, buildings, this.#grid, this.#poweredNow(buildings), this.#loudNow()),
-                obstacleId: null,
-                attackTimer,
-                ...extra,
-            });
-            effects.spawned.push(id);
+            this.#spawnAt(fortified ? this.#outsideMap(spawn) : spawn, buildings, effects, kind);
             return;
         }
+    }
+
+    #spawnAt({x, y}, buildings, effects, kind) {
+        const id = `mutant-${this.#nextId++}`;
+        const {hp, attackTimer, extra} = freshStats(kind);
+        this.#mutants.push({
+            id,
+            x,
+            y,
+            hp,
+            targetId: selectTarget({x, y}, buildings, this.#grid, this.#poweredNow(buildings), this.#loudNow()),
+            obstacleId: null,
+            attackTimer,
+            ...extra,
+        });
+        effects.spawned.push(id);
+    }
+
+    /** No viable jungle left: approach from outside the real map, never inside the developed colony. */
+    #outsideWorld(index) {
+        const {col, row} = this.#spawns[index];
+        const {cols, rows} = this.#jungleFrame;
+        const {x, y, width, height} = this.#bounds;
+        if (index < cols) return {x: this.#grid.cellCenter(col, 0).x, y: y - MUTANT.speed};
+        if (index < cols + rows) return {x: x + width + MUTANT.speed, y: this.#grid.cellCenter(0, row).y};
+        if (index < 2 * cols + rows) return {x: this.#grid.cellCenter(col, 0).x, y: y + height + MUTANT.speed};
+        return {x: x - MUTANT.speed, y: this.#grid.cellCenter(0, row).y};
     }
 
     /**

@@ -1,6 +1,6 @@
 import {getBuildingType} from '../core/buildingTypes.js';
-import {BRUTE, SPITTER} from '../core/mutants.js';
-import {addArt, placeArt, walkFrame} from './SpriteArt.js';
+import {BRUTE, MUTANT, SPITTER} from '../core/mutants.js';
+import {addArt, mutantMeleeFrame, placeArt, spitterSpitFrame, walkFrame} from './SpriteArt.js';
 import {Facing, attackFocus, flipFor, nextFacing} from './mutantFacing.js';
 
 const MUTANT_RADIUS = 8;
@@ -194,14 +194,17 @@ export class MutantLayer {
                     this.#runnerArt.set(id, {sprite: art});
                     view.setAlpha(0);
                 }
-                this.#runners.set(id, {x, y, facing: this.#initialFacing(mutant)});
+                this.#runners.set(id, {x, y, facing: this.#initialFacing(mutant), timer: mutant.attackTimer});
             }
             view.setPosition(x, y);
             const state = this.#runners.get(id);
             const moving = this.#turn(state, mutant);
+            const struck = mutant.attackTimer > state.timer;
+            state.timer = mutant.attackTimer;
             const art = this.#runnerArt.get(id);
             if (art) {
-                art.sprite.setFrame(walkFrame(moving, tick, 6)).setFlipX(flipFor('runner', state.facing));
+                const frame = mutantMeleeFrame(state.attacking || (struck && !moving), mutant.attackTimer, MUTANT.attackCooldownTicks);
+                art.sprite.setFrame(frame ?? walkFrame(moving, tick, 6)).setFlipX(flipFor('runner', state.facing));
                 placeArt(art.sprite, 'runner', x, y);
             }
         }
@@ -244,7 +247,8 @@ export class MutantLayer {
             brute.timer = attackTimer;
             brute.view.setPosition(x, y).setScale(1 + BRUTE_SWELL * (1 - attackTimer / BRUTE.attackCooldownTicks));
             if (brute.art) {
-                brute.art.setFrame(struck ? 14 : walkFrame(moving, tick, 6)).setFlipX(flipFor('brute', brute.facing));
+                const frame = mutantMeleeFrame(brute.attacking || (struck && !moving), attackTimer, BRUTE.attackCooldownTicks);
+                brute.art.setFrame(frame ?? walkFrame(moving, tick, 6)).setFlipX(flipFor('brute', brute.facing));
                 placeArt(brute.art, 'brute', x, y);
             }
             const left = x - BRUTE_BAR.width / 2;
@@ -289,7 +293,7 @@ export class MutantLayer {
         const fillAlpha = spent ? 1 : SPITTER_MIN_FILL_ALPHA + (1 - SPITTER_MIN_FILL_ALPHA) * shots / SPITTER.maxShots;
         const color = spent ? SPITTER_SPENT_COLOR : aim ? SPITTER_AIM_COLOR : SPITTER_COLOR;
         if (art) {
-            art.setFrame(spent ? 16 : aim ? 12 : walkFrame(moving, tick, 6));
+            art.setFrame(spent ? 16 : spitterSpitFrame(aim, attackTimer, SPITTER.windupTicks) ?? walkFrame(moving, tick, 6));
             art.setTint(spent ? 0x777744 : 0xffffff).setFlipX(flipFor('spitter', facing));
             placeArt(art, 'spitter', x, y);
         }
@@ -311,7 +315,9 @@ export class MutantLayer {
     #turn(state, mutant) {
         const dx = mutant.x - state.x;
         const moving = Math.abs(dx) + Math.abs(mutant.y - state.y) > 0.1;
-        state.facing = nextFacing(state.facing, {x: mutant.x, dx, focus: attackFocus(mutant, this.#world)});
+        const focus = attackFocus(mutant, this.#world);
+        state.attacking = !moving && Boolean(focus);
+        state.facing = nextFacing(state.facing, {x: mutant.x, dx, focus});
         state.x = mutant.x;
         state.y = mutant.y;
         return moving;

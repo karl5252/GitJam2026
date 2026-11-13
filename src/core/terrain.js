@@ -231,8 +231,8 @@ function openPockets(cells, cols, rows) {
 
 /**
  * @param {{cols: number, rows: number, seed: number, spawnFrame: {col, row, cols, rows}}} settings
- *   spawnFrame - where mutants emerge. The clearing sits inside it, with jungle
- *   between them, so nothing that can be built on a clearing is ever on the frame.
+ *   spawnFrame - the initial preferred mutant perimeter. The clearing sits
+ *   inside it, with jungle between them, so the initial frame is not buildable.
  * @returns {Terrain}
  */
 export function generateJungle({cols, rows, seed, spawnFrame}) {

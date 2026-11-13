@@ -67,6 +67,7 @@ function stubScene() {
             get(t, key) {
                 if (key in t) return t[key];
                 if (key === 'setFlipX') return (value) => ((t.flipX = value), proxy);
+                if (key === 'setFrame') return (value) => ((t.frame = value), proxy);
                 if (key === 'setPosition') return (x, y) => ((t.x = x), (t.y = y), proxy);
                 if (key === 'setVisible') return (value) => ((t.visible = value), proxy);
                 return () => proxy;
@@ -74,8 +75,13 @@ function stubScene() {
         });
         return proxy;
     };
-    const add = new Proxy({}, {get: () => () => object()});
-    return {add, textures: {exists: () => true}};
+    const sprites = [];
+    const add = new Proxy({}, {get: (_, kind) => () => {
+        const view = object();
+        if (kind === 'sprite') sprites.push(view);
+        return view;
+    }});
+    return {add, sprites, textures: {exists: () => true}};
 }
 
 function views(layer) {
@@ -133,4 +139,47 @@ test('a Spitter faces its aim during the telegraph, even one behind it', () => {
     assert.equal(views(layer).s.flipX, true, 'aims at a soldier on its left');
     layer.sync([spitter(100, null)], [hq], {tick: 3, isNight: true});
     assert.equal(views(layer).s.flipX, true, 'keeps facing it after the shot');
+});
+
+
+test('Runner and Brute loop melee frames while fighting, return to walk/idle when disengaged', () => {
+    for (const [kind, cooldown] of [[undefined, MUTANT.attackCooldownTicks], [BRUTE.kind, BRUTE.attackCooldownTicks]]) {
+        const scene = stubScene();
+        const layer = new MutantLayer(scene, grid);
+        const mutant = (timer, x = 314) => ({id: 'm', x, y: 190, hp: 10, targetId: 'hq-1', obstacleId: null,
+            attackTimer: timer, ...(kind ? {kind} : {})});
+        const sync = (timer, tick, x) => {
+            layer.sync([mutant(timer, x)], [hq], {tick, isNight: true});
+            return scene.sprites[0].frame;
+        };
+
+        assert.equal(sync(cooldown, 0), 0, `${kind ?? 'runner'} starts idle`);
+        assert.equal(sync(cooldown - 1, 1), 12, 'first attack frame when the timer starts counting');
+        assert.equal(sync(Math.floor(cooldown * 2 / 3), 20), 14, 'attack anim advances through the cycle');
+        assert.equal(sync(1, 40), 17, 'last attack frame shortly before the hit');
+        assert.equal(sync(cooldown, 60), 12, 'hit resets the attack loop without an idle flash');
+        assert.equal(sync(cooldown - 1, 61), 12, 'next melee cycle begins');
+        assert.equal(sync(cooldown, 62, 313), 6, 'walking resumes when the mutant leaves melee');
+        assert.equal(sync(cooldown, 63, 313), 0, 'stationary without an attack is idle');
+    }
+});
+
+test('Spitter animates only while winding up a spit, never between projectiles', () => {
+    const scene = stubScene();
+    const layer = new MutantLayer(scene, grid);
+    const aim = {x: 350, y: 190};
+    const mutant = (timer, shots, target) => ({id: 's', kind: SPITTER.kind, x: 314, y: 190, hp: 10,
+        targetId: 'hq-1', obstacleId: null, attackTimer: timer, shots, aim: target});
+    const sync = (timer, shots, target, tick) => {
+        layer.sync([mutant(timer, shots, target)], [hq], {tick, isNight: true});
+        return scene.sprites[0].frame;
+    };
+
+    assert.equal(sync(SPITTER.cycleTicks, 5, null, 0), 0, 'no spit, no attack animation');
+    assert.equal(sync(SPITTER.windupTicks, 5, aim, 1), 12);
+    assert.equal(sync(33, 5, aim, 12), 13);
+    assert.equal(sync(22, 5, aim, 23), 14);
+    assert.equal(sync(11, 5, aim, 34), 15);
+    assert.equal(sync(SPITTER.cycleTicks, 4, null, 45), 0, 'stops the animation after firing');
+    assert.equal(sync(MUTANT.attackCooldownTicks, 0, null, 46), 16, 'out of shots uses existing spent art');
 });

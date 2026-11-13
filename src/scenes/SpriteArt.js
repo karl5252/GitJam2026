@@ -94,6 +94,20 @@ export function walkFrame(moving, tick, first = 4) {
     return moving ? first + (Math.floor(tick / 10) % 2) : 0;
 }
 
+/** The mutant sheets' attack row (12-17) loops once per actual melee cooldown. */
+export function mutantMeleeFrame(attacking, attackTimer, cooldownTicks) {
+    if (!attacking) return null;
+    const elapsed = Math.max(0, Math.min(cooldownTicks - 1, cooldownTicks - attackTimer));
+    return 12 + Math.min(5, Math.floor(elapsed * 6 / cooldownTicks));
+}
+
+/** A Spitter animates 12-15 once during its telegraph, never between shots. */
+export function spitterSpitFrame(aim, attackTimer, windupTicks) {
+    if (!aim) return null;
+    const elapsed = Math.max(0, Math.min(windupTicks - 1, windupTicks - attackTimer));
+    return 12 + Math.min(3, Math.floor(elapsed * 4 / windupTicks));
+}
+
 /** Building art decisions are presentation-only. No time or combat rules change. */
 export function buildingFrame(building, shift) {
     if (building.type === 'hq') return shift === 'night' ? 1 : 0;

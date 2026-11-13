@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import {ART, artKey, buildingFrame, infantryActionFrame} from '../../src/scenes/SpriteArt.js';
+import {ART, artKey, buildingFrame, infantryActionFrame, mutantMeleeFrame, spitterSpitFrame} from '../../src/scenes/SpriteArt.js';
 
 test('building art uses the correct HQ day/night and Barracks role frames', () => {
     assert.equal(buildingFrame({type: 'hq'}, 'day'), 0);
@@ -31,4 +31,19 @@ test('building sheets retain independent authored frame dimensions', () => {
     assert.deepEqual([ART.powerPlant.frameWidth, ART.powerPlant.frameHeight], [32, 34]);
     assert.equal(ART.siegeCannon.scale, 2);
     assert.equal(artKey('hq'), 'papi-art-hq');
+});
+
+
+test('melee animation uses the six attack frames over a complete cooldown, but never when inactive', () => {
+    assert.equal(mutantMeleeFrame(false, 59, 60), null);
+    assert.deepEqual([60, 50, 40, 30, 20, 10, 1].map((t) => mutantMeleeFrame(true, t, 60)),
+        [12, 13, 14, 15, 16, 17, 17]);
+    assert.equal(mutantMeleeFrame(true, 120, 120), 12);
+    assert.equal(mutantMeleeFrame(true, 1, 120), 17);
+});
+
+test('Spitter has one four-frame windup per shot and no animation between shots', () => {
+    assert.equal(spitterSpitFrame(null, 30, 45), null);
+    assert.deepEqual([45, 33, 22, 11, 1].map((t) => spitterSpitFrame({x: 1}, t, 45)),
+        [12, 13, 14, 15, 15]);
 });

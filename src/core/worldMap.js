@@ -6,11 +6,12 @@
  *           reachable in TEST_MODE.
  *   jungle  a 48x32 world: a clearing, a dirt path and dense jungle. New games.
  *
- * `spawnFrame` is where mutants emerge. Walking speed and the night's length were
- * set for the open map, and from the border of a map this size most of a late wave
- * would never arrive. So they emerge from the jungle on a frame the size of the open
- * map, centred on the world: it lands on the same world pixels as the open map, and
- * a mutant has exactly as far to walk. Null means the edge of the map.
+ * `spawnFrame` is the preferred perimeter for jungle mutant entrances. Walking
+ * speed and the Night's length were set for the open map: from the border of a
+ * map this size late waves may not arrive. The preferred frame is the size of
+ * the open map, at the same world pixels. As the colony clears it, entrances
+ * move outward into connected jungle; with no jungle left, mutants enter from
+ * outside the real map. Null keeps the original open-map border spawning.
  */
 import {DEFAULT_SEED} from './seededRandom.js';
 import {generateJungle} from './terrain.js';

@@ -358,20 +358,28 @@ function nightTrace(w, day) {
 }
 
 for (const [night, label] of [[1, 'Night 1'], [12, 'a Night with Spitters'], [35, 'a Night with Brutes']]) {
-    test(`a base in the clearing fights ${label} exactly as it does at those pixels on the open map`, () => {
-        const jungle = jungleWorld();
-        const open = createWorld({requireHq: true, roads: true, resources: FUNDS});
-        const {frame, center} = {frame: JUNGLE.spawnFrame, center: jungle.grid.terrain.center};
-        for (const [type, dc, dr] of [['hq', 0, 0], ['powerPlant', 4, 0], ['autocannon', 0, -3], ['autocannon', -3, 3], ['wall', 2, 3], ['wall', 3, 3]]) {
-            const [col, row] = [center.col + dc, center.row + dr];
-            place(jungle, type, col, row);
-            place(open, type, col - frame.col, row - frame.row);
+    test(`the jungle fights ${label} deterministically with its terrain-aware spawn positions`, () => {
+        const worlds = [jungleWorld(), jungleWorld()];
+        const {center} = worlds[0].grid.terrain;
+        for (const jungle of worlds) {
+            for (const [type, dc, dr] of [['hq', 0, 0], ['powerPlant', 4, 0], ['autocannon', 0, -3], ['autocannon', -3, 3], ['wall', 2, 3], ['wall', 3, 3]]) {
+                place(jungle, type, center.col + dc, center.row + dr);
+            }
         }
-        const a = nightTrace(jungle, night);
-        const b = nightTrace(open, night);
+        const a = nightTrace(worlds[0], night);
+        const b = nightTrace(worlds[1], night);
         assert.ok(a.spawned > 0);
         assert.equal(a.spawned, b.spawned);
         assert.deepEqual(a.trace, b.trace);
+
+        // The terrain may move entrances, but must not change the scheduled wave budget.
+        const open = createWorld({requireHq: true, roads: true, resources: FUNDS});
+        const {col: baseCol, row: baseRow} = {col: center.col - JUNGLE.spawnFrame.col, row: center.row - JUNGLE.spawnFrame.row};
+        for (const [type, dc, dr] of [['hq', 0, 0], ['powerPlant', 4, 0], ['autocannon', 0, -3], ['autocannon', -3, 3], ['wall', 2, 3], ['wall', 3, 3]]) {
+            place(open, type, baseCol + dc, baseRow + dr);
+        }
+        assert.equal(a.spawned, nightTrace(open, night).spawned);
+
     });
 }
 
@@ -385,7 +393,7 @@ test('mutants walk through jungle to reach the base: terrain never stops them', 
     assert.ok(w.placement.buildings()[0].hp < hq.hp, 'HQ was never reached');
 });
 
-test('a wall on the frame, where the path crosses it, does not displace a spawn: the mutant arrives outside it', () => {
+test('a wall on a dirt-path frame tile cannot cause a mutant to appear there or behind it', () => {
     const {spawnFrame} = JUNGLE;
     const seed = SEEDS.find((s) => {
         const terrain = terrainOf(s);
@@ -404,8 +412,10 @@ test('a wall on the frame, where the path crosses it, does not displace a spawn:
     w.cycle.stepTicks(10, (t) => w.tick(t));
     const [mutant] = w.mutants.snapshot();
     assert.ok(mutant);
-    assert.equal(mutant.y, w.grid.cellToWorld(col, row).y - 0.5);
-    assert.equal(mutant.x, w.grid.cellCenter(col, row).x);
+    const cell = w.grid.worldToCell(mutant.x, mutant.y);
+    assert.equal(w.grid.terrain.kindAt(cell.col, cell.row), TerrainKind.JUNGLE);
+    assert.notDeepEqual(cell, {col, row}, 'it must not emerge on the path or inside the wall');
+    assert.equal(w.grid.occupantAt(cell.col, cell.row), null);
 });
 
 // ---- Layouts -------------------------------------------------------------------
