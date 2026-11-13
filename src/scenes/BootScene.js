@@ -10,6 +10,7 @@ import {filterHeli, preloadHeli} from './HeliLayer.js';
 import {filterEndingArt, preloadEndingArt} from './EndingScene.js';
 import {ROAD_SOURCE, buildRoadTexture} from './RoadTiles.js';
 import {VEGETATION_SHEET} from './vegetation.js';
+import {preloadBuildingDamageFx, filterBuildingDamageFx} from './BuildingDamageLayer.js';
 
 /**
  * Preloads the independent micro-scale PNG sprite sheets before starting the
@@ -28,6 +29,7 @@ export class BootScene extends Phaser.Scene {
         preloadNewspaperArt(this); // La Voz's photographs
         preloadEffects(this); // TASK 030: effects and voices; music follows the first gesture
         preloadCombatFx(this); // TASK 031: the three explosion strips
+        preloadBuildingDamageFx(this); // cosmetic sparks, arcs and flames on damaged buildings
         preloadHeli(this); // TASK 035: the Presidential helicopter
         preloadEndingArt(this); // TASK 036: the Presidential guards
         this.load.image(ROAD_SOURCE.key, ROAD_SOURCE.path); // TASK 039: road autotiles
@@ -45,6 +47,7 @@ export class BootScene extends Phaser.Scene {
         filterOfficeArt(this, nearest);
         filterNewspaperArt(this, nearest);
         filterCombatFx(this, nearest);
+        filterBuildingDamageFx(this, nearest);
         filterHeli(this, nearest);
         filterEndingArt(this, nearest);
         buildRoadTexture(this, nearest);

@@ -3,6 +3,8 @@
  * sizes: there is deliberately no shared frame height or canvas-wide resizing.
  * Changes here must never feed collision, movement, targeting or world visibility.
  */
+import {damageFrame} from './buildingDamage.js';
+
 export const ART = Object.freeze({
     worker: {path: 'units/worker.png', frameWidth: 45, frameHeight: 40, scale: 0.5, offsetX: 3.5, originY: 0.95},
     rifleman: {path: 'units/rifleman.png', frameWidth: 45, frameHeight: 40, scale: 0.5, offsetX: 0.5, originY: 0.95},
@@ -25,7 +27,9 @@ export const ART = Object.freeze({
     siegeCannonFlash: {path: 'turrets/siege-cannon-flash.png', frameWidth: 64, frameHeight: 64, scale: 1, offsetX: 0, originY: 0.5},
     // Each building occupies a 3x3 tile footprint (96x96); the art keeps its own ratio.
     hq: {path: 'buildings/hq.png', frameWidth: 32, frameHeight: 40, scale: 2.25, offsetX: 0, originY: 1},
-    barracks: {path: 'buildings/barracks.png', frameWidth: 32, frameHeight: 29, scale: 2.7, offsetX: 0, originY: 1},
+    // Independent three-frame damage strips; the Barracks role chooses the texture.
+    barracks: {path: 'buildings/barracks_rifle.png', frameWidth: 32, frameHeight: 29, scale: 2.7, offsetX: 0, originY: 1},
+    barracksRocket: {path: 'buildings/barracks_rocket.png', frameWidth: 32, frameHeight: 29, scale: 2.7, offsetX: 0, originY: 1},
     factory: {path: 'buildings/factory.png', frameWidth: 32, frameHeight: 32, scale: 2.65, offsetX: 0, originY: 1},
     powerPlant: {path: 'buildings/power-plant.png', frameWidth: 32, frameHeight: 34, scale: 2.55, offsetX: 0, originY: 1},
     // A 2x2 (64x64) footprint. The 32x32 source has its doorway at columns 9..19
@@ -108,12 +112,14 @@ export function spitterSpitFrame(aim, attackTimer, windupTicks) {
     return 12 + Math.min(3, Math.floor(elapsed * 4 / windupTicks));
 }
 
-/** Building art decisions are presentation-only. No time or combat rules change. */
-export function buildingFrame(building, shift) {
-    if (building.type === 'hq') return shift === 'night' ? 1 : 0;
-    if (building.type === 'barracks') return building.role === 'rocket' ? 1 : 0;
-    if (building.type === 'powerPlant') return building.enabled ? 1 : 0;
-    return 0;
+/** The Barracks role selects its sheet. All three building frames now mean HP damage. */
+export function buildingArtKind(building) {
+    return building?.type === 'barracks' && building.role === 'rocket' ? 'barracksRocket' : building?.type;
+}
+
+/** Presentation only. Night tint and OFF alpha remain independent. */
+export function buildingFrame(building, _shift) {
+    return damageFrame(building);
 }
 
 /** One gameplay shot triggers four purely visual Aseprite action frames (100 ms each). */

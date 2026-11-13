@@ -1,4 +1,4 @@
-import {addArt, placeArt, buildingFrame, doorwayAt} from './SpriteArt.js';
+import {addArt, artKey, buildingArtKind, placeArt, buildingFrame, doorwayAt} from './SpriteArt.js';
 import {gateDepth} from './GateLayer.js';
 import {wallFrames} from './WallTiles.js';
 import {getBuildingType} from '../core/buildingTypes.js';
@@ -34,13 +34,14 @@ export class BuildingArtLayer {
     add(building, shift = 'day') {
         this.remove(building.id);
         if (!ART_BUILDINGS.has(building.type)) return false;
-        const sprite = addArt(this.#scene, building.type, artDepth(building));
+        const kind = buildingArtKind(building);
+        const sprite = addArt(this.#scene, kind, artDepth(building));
         if (!sprite) return false;
         const {x, y, width, height} = this.#grid.footprintRect(building);
         // Images are bottom anchored; independent source aspect ratios are retained.
         // Wall frames are centred on their own tile (see ART.wall).
         // Taller building art stays bottom-anchored as before.
-        placeArt(sprite, building.type, x + width / 2, building.type === 'wall' ? y + height / 2 : y + height - 2);
+        placeArt(sprite, kind, x + width / 2, building.type === 'wall' ? y + height / 2 : y + height - 2);
         this.#sprites.set(building.id, sprite);
         if (building.type === 'wall') this.#wallSignature = null;
         this.update(building, shift);
@@ -62,8 +63,15 @@ export class BuildingArtLayer {
         const sprite = this.#sprites.get(building.id);
         if (!sprite) return;
         if (building.type === 'wall') return; // its frame follows its neighbours, in syncWalls
+        const wanted = artKey(buildingArtKind(building));
+        if (sprite.texture.key !== wanted && this.#scene.textures.exists(wanted)) sprite.setTexture(wanted, 0);
         sprite.setFrame(buildingFrame(building, shift))
             .setAlpha(building.enabled ? 1 : DISABLED_ALPHA);
+    }
+
+    /** HP changes during the Night and during repairs, not just on shift transitions. */
+    syncDamage(buildings, shift) {
+        for (const building of buildings) this.update(building, shift);
     }
 
     sync(buildings, shift) {
@@ -77,7 +85,7 @@ export class BuildingArtLayer {
 
     /**
      * Called from sync(), i.e. on every placement, demolition, destruction and layout
-     * load. Frames change only when wall or gate geometry changes; HP plays no part.
+     * load. Wall autotile frames follow neighbours; HP visuals use syncDamage.
      */
     syncWalls(buildings) {
         const linked = buildings.filter(({type}) => type === 'wall' || getBuildingType(type)?.gate);

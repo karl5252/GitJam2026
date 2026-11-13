@@ -1,15 +1,26 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import {ART, artKey, buildingFrame, infantryActionFrame, mutantMeleeFrame, spitterSpitFrame} from '../../src/scenes/SpriteArt.js';
+import {ART, artKey, buildingArtKind, buildingFrame, infantryActionFrame, mutantMeleeFrame, spitterSpitFrame} from '../../src/scenes/SpriteArt.js';
 
-test('building art uses the correct HQ day/night and Barracks role frames', () => {
-    assert.equal(buildingFrame({type: 'hq'}, 'day'), 0);
-    assert.equal(buildingFrame({type: 'hq'}, 'night'), 1);
-    assert.equal(buildingFrame({type: 'barracks'}, 'day'), 0);
-    assert.equal(buildingFrame({type: 'barracks', role: 'rocket'}, 'day'), 1);
-    assert.equal(buildingFrame({type: 'factory'}, 'night'), 0);
-    assert.equal(buildingFrame({type: 'powerPlant', enabled: false}, 'day'), 0);
-    assert.equal(buildingFrame({type: 'powerPlant', enabled: true}, 'day'), 1);
+test('building damage frames use 0 pristine, 1 damaged, 2 critical regardless of night and ON state', () => {
+    for (const type of ['hq', 'barracks', 'factory', 'powerPlant', 'mine', 'outpost', 'loudspeaker']) {
+        assert.equal(buildingFrame({type}, 'day'), 0, `${type}: missing HP defaults pristine`);
+    }
+    assert.equal(buildingFrame({type: 'hq', hp: 300}, 'day'), 1);
+    assert.equal(buildingFrame({type: 'hq', hp: 300}, 'night'), 1);
+    assert.equal(buildingFrame({type: 'barracks', hp: 300, role: 'rocket'}, 'night'), 0);
+    assert.equal(buildingFrame({type: 'powerPlant', hp: 30, enabled: true}, 'day'), 2);
+    assert.equal(buildingFrame({type: 'powerPlant', hp: 30, enabled: false}, 'day'), 2);
+    assert.equal(buildingFrame({type: 'factory', hp: 300}, 'night'), 0);
+});
+
+test('Rifle and Rocket Barracks use distinct three-frame spritesheets', () => {
+    assert.equal(buildingArtKind({type: 'barracks', role: 'rifle'}), 'barracks');
+    assert.equal(buildingArtKind({type: 'barracks', role: 'rocket'}), 'barracksRocket');
+    assert.equal(buildingArtKind({type: 'barracks'}), 'barracks');
+    assert.equal(buildingArtKind({type: 'outpost'}), 'outpost');
+    assert.equal(ART.barracks.path, 'buildings/barracks_rifle.png');
+    assert.equal(ART.barracksRocket.path, 'buildings/barracks_rocket.png');
 });
 
 test('four Aseprite action frames play once per gameplay shot and stop', () => {
@@ -27,6 +38,7 @@ test('four Aseprite action frames play once per gameplay shot and stop', () => {
 test('building sheets retain independent authored frame dimensions', () => {
     assert.deepEqual([ART.hq.frameWidth, ART.hq.frameHeight], [32, 40]);
     assert.deepEqual([ART.barracks.frameWidth, ART.barracks.frameHeight], [32, 29]);
+    assert.deepEqual([ART.barracksRocket.frameWidth, ART.barracksRocket.frameHeight], [32, 29]);
     assert.deepEqual([ART.factory.frameWidth, ART.factory.frameHeight], [32, 32]);
     assert.deepEqual([ART.powerPlant.frameWidth, ART.powerPlant.frameHeight], [32, 34]);
     assert.equal(ART.siegeCannon.scale, 2);

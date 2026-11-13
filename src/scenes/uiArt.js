@@ -63,7 +63,7 @@ export const BUILD_ICON = Object.freeze({
     mine: Object.freeze({kind: 'mine', frame: 0, visible: Object.freeze({x: 0, y: 3, width: 32, height: 28})}),
     barracks: Object.freeze({kind: 'barracks', frame: 0, visible: Object.freeze({x: 0, y: 1, width: 32, height: 27})}),
     outpost: Object.freeze({kind: 'outpost', frame: 0, visible: Object.freeze({x: 4, y: 5, width: 23, height: 59})}),
-    loudspeaker: Object.freeze({kind: 'loudspeaker', frame: 0, visible: Object.freeze({x: 1, y: 6, width: 30, height: 66})}),
+    loudspeaker: Object.freeze({kind: 'loudspeaker', frame: 0, visible: Object.freeze({x: 1, y: 5, width: 30, height: 67})}),
     wall: Object.freeze({kind: 'wall', frame: 0, visible: Object.freeze({x: 22, y: 21, width: 20, height: 23})}), // walls_v3 frame 0, the lone pillar
     gateHorizontal: Object.freeze({kind: 'gateHorizontal', frame: 0, visible: Object.freeze({x: 0, y: 17, width: 32, height: 31})}),
     gateVertical: Object.freeze({kind: 'gateVertical', frame: 0, visible: Object.freeze({x: 11, y: 0, width: 10, height: 48})}),

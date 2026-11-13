@@ -203,6 +203,22 @@ export const CHAPTERS = Object.freeze([
                 wisdom: [WISDOM.roads],
             },
             {
+                heading: 'ON THE GLORIOUS ART OF INDUSTRIAL PLANNING',
+                text: [
+                    'A prosperous Republic requires factories, roads, walls, and workers.',
+                    'A wise citizen remembers that workers require something else: room to walk.',
+                    'When constructing defensive walls, always leave at least one tile of accessible space between the walls and nearby buildings.',
+                    'Ensure this maintenance corridor remains connected to your workforce. A building surrounded by obstacles cannot be repaired, regardless of how patriotic its workers may be.',
+                    'Straight roads are also strongly recommended. Every unnecessary turn delays the delivery of precious national exports.',
+                    'Remember, citizen:',
+                    'A well-planned industrial complex is a profitable industrial complex.',
+                ],
+                wisdom: [
+                    'A factory that cannot be repaired is a factory that no longer requires maintenance. Excellent savings!',
+                    '— Usar Manuel, Minister of Public Instruction.',
+                ],
+            },
+            {
                 heading: 'On the Glorious Exports of San Papi',
                 text: [
                     'The Republic of San Papi proudly exports two sacred pillars of national prosperity: bananas and El Presidente Papi™ Banana Ketchup.',
@@ -214,6 +230,7 @@ export const CHAPTERS = Object.freeze([
                     'When you buy Papi, you support Papi. When you support Papi, you support progress.',
                 ],
             },
+
         ],
     },
     {
@@ -317,6 +334,16 @@ export const CHAPTERS = Object.freeze([
                 art: [{kind: 'ecologist', caption: 'ECOLOGIST'}, {kind: 'loudspeaker', caption: 'LOUDSPEAKER'}],
                 buildings: ['loudspeaker'],
                 wisdom: [WISDOM.ecologists],
+            },
+            {
+                heading: 'ON THE STRATEGIC IMPORTANCE OF LOUDSPEAKERS',
+                text: [
+                    'Loudspeakers spread the glorious voice of El Presidente across the jungle.',
+                    'Their official broadcast, *"¡Papi es muy delicioso!"*, has proven remarkably effective at attracting attention.',
+                    'Mutants, in particular, appear to be enthusiastic listeners.',
+                    'Citizens are therefore advised to consider loudspeaker placement carefully.',
+                ],
+                wisdom: ['My voice! My beautiful voice! It is like sweet banana ketchup to the buena chicas. Draws them in! ¡Irresistible!'],
             },
         ],
     },

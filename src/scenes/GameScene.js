@@ -60,6 +60,7 @@ import {TruckLayer} from './TruckLayer.js';
 import {GateLayer} from './GateLayer.js';
 import {InfantryLayer} from './InfantryLayer.js';
 import {BuildingArtLayer} from './BuildingArtLayer.js';
+import {BuildingDamageLayer} from './BuildingDamageLayer.js';
 import {Command, EventBus, Hint, Hud, Notice, State} from './EventBus.js';
 import {edition as newspaperEdition} from '../content/newspaper.js';
 import {audioFor, loadMusicWhenUnlocked} from '../audio/audio.js';
@@ -166,6 +167,7 @@ export class GameScene extends Phaser.Scene {
         this.previewResult = null;
         this.buildingViews = new Map();
         this.buildingArt = null;
+        this.buildingDamage = null;
         this.cycle = null;
         this.selectedBuildingId = null;
         this.selectedProtestId = null;
@@ -395,6 +397,8 @@ export class GameScene extends Phaser.Scene {
             this.gameAudio?.stop();
             this.combatFx?.destroy();
             this.combatFx = null;
+            this.buildingDamage?.destroy();
+            this.buildingDamage = null;
             this.presidentLayer?.destroy(); // TASK 033.2: the scene object is reused on restart
             this.presidentLayer = null;
             this.president = null;
@@ -578,6 +582,7 @@ export class GameScene extends Phaser.Scene {
             terrain: this.terrain,
         });
         this.buildingArt = new BuildingArtLayer(this, this.grid);
+        this.buildingDamage = new BuildingDamageLayer(this, this.grid);
         this.economy = new Economy();
         this.pollution = new Pollution();
         // Orchestration only: the settlement formula lives in core/settlement.js.
@@ -1104,6 +1109,8 @@ export class GameScene extends Phaser.Scene {
         this.present(State.SPEED, {speed: this.clock.speed});
         const mutants = this.mutants.snapshot();
         const buildings = this.placement.buildings();
+        this.buildingArt?.syncDamage(buildings, this.cycle.shift);
+        this.buildingDamage?.sync(buildings, this.poweredIds, this.clock.tick);
         const isSeen = this.seenBy();
         this.fogLayer?.sync();
         this.syncTerrain();
@@ -2312,6 +2319,7 @@ export class GameScene extends Phaser.Scene {
             this.buildingViews.get(id).destroy();
             this.buildingViews.delete(id);
             this.buildingArt?.remove(id);
+            this.buildingDamage?.remove(id);
             this.autocannonLayer.remove(id);
         }
         if (ids.includes(this.selectedBuildingId)) this.selectAt(null);
@@ -2337,6 +2345,7 @@ export class GameScene extends Phaser.Scene {
             terrainView: this.terrainLayer ? this.terrainLayer.view() : null,
             deposits: this.terrain?.depositSnapshot ? this.terrain.depositSnapshot() : null,
             buildingArtViews: this.buildingArt ? this.buildingArt.views() : null,
+            buildingDamageViews: this.buildingDamage ? this.buildingDamage.views() : null,
             fog: this.fog ? this.fog.snapshot() : null,
             fogView: this.fogLayer ? this.fogLayer.view() : null,
             selectedCell: this.selectedCell ? {...this.selectedCell} : null,
